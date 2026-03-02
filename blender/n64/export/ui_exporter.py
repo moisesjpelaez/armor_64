@@ -1061,7 +1061,7 @@ def generate_font_makefile_entries(exporter):
         rule = f'''{target}: assets/{font_key}.ttf
 	@mkdir -p $(dir $@)
 	@echo "    [FONT] $@ (kha size {kha_size} -> mkfont size {mkfont_size})"
-	$(N64_MKFONT) $(MKFONT_FLAGS) --size {mkfont_size} -o filesystem "$<"'''
+	$(N64_MKFONT) $(MKFONT_FLAGS) --size {mkfont_size} --range 0x0020-0x00FF -o filesystem "$<"'''
         rules.append(rule)
 
     font_targets = 'font_conv = ' + ' \\\n             '.join(targets)
