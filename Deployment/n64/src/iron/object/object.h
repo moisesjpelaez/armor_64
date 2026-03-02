@@ -33,6 +33,16 @@ void object_remove_and_recycle(ArmObject* obj, SceneId scene_id);
  */
 void object_process_removals(void);
 
+/**
+ * Get the parent of an object, or NULL if it has no parent.
+ * Uses the scene's flat object array + parent_index.
+ */
+static inline ArmObject* object_get_parent(ArmObject* obj, ArmScene* scene) {
+    if (!obj || obj->parent_index < 0 || obj->parent_index >= scene->object_count)
+        return NULL;
+    return &scene->objects[obj->parent_index];
+}
+
 // Future: light_remove, camera_remove
 
 #ifdef __cplusplus

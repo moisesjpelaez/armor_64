@@ -1613,6 +1613,17 @@ class TraitExtractor implements IExtractorContext {
             return { type: "field_access", object: exprToIR(obj), value: field };
         }
 
+        // Handle object.parent -> object_get_parent((ArmObject*)obj, scene_get(scene_get_current_id()))
+        if (field == "parent") {
+            switch (obj.expr) {
+                case EConst(CIdent("object")), EConst(CIdent("this")):
+                    return { type: "c_literal", c_code: "object_get_parent((ArmObject*)obj, scene_get(scene_get_current_id()))" };
+                default:
+                    var ownerNode = exprToIR(obj);
+                    return { type: "c_literal", c_code: 'object_get_parent((ArmObject*){obj}, scene_get(scene_get_current_id()))' };
+            }
+        }
+
         return { type: "field_access", object: exprToIR(obj), value: field };
     }
 

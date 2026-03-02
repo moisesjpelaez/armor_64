@@ -174,9 +174,11 @@ typedef struct {{
  */
 typedef struct ArmObject {{
     // === HOT DATA (accessed every frame) ===
-    ArmTransform transform;       // 44 bytes: position, rotation, scale
-    T3DMat4FP *model_mat;         // 4 bytes: matrix for rendering
+    ArmTransform transform;       // 44 bytes: position, rotation, scale (world-space for roots, local-space for parented objects)
+    T3DMat4FP *model_mat;         // 4 bytes: world matrix for rendering (RSP reads via DMA)
+    T3DMat4 world_mat;            // 64 bytes: float world matrix (used for parent/child hierarchy composition)
     rspq_block_t *dpl;            // 4 bytes: display list pointer
+    int16_t parent_index;         // 2 bytes: index into scene->objects, -1 = root (no parent)
     bool visible;                 // 1 byte
     bool is_static;               // 1 byte
     bool is_removed;              // 1 byte: object marked for removal

@@ -7,7 +7,7 @@ import armory.n64.converters.ICallConverter;
 
 /**
  * Converts object lifecycle method calls.
- * Handles: object.remove(), object.getTrait(), this.remove(), etc.
+ * Handles: object.remove(), object.getTrait(), object.parent, this.remove(), etc.
  */
 class ObjectCallConverter implements ICallConverter {
     public function new() {}
@@ -30,8 +30,8 @@ class ObjectCallConverter implements ICallConverter {
                 // Trait system not supported on N64
                 { type: "skip", warn: method + "() not supported on N64" };
             case "getChildren", "getChild":
-                // Children access not yet supported
-                { type: "skip", warn: method + "() not yet supported on N64" };
+                // Children iteration not yet supported (hierarchy is flat array with parent_index)
+                { type: "skip", warn: method + "() not yet supported on N64 - use parent_index-based iteration" };
             default:
                 // Unknown object method
                 { type: "skip", warn: "object." + method + "() not supported on N64" };

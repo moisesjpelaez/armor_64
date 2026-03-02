@@ -39,6 +39,43 @@ def _collect_all_objects(scene):
     return objects
 
 
+def _topological_sort_objects(objects):
+    """Sort objects so every parent precedes all its children (DFS order).
+
+    This ensures that when iterating in index order at runtime, parent
+    world transforms are always computed before their children's.
+
+    Args:
+        objects: list of (blender_obj, instance_matrix) tuples
+
+    Returns:
+        Sorted list in the same format, with parent/child ordering preserved.
+    """
+    # Build lookup: blender object name -> index in input list
+    name_to_idx = {}
+    for i, (obj, _) in enumerate(objects):
+        # Use object name as key (unique within a scene)
+        name_to_idx[obj.name] = i
+
+    visited = set()
+    sorted_result = []
+
+    def visit(idx):
+        if idx in visited:
+            return
+        visited.add(idx)
+        obj, inst_mat = objects[idx]
+        # Visit parent first (if it exists in this scene)
+        if obj.parent and obj.parent.name in name_to_idx:
+            visit(name_to_idx[obj.parent.name])
+        sorted_result.append((obj, inst_mat))
+
+    for i in range(len(objects)):
+        visit(i)
+
+    return sorted_result
+
+
 def build_scene_data(exporter, scene):
     """Build scene data dictionary from a Blender scene.
 
@@ -117,8 +154,21 @@ def build_scene_data(exporter, scene):
             _process_camera(exporter, scene_name, obj, instance_matrix)
         elif obj.type == 'LIGHT':
             _process_light(exporter, scene_name, obj, instance_matrix)
-        elif obj.type == 'MESH':
-            _process_mesh_object(exporter, scene_name, obj, instance_matrix)
+
+    # Collect mesh objects separately for topological sort (parent/child ordering)
+    mesh_objects = [
+        (obj, inst_mat) for obj, inst_mat in _collect_all_objects(scene)
+        if obj.type == 'MESH'
+    ]
+    sorted_mesh_objects = _topological_sort_objects(mesh_objects)
+
+    # Build name→index map for parent resolution
+    mesh_name_to_index = {}
+    for i, (obj, _) in enumerate(sorted_mesh_objects):
+        mesh_name_to_index[obj.name] = i
+
+    for obj, instance_matrix in sorted_mesh_objects:
+        _process_mesh_object(exporter, scene_name, obj, instance_matrix, mesh_name_to_index)
 
 
 def _process_camera(exporter, scene_name, obj, instance_matrix=None):
@@ -162,7 +212,7 @@ def _process_light(exporter, scene_name, obj, instance_matrix=None):
     })
 
 
-def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None):
+def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, mesh_name_to_index=None):
     """Process a mesh object and add to scene data."""
     mesh = obj.data
     if mesh not in exporter.exported_meshes:
@@ -170,12 +220,42 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None):
         return
     mesh_name = exporter.exported_meshes[mesh]
 
+    # Determine parent index (−1 = root / no parent)
+    parent_index = -1
+    has_parent = False
+    if mesh_name_to_index and obj.parent and obj.parent.name in mesh_name_to_index:
+        parent_index = mesh_name_to_index[obj.parent.name]
+        has_parent = True
+
+        # Validation: block parented physics bodies
+        if obj.rigid_body is not None:
+            wrd = bpy.data.worlds['Arm']
+            if wrd.arm_physics != 'Disabled':
+                log.warn(f'Object "{obj.name}": physics bodies on parented objects are not supported on N64. '
+                         f'Parent "{obj.parent.name}" will be ignored for physics sync.')
+
     # Compute world matrix considering instance transform
     world_matrix = instance_matrix @ obj.matrix_local if instance_matrix else obj.matrix_world
 
+    # World-space decomposition (always needed for AABB computation and obj_data["pos"])
+    world_pos = list(world_matrix.to_translation())
+    world_quat = world_matrix.to_quaternion()
+    world_scale = world_matrix.to_scale()
+
+    # For parented objects, also compute local-space transform relative to parent.
+    # For root objects, local == world.
+    if has_parent and not instance_matrix:
+        # Use Blender's local matrix (relative to parent)
+        local_matrix = obj.matrix_local
+        local_pos = list(local_matrix.to_translation())
+        local_quat = local_matrix.to_quaternion()
+        local_scale = local_matrix.to_scale()
+    else:
+        local_pos = world_pos
+        local_quat = world_quat
+        local_scale = world_scale
+
     # Export rotation as quaternion (XYZW order for T3D)
-    quat = world_matrix.to_quaternion()
-    scale = world_matrix.to_scale()
 
     # Compute AABB from mesh's bounding box (local space)
     bb = obj.bound_box
@@ -192,8 +272,9 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None):
     # SCALE_FACTOR is only applied to obj.transform.scale for the SRT rendering matrix.
     # Since bounds are used for frustum culling (which operates in the same space as
     # positions), they must be in Blender units, not in SCALE_FACTOR-compressed space.
-    bounds_min = [local_min[i] * scale[i] for i in range(3)]
-    bounds_max = [local_max[i] * scale[i] for i in range(3)]
+    # Always use world scale for bounds (even for parented objects).
+    bounds_min = [local_min[i] * world_scale[i] for i in range(3)]
+    bounds_max = [local_max[i] * world_scale[i] for i in range(3)]
     # Handle negative scale (swap min/max per axis)
     for i in range(3):
         if bounds_min[i] > bounds_max[i]:
@@ -205,14 +286,18 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None):
     obj_data = {
         "name": arm.utils.safesrc(linked_utils.asset_name(obj)),
         "mesh": f'MODEL_{mesh_name.upper()}',
-        "pos": list(world_matrix.to_translation()),
-        "rot": [quat.x, quat.y, quat.z, quat.w],
-        "scale": list(scale),
+        "pos": world_pos,
+        "rot": [world_quat.x, world_quat.y, world_quat.z, world_quat.w],
+        "scale": list(world_scale),
         "visible": not obj.hide_render,
         "bounds_min": bounds_min,
         "bounds_max": bounds_max,
         "traits": _extract_traits(obj),
-        "is_static": True  # Computed after trait_info is loaded
+        "is_static": True,  # Computed after trait_info is loaded
+        "parent_index": parent_index,
+        "local_pos": local_pos,
+        "local_rot": [local_quat.x, local_quat.y, local_quat.z, local_quat.w],
+        "local_scale": list(local_scale),
     }
 
     if rigid_body_data is not None:

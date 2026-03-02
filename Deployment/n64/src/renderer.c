@@ -25,6 +25,25 @@ void renderer_begin_frame(T3DViewport *viewport, ArmScene *scene) {
 }
 
 void renderer_update_objects(ArmScene *scene) {
+	// === Pass 1: Propagate parent→child dirty flags ===
+	// Objects are topologically sorted (parents before children at export time),
+	// so a single forward pass is sufficient for arbitrary nesting depth.
+	for (uint16_t i = 0; i < scene->object_count; i++) {
+		ArmObject *obj = &scene->objects[i];
+		if (obj->is_removed) continue;
+		if (obj->parent_index >= 0 && scene->objects[obj->parent_index].transform.dirty > 0) {
+			// Parent is dirty → child must recompute its world matrix
+			if (obj->transform.dirty == 0) {
+				obj->transform.dirty = obj->is_static ? 1 : FB_COUNT;
+			}
+		}
+	}
+
+	// === Pass 2: Rebuild matrices (with hierarchy composition) ===
+	// Uses the same pattern as tiny3d's skeleton system:
+	// 1. Build float T3DMat4 from SRT
+	// 2. Multiply float matrices for parent/child composition
+	// 3. Convert result to fixed-point T3DMat4FP for the RSP
 	for (uint16_t i = 0; i < scene->object_count; i++) {
 		ArmObject *obj = &scene->objects[i];
 
@@ -44,14 +63,40 @@ void renderer_update_objects(ArmScene *scene) {
 		}
 
 		int mat_idx = obj->is_static ? 0 : frameIdx;
-		t3d_mat4fp_from_srt(&obj->model_mat[mat_idx], obj->transform.scale.v, obj->transform.rot.v, obj->transform.loc.v);
+
+		if (obj->parent_index >= 0) {
+			// Parented object: build local float matrix, compose with parent, convert to FP
+			// Step 1: Build local float matrix from local SRT
+			T3DMat4 local_float;
+			t3d_mat4_from_srt(&local_float, obj->transform.scale.v, obj->transform.rot.v, obj->transform.loc.v);
+
+			// Step 2: Multiply parent_world * local → world_float
+			ArmObject *parent = &scene->objects[obj->parent_index];
+			T3DMat4 world_float;
+			t3d_mat4_mul(&world_float, &parent->world_mat, &local_float);
+
+			// Store world float matrix for children to use
+			obj->world_mat = world_float;
+
+			// Step 3: Convert to fixed-point for RSP rendering
+			t3d_mat4_to_fixed(&obj->model_mat[mat_idx], &world_float);
+		} else {
+			// Root object: build float matrix, store for children, convert to FP
+			T3DMat4 world_float;
+			t3d_mat4_from_srt(&world_float, obj->transform.scale.v, obj->transform.rot.v, obj->transform.loc.v);
+			obj->world_mat = world_float;
+			t3d_mat4_to_fixed(&obj->model_mat[mat_idx], &world_float);
+		}
 
 		// Update cached world-space AABB for frustum culling.
-		// bounds_min/max are pre-scaled to world coordinates (Blender units).
-		// We must rotate the local AABB by the object's quaternion to get a
-		// correct world-space AABB. Uses Arvo's method: iterate over the 3x3
-		// rotation matrix elements and accumulate min/max contributions.
+		// Extract world position from float world matrix (column 3)
 		{
+			float world_pos[3];
+			world_pos[0] = obj->world_mat.m[3][0];
+			world_pos[1] = obj->world_mat.m[3][1];
+			world_pos[2] = obj->world_mat.m[3][2];
+
+			// Rotate the local AABB by the object's quaternion using Arvo's method
 			float qx = obj->transform.rot.v[0];
 			float qy = obj->transform.rot.v[1];
 			float qz = obj->transform.rot.v[2];
@@ -65,19 +110,19 @@ void renderer_update_objects(ArmScene *scene) {
 				{ 2.0f*(xy+wz),         1.0f - 2.0f*(xx+zz),  2.0f*(yz-wx)         },
 				{ 2.0f*(xz-wy),         2.0f*(yz+wx),         1.0f - 2.0f*(xx+yy)  }
 			};
-			// Start from position, accumulate rotated AABB extents
-			for (int i = 0; i < 3; i++) {
-				obj->cached_world_aabb_min.v[i] = obj->transform.loc.v[i];
-				obj->cached_world_aabb_max.v[i] = obj->transform.loc.v[i];
-				for (int j = 0; j < 3; j++) {
-					float a = m[i][j] * obj->bounds_min.v[j];
-					float b = m[i][j] * obj->bounds_max.v[j];
+			// Start from world position, accumulate rotated AABB extents
+			for (int j = 0; j < 3; j++) {
+				obj->cached_world_aabb_min.v[j] = world_pos[j];
+				obj->cached_world_aabb_max.v[j] = world_pos[j];
+				for (int k = 0; k < 3; k++) {
+					float a = m[j][k] * obj->bounds_min.v[k];
+					float b = m[j][k] * obj->bounds_max.v[k];
 					if (a < b) {
-						obj->cached_world_aabb_min.v[i] += a;
-						obj->cached_world_aabb_max.v[i] += b;
+						obj->cached_world_aabb_min.v[j] += a;
+						obj->cached_world_aabb_max.v[j] += b;
 					} else {
-						obj->cached_world_aabb_min.v[i] += b;
-						obj->cached_world_aabb_max.v[i] += a;
+						obj->cached_world_aabb_min.v[j] += b;
+						obj->cached_world_aabb_max.v[j] += a;
 					}
 				}
 			}

@@ -156,6 +156,10 @@ void scene_sync_physics(SceneId id)
 	if (s->objects) {{
 		for (uint16_t i = 0; i < s->object_count; i++) {{
 			if (s->objects[i].is_removed) continue;
+			// Skip parented objects - physics sync writes world-space position
+			// back to transform.loc, but parented objects store local-space there.
+			// Parented physics bodies are blocked at export time with a warning.
+			if (s->objects[i].parent_index >= 0) continue;
 			physics_sync_object(&s->objects[i]);
 		}}
 	}}
@@ -475,6 +479,7 @@ ArmObject *scene_alloc_object(SceneId id)
     // Reset object to clean state
     memset(obj, 0, sizeof(ArmObject));
     obj->visible = true;
+    obj->parent_index = -1;
     obj->transform.scale = (T3DVec3){{{{1.0f, 1.0f, 1.0f}}}};
     obj->transform.rot = (T3DQuat){{{{0.0f, 0.0f, 0.0f, 1.0f}}}};
     obj->transform.dirty = TRANSFORM_DIRTY_FRAMES;

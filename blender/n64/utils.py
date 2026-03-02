@@ -386,6 +386,21 @@ def compute_static_flags(scene_data: dict, trait_info: dict) -> None:
             )
             obj["is_static"] = is_physics_static and not any_trait_mutates
 
+    # Second pass: force children of dynamic parents to also be dynamic.
+    # A child with is_static=True whose parent is dynamic would never update
+    # its matrix after the parent moves.
+    for scene_name, scene in scene_data.items():
+        changed = True
+        while changed:
+            changed = False
+            for obj in scene.get("objects", []):
+                parent_idx = obj.get("parent_index", -1)
+                if parent_idx >= 0 and obj.get("is_static", False):
+                    parent_obj = scene["objects"][parent_idx]
+                    if not parent_obj.get("is_static", False):
+                        obj["is_static"] = False
+                        changed = True
+
 
 # =============================================================================
 # Collision Mesh

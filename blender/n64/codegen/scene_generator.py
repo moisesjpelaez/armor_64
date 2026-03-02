@@ -43,6 +43,19 @@ def convert_scene_data(scene_data: dict) -> dict:
             obj['pos'] = convert_vec3_list(obj['pos'])
             obj['rot'] = convert_quat_list(obj['rot'])
             obj['scale'] = convert_scale_list(obj['scale'])
+            # Convert local transforms for parented objects.
+            # SCALE_FACTOR must NOT be applied to local_scale — it's already
+            # inherited through the parent chain's world matrix (just like how
+            # tiny3d skeleton bone local transforms carry no extra scale).
+            # local_pos must be divided by SCALE_FACTOR to compensate for the
+            # parent's SF shrinking the offset during matrix composition.
+            if 'local_pos' in obj:
+                swapped = convert_vec3_list(obj['local_pos'])
+                obj['local_pos'] = [v / SCALE_FACTOR for v in swapped]
+            if 'local_rot' in obj:
+                obj['local_rot'] = convert_quat_list(obj['local_rot'])
+            if 'local_scale' in obj:
+                obj['local_scale'] = convert_scale_list(obj['local_scale'], factor=1.0)
             if 'bounds_min' in obj:
                 obj['bounds_min'] = convert_vec3_list(obj['bounds_min'])
                 obj['bounds_max'] = convert_vec3_list(obj['bounds_max'])
@@ -186,11 +199,26 @@ def generate_object_block(objects: List[Dict], trait_info: dict, scene_name: str
     for i, obj in enumerate(objects):
         prefix = f'objects[{i}]'
         is_static = obj.get("is_static", False)
-        lines.extend(generate_transform_block(prefix, obj["pos"], obj["rot"], obj["scale"], is_static))
+        parent_index = obj.get("parent_index", -1)
+
+        # For parented objects, transform stores local-space SRT.
+        # For root objects, transform stores world-space SRT (same as before).
+        if parent_index >= 0:
+            local_pos = obj.get("local_pos", obj["pos"])
+            local_rot = obj.get("local_rot", obj["rot"])
+            local_scale = obj.get("local_scale", obj["scale"])
+            lines.extend(generate_transform_block(prefix, local_pos, local_rot, local_scale, is_static))
+        else:
+            lines.extend(generate_transform_block(prefix, obj["pos"], obj["rot"], obj["scale"], is_static))
+
         lines.append(f'    models_get({obj["mesh"]});')
         lines.append(f'    {prefix}.dpl = models_get_dpl({obj["mesh"]});')
         mat_count = "1" if is_static else "FB_COUNT"
         lines.append(f'    {prefix}.model_mat = malloc_uncached(sizeof(T3DMat4FP) * {mat_count});')
+
+        # Parent/child hierarchy
+        lines.append(f'    {prefix}.parent_index = {parent_index};')
+
         lines.append(f'    {prefix}.visible = {str(obj["visible"]).lower()};')
         lines.append(f'    {prefix}.is_static = {str(is_static).lower()};')
         lines.append(f'    {prefix}.is_removed = false;')
