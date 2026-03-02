@@ -23,6 +23,14 @@ def _collect_all_objects(scene):
 
     Each instance collection empty is processed separately to capture
     all instances at their respective transforms.
+
+    Returns:
+        List of (blender_obj, instance_matrix, instancer_parent) tuples.
+        - instance_matrix: Empty's matrix_world for instance collection members,
+          None for direct scene objects.
+        - instancer_parent: The instancer Empty's parent object (e.g. Cube) for
+          instance collection members, None for direct scene objects.
+          Used to propagate parent/child hierarchy to the N64 scene.
     """
     objects = []
 
@@ -31,10 +39,11 @@ def _collect_all_objects(scene):
             # This is an instanced collection - process objects inside it
             # Each instance empty gets its own copy of the collection objects
             coll = obj.instance_collection
+            instancer_parent = obj.parent  # e.g. Cube
             for cobj in coll.all_objects:
-                objects.append((cobj, obj.matrix_world))
+                objects.append((cobj, obj.matrix_world, instancer_parent))
         else:
-            objects.append((obj, None))
+            objects.append((obj, None, None))
 
     return objects
 
@@ -46,14 +55,14 @@ def _topological_sort_objects(objects):
     world transforms are always computed before their children's.
 
     Args:
-        objects: list of (blender_obj, instance_matrix) tuples
+        objects: list of (blender_obj, instance_matrix, instancer_parent) tuples
 
     Returns:
         Sorted list in the same format, with parent/child ordering preserved.
     """
     # Build lookup: blender object name -> index in input list
     name_to_idx = {}
-    for i, (obj, _) in enumerate(objects):
+    for i, (obj, _, _) in enumerate(objects):
         # Use object name as key (unique within a scene)
         name_to_idx[obj.name] = i
 
@@ -64,11 +73,17 @@ def _topological_sort_objects(objects):
         if idx in visited:
             return
         visited.add(idx)
-        obj, inst_mat = objects[idx]
-        # Visit parent first (if it exists in this scene)
-        if obj.parent and obj.parent.name in name_to_idx:
-            visit(name_to_idx[obj.parent.name])
-        sorted_result.append((obj, inst_mat))
+        obj, inst_mat, iparent = objects[idx]
+        if inst_mat:
+            # Instance collection object: visit instancer's parent first
+            # (skip intra-collection obj.parent — names collide across instances)
+            if iparent and iparent.name in name_to_idx:
+                visit(name_to_idx[iparent.name])
+        else:
+            # Direct scene object: visit obj.parent first
+            if obj.parent and obj.parent.name in name_to_idx:
+                visit(name_to_idx[obj.parent.name])
+        sorted_result.append((obj, inst_mat, iparent))
 
     for i in range(len(objects)):
         visit(i)
@@ -149,7 +164,7 @@ def build_scene_data(exporter, scene):
         "groups": groups
     }
 
-    for obj, instance_matrix in _collect_all_objects(scene):
+    for obj, instance_matrix, _ in _collect_all_objects(scene):
         if obj.type == 'CAMERA':
             _process_camera(exporter, scene_name, obj, instance_matrix)
         elif obj.type == 'LIGHT':
@@ -157,18 +172,30 @@ def build_scene_data(exporter, scene):
 
     # Collect mesh objects separately for topological sort (parent/child ordering)
     mesh_objects = [
-        (obj, inst_mat) for obj, inst_mat in _collect_all_objects(scene)
+        (obj, inst_mat, iparent) for obj, inst_mat, iparent in _collect_all_objects(scene)
         if obj.type == 'MESH'
     ]
     sorted_mesh_objects = _topological_sort_objects(mesh_objects)
 
-    # Build name→index map for parent resolution
+    # Filter to only exportable objects (mesh in exported_meshes) BEFORE
+    # building the index map.  This ensures indices match the final objects[]
+    # array — if we build indices before filtering, skipped objects would
+    # cause parent_index values to point at wrong entries.
+    exportable_mesh_objects = []
+    for obj, inst_mat, iparent in sorted_mesh_objects:
+        mesh = obj.data
+        if mesh in exporter.exported_meshes:
+            exportable_mesh_objects.append((obj, inst_mat, iparent))
+        else:
+            log.warn(f'Object "{obj.name}": mesh not exported, skipping')
+
+    # Build name→index map for parent resolution (indices match objects[] array)
     mesh_name_to_index = {}
-    for i, (obj, _) in enumerate(sorted_mesh_objects):
+    for i, (obj, _, _) in enumerate(exportable_mesh_objects):
         mesh_name_to_index[obj.name] = i
 
-    for obj, instance_matrix in sorted_mesh_objects:
-        _process_mesh_object(exporter, scene_name, obj, instance_matrix, mesh_name_to_index)
+    for obj, instance_matrix, instancer_parent in exportable_mesh_objects:
+        _process_mesh_object(exporter, scene_name, obj, instance_matrix, mesh_name_to_index, instancer_parent)
 
 
 def _process_camera(exporter, scene_name, obj, instance_matrix=None):
@@ -212,8 +239,14 @@ def _process_light(exporter, scene_name, obj, instance_matrix=None):
     })
 
 
-def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, mesh_name_to_index=None):
-    """Process a mesh object and add to scene data."""
+def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, mesh_name_to_index=None, instancer_parent=None):
+    """Process a mesh object and add to scene data.
+
+    Args:
+        instancer_parent: For instance collection objects, the mesh parent
+            of the instancer Empty (e.g. Cube). Used to propagate hierarchy
+            so instance collection members follow the parent at runtime.
+    """
     mesh = obj.data
     if mesh not in exporter.exported_meshes:
         log.warn(f'Object "{obj.name}": mesh not exported, skipping')
@@ -223,16 +256,35 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, mesh_n
     # Determine parent index (−1 = root / no parent)
     parent_index = -1
     has_parent = False
-    if mesh_name_to_index and obj.parent and obj.parent.name in mesh_name_to_index:
-        parent_index = mesh_name_to_index[obj.parent.name]
-        has_parent = True
+    parent_source = None  # 'direct' or 'instancer'
 
+    if instance_matrix:
+        # Instance collection object: parent is the instancer Empty's parent.
+        # Intra-collection parents (obj.parent within the linked collection)
+        # are skipped because names collide across multiple instances of the
+        # same collection.  Flattening all members under the instancer's
+        # parent is correct for the typical use-case (decoration objects that
+        # rotate/move with a mesh parent like Cube).
+        if (mesh_name_to_index and instancer_parent is not None
+                and instancer_parent.name in mesh_name_to_index):
+            parent_index = mesh_name_to_index[instancer_parent.name]
+            has_parent = True
+            parent_source = 'instancer'
+    else:
+        # Direct scene object: use Blender's obj.parent
+        if mesh_name_to_index and obj.parent and obj.parent.name in mesh_name_to_index:
+            parent_index = mesh_name_to_index[obj.parent.name]
+            has_parent = True
+            parent_source = 'direct'
+
+    if has_parent:
         # Validation: block parented physics bodies
+        parent_name = instancer_parent.name if parent_source == 'instancer' else obj.parent.name
         if obj.rigid_body is not None:
             wrd = bpy.data.worlds['Arm']
             if wrd.arm_physics != 'Disabled':
                 log.warn(f'Object "{obj.name}": physics bodies on parented objects are not supported on N64. '
-                         f'Parent "{obj.parent.name}" will be ignored for physics sync.')
+                         f'Parent "{parent_name}" will be ignored for physics sync.')
 
     # Compute world matrix considering instance transform
     world_matrix = instance_matrix @ obj.matrix_local if instance_matrix else obj.matrix_world
@@ -244,8 +296,16 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, mesh_n
 
     # For parented objects, also compute local-space transform relative to parent.
     # For root objects, local == world.
-    if has_parent and not instance_matrix:
-        # Use Blender's local matrix (relative to parent)
+    if has_parent and parent_source == 'instancer':
+        # Instance collection member parented to instancer's parent.
+        # Compute local transform relative to the instancer's parent world matrix.
+        parent_world = instancer_parent.matrix_world
+        local_matrix = parent_world.inverted() @ world_matrix
+        local_pos = list(local_matrix.to_translation())
+        local_quat = local_matrix.to_quaternion()
+        local_scale = local_matrix.to_scale()
+    elif has_parent and parent_source == 'direct':
+        # Direct scene child: use Blender's local matrix (relative to parent)
         local_matrix = obj.matrix_local
         local_pos = list(local_matrix.to_translation())
         local_quat = local_matrix.to_quaternion()
