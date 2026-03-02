@@ -84,6 +84,8 @@ typedef struct {{
     int8_t shadow_dx;                       // Shadow X offset in pixels
     int8_t shadow_dy;                       // Shadow Y offset in pixels
     uint8_t shadow_style_id;               // Font style ID for shadow color (from Koui theme)
+    uint8_t align_h;                        // Horizontal alignment (0=left, 1=center, 2=right)
+    int16_t align_width;                    // Width for alignment (container/cell width, 0=none)
 }} UILabel;
 
 // Forward declaration for sprite_t
@@ -97,6 +99,8 @@ typedef struct {{
     sprite_t *sprite;                       // Loaded sprite (NULL until canvas_init)
     bool scale;                             // Whether to scale sprite to width/height
     bool visible;
+    uint8_t align_h;                        // Horizontal alignment (0=left, 1=center, 2=right)
+    int16_t align_width;                    // Width for alignment (container/cell width, 0=none)
 }} UIImage;
 
 // Group element (container for multiple images/labels with shared visibility)

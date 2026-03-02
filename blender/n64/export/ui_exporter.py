@@ -174,6 +174,39 @@ def _build_full_path(parent_path: str, key: str) -> str:
     return key
 
 
+def _calc_element_alignment(anchor, elem_width, container_width, final_x, json_align_h=0):
+    """Compute alignment info for any element based on its anchor.
+
+    For center/right anchored elements, undoes the pre-computed centering offset
+    and returns alignment parameters so the N64 runtime can center based on
+    actual dimensions (important for text whose glyph widths differ from Krom).
+
+    Args:
+        anchor: Element anchor enum value (0-8)
+        elem_width: Element width from JSON
+        container_width: Parent container width
+        final_x: Pre-computed absolute X position
+        json_align_h: Explicit alignmentHor from JSON properties (0=left default)
+
+    Returns:
+        (adjusted_x, align_h, align_width)
+    """
+    if anchor in (ANCHOR_TOP_CENTER, ANCHOR_MIDDLE_CENTER, ANCHOR_BOTTOM_CENTER):
+        # Undo the centering offset applied by _calc_anchor_position:
+        #   abs_x = (container_width // 2) - (elem_width // 2) + posX
+        # Reverse to get the container left edge position.
+        adjusted_x = final_x - (container_width // 2 - elem_width // 2)
+        return adjusted_x, 1, container_width  # ALIGN_CENTER
+    elif anchor in (ANCHOR_TOP_RIGHT, ANCHOR_MIDDLE_RIGHT, ANCHOR_BOTTOM_RIGHT):
+        adjusted_x = final_x - (container_width - elem_width)
+        return adjusted_x, 2, container_width  # ALIGN_RIGHT
+    elif json_align_h != 0:
+        # Explicit text alignment without center/right anchor
+        return final_x, json_align_h, elem_width
+    else:
+        return final_x, 0, 0
+
+
 def _create_group_with_children(exporter, elem, children, final_x, final_y,
                                  elem_by_key, children_by_parent,
                                  labels, images, groups, elements,
@@ -350,10 +383,11 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
     groups.append(group_data)
 
 
-def _handle_label(exporter, elem, final_x, final_y, labels, parent_path: str = ""):
+def _handle_label(exporter, elem, final_x, final_y, labels, container_width, parent_path: str = ""):
     """Handle Label element - extract text, font, and color info."""
     props = elem.get('properties', {})
     tid = elem.get('tID', '_label')
+    anchor = elem.get('anchor', ANCHOR_TOP_LEFT)
 
     font_size = DEFAULT_FONT_SIZE
     text_color = DEFAULT_TEXT_COLOR
@@ -384,17 +418,26 @@ def _handle_label(exporter, elem, final_x, final_y, labels, parent_path: str = "
     # Build full path for key
     full_path = _build_full_path(parent_path, elem['key'])
 
+    # Determine text alignment from anchor and/or explicit alignmentHor property.
+    # For center/right anchored labels, use rdpq alignment with the container width
+    # so libdragon centers text based on actual N64 font metrics (which may differ
+    # from the Krom font metrics used to compute JSON positions).
+    json_align_h = props.get('alignmentHor', 0)
+    label_x, align_h, align_width = _calc_element_alignment(
+        anchor, elem['width'], container_width, final_x, json_align_h
+    )
+
     label_data = {
         'key': full_path,  # Use full path as key
         'text': props.get('text', ''),
-        'pos_x': final_x,
+        'pos_x': label_x,
         'pos_y': final_y,
         'width': elem['width'],
         'height': elem['height'],
         'anchor': ANCHOR_TOP_LEFT,
         'visible': elem.get('visible', True),
-        'align_h': props.get('alignmentHor', 0),
-        'align_v': props.get('alignmentVert', 0),
+        'align_h': align_h,
+        'align_width': align_width,
         'tID': tid,
         'font_size': font_size,
         'text_color': text_color,
@@ -407,7 +450,8 @@ def _handle_label(exporter, elem, final_x, final_y, labels, parent_path: str = "
     labels.append(label_data)
 
 
-def _handle_image(exporter, elem, final_x, final_y, images, elements, is_root, parent_path: str = ""):
+def _handle_image(exporter, elem, final_x, final_y, images, elements, is_root,
+                  container_width, parent_path: str = ""):
     """Handle ImagePanel element - track image for copying."""
     props = elem.get('properties', {})
     image_name = props.get('imageName', '')
@@ -422,17 +466,24 @@ def _handle_image(exporter, elem, final_x, final_y, images, elements, is_root, p
     # Build full path for key
     full_path = _build_full_path(parent_path, elem['key'])
 
+    anchor = elem.get('anchor', ANCHOR_TOP_LEFT)
+    image_x, align_h, align_width = _calc_element_alignment(
+        anchor, elem['width'], container_width, final_x
+    )
+
     image_index = len(images)
     image_data = {
         'key': full_path,  # Use full path as key
         'image_name': image_name,
-        'pos_x': final_x,
+        'pos_x': image_x,
         'pos_y': final_y,
         'width': elem['width'],
         'height': elem['height'],
         'anchor': ANCHOR_TOP_LEFT,
         'visible': elem.get('visible', True),
         'scale': props.get('scale', False),
+        'align_h': align_h,
+        'align_width': align_width,
     }
     images.append(image_data)
 
@@ -502,11 +553,12 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
         return
 
     if elem_type == 'Label':
-        _handle_label(exporter, elem, final_x, final_y, labels, parent_path=parent_path)
+        _handle_label(exporter, elem, final_x, final_y, labels, container_width, parent_path=parent_path)
         return
 
     if elem_type == 'ImagePanel':
-        _handle_image(exporter, elem, final_x, final_y, images, elements, is_root, parent_path=parent_path)
+        _handle_image(exporter, elem, final_x, final_y, images, elements, is_root,
+                      container_width, parent_path=parent_path)
         return
 
     # Generic container with children - create a group
@@ -748,7 +800,9 @@ def write_canvas_c(exporter):
             shadow_dx = label.get('shadow_dx', 0)
             shadow_dy = label.get('shadow_dy', 0)
             shadow_style_id = label.get('shadow_style_id', 0)
-            lines.append(f'    {{ "{text_escaped}", {label["pos_x"]}, {label["pos_y"]}, {label["width"]}, {label["height"]}, {baseline_offset}, {label["anchor"]}, {style_id}, {font_id}, {visible}, {shadow}, {shadow_dx}, {shadow_dy}, {shadow_style_id} }},')
+            align_h = label.get('align_h', 0)
+            align_width = label.get('align_width', 0)
+            lines.append(f'    {{ "{text_escaped}", {label["pos_x"]}, {label["pos_y"]}, {label["width"]}, {label["height"]}, {baseline_offset}, {label["anchor"]}, {style_id}, {font_id}, {visible}, {shadow}, {shadow_dx}, {shadow_dy}, {shadow_style_id}, {align_h}, {align_width} }},')
         canvas_label_defs[canvas_name] = {
             'defs': '\n'.join(lines),
             'count': len(canvas.get('labels', []))
@@ -762,7 +816,9 @@ def write_canvas_c(exporter):
             safe_name = image['image_name'].lower().replace(' ', '_')
             visible = 'true' if image['visible'] else 'false'
             scale = 'true' if image.get('scale', False) else 'false'
-            lines.append(f'    {{ "{safe_name}", {image["pos_x"]}, {image["pos_y"]}, {image["width"]}, {image["height"]}, {image["anchor"]}, {scale}, {visible}, NULL }},')
+            align_h = image.get('align_h', 0)
+            align_width = image.get('align_width', 0)
+            lines.append(f'    {{ "{safe_name}", {image["pos_x"]}, {image["pos_y"]}, {image["width"]}, {image["height"]}, {image["anchor"]}, {scale}, {visible}, NULL, {align_h}, {align_width} }},')
         canvas_image_defs[canvas_name] = {
             'defs': '\n'.join(lines),
             'count': len(canvas.get('images', []))

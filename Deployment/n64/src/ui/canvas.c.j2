@@ -98,6 +98,8 @@ typedef struct {{
     int8_t shadow_dx;   // Shadow X offset in pixels
     int8_t shadow_dy;   // Shadow Y offset in pixels
     uint8_t shadow_style_id; // Font style ID for shadow color (from Koui theme)
+    uint8_t align_h;    // Horizontal alignment (0=left, 1=center, 2=right)
+    int16_t align_width; // Width for alignment (container/cell width, 0=none)
 }} UILabelDef;
 #endif
 
@@ -112,6 +114,8 @@ typedef struct {{
     bool scale;               // Whether to scale sprite to width/height
     bool visible;
     sprite_t *sprite;         // Loaded sprite (set at init time)
+    uint8_t align_h;          // Horizontal alignment (0=left, 1=center, 2=right)
+    int16_t align_width;      // Width for alignment (container/cell width, 0=none)
 }} UIImageDef;
 #endif
 
@@ -205,6 +209,8 @@ static void load_labels(const UILabelDef *defs, int count) {{
             label->shadow_dx = def->shadow_dx;
             label->shadow_dy = def->shadow_dy;
             label->shadow_style_id = def->shadow_style_id;
+            label->align_h = def->align_h;
+            label->align_width = def->align_width;
             ui_label_add(label);
             if (g_canvas_label_count < UI_LABEL_COUNT) {{
                 g_canvas_labels[g_canvas_label_count++] = label;
@@ -235,6 +241,8 @@ static void load_images(UIImageDef *defs, int count) {{
             ui_image_set_size(image, def->width, def->height);
             image->scale = def->scale;
             image->visible = def->visible;
+            image->align_h = def->align_h;
+            image->align_width = def->align_width;
             ui_image_add(image);
             if (g_canvas_image_count < UI_IMAGE_COUNT) {{
                 g_canvas_images[g_canvas_image_count++] = image;
@@ -664,14 +672,22 @@ void canvas_render(void)
         UIImage *image = g_image_render_list[i];
         if (!image || !image->visible || !image->sprite) continue;
 
+        // Compute render X based on alignment
+        int16_t render_x = image->pos_x;
+        if (image->align_h == 1 && image->align_width > 0) {{
+            render_x = image->pos_x + (image->align_width - image->width) / 2;
+        }} else if (image->align_h == 2 && image->align_width > 0) {{
+            render_x = image->pos_x + image->align_width - image->width;
+        }}
+
         if (image->scale) {{
             // Calculate scale factors
             float scale_x = (float)image->width / (float)image->sprite->width;
             float scale_y = (float)image->height / (float)image->sprite->height;
-            rdpq_sprite_blit(image->sprite, image->pos_x, image->pos_y,
+            rdpq_sprite_blit(image->sprite, render_x, image->pos_y,
                 &(rdpq_blitparms_t){{ .scale_x = scale_x, .scale_y = scale_y }});
         }} else {{
-            rdpq_sprite_blit(image->sprite, image->pos_x, image->pos_y, NULL);
+            rdpq_sprite_blit(image->sprite, render_x, image->pos_y, NULL);
         }}
     }}
 #endif
@@ -686,11 +702,11 @@ void canvas_render(void)
         if (!label || !label->visible) continue;
 
         // Use style_id from Koui theme for text color
-        rdpq_textparms_t parms = {{ .style_id = label->style_id }};
+        rdpq_textparms_t parms = {{ .style_id = label->style_id, .align = label->align_h, .width = label->align_width }};
 
         // Draw shadow pass first (behind main text)
         if (label->shadow) {{
-            rdpq_textparms_t shadow_parms = {{ .style_id = label->shadow_style_id }};
+            rdpq_textparms_t shadow_parms = {{ .style_id = label->shadow_style_id, .align = label->align_h, .width = label->align_width }};
             rdpq_text_print(&shadow_parms, label->font_id,
                 label->pos_x + label->shadow_dx,
                 label->pos_y + label->baseline_offset + label->shadow_dy,

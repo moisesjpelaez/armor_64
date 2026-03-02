@@ -19,6 +19,15 @@ import subprocess
 import sys
 import types
 
+
+def _win_path_to_posix(path):
+    """Convert a Windows path to POSIX for MSYS2 (e.g. D:\\foo → /d/foo)."""
+    path = os.path.abspath(path).replace('\\', '/')
+    # Convert drive letter: D:/... → /d/...
+    if len(path) >= 2 and path[1] == ':':
+        path = '/' + path[0].lower() + path[2:]
+    return path
+
 import bpy
 from bpy.props import StringProperty, BoolProperty, EnumProperty
 
@@ -361,14 +370,6 @@ def _register_utils_patches():
     arm.utils.target_to_gapi = _patched_target_to_gapi
 
     # --- Add N64 helper functions ---
-    def _win_path_to_posix(path):
-        """Convert a Windows path to POSIX for MSYS2 (e.g. C:\\foo → /c/foo)."""
-        path = path.replace('\\', '/')
-        # Convert drive letter: C:/... → /c/...
-        if len(path) >= 2 and path[1] == ':':
-            path = '/' + path[0].lower() + path[2:]
-        return path
-
     def get_n64_toolchain_path():
         if os.getenv('N64_INST') is not None:
             return os.getenv('N64_INST')
@@ -814,9 +815,9 @@ class N64_OT_BuildLibdragon(bpy.types.Operator):
             return {"CANCELLED"}
 
         addon_prefs = arm.utils.get_arm_preferences()
-        libdragon_path_posix = os.path.abspath(libdragon_path).replace("\\", "/")
-        n64_toolchain_path = os.path.abspath(addon_prefs.n64_toolchain_path).replace("\\", "/")
-        mingw64_path = os.path.abspath(addon_prefs.mingw64_path).replace("\\", "/")
+        libdragon_path_posix = _win_path_to_posix(libdragon_path)
+        n64_toolchain_path = _win_path_to_posix(addon_prefs.n64_toolchain_path)
+        mingw64_path = _win_path_to_posix(addon_prefs.mingw64_path)
 
         print('Building libdragon for Nintendo 64, check console for details.')
 
@@ -833,7 +834,8 @@ class N64_OT_BuildLibdragon(bpy.types.Operator):
             f'make CURDIR=. -j4 install-mk && '
             f'make CURDIR=. -j4 clobber && '
             f'make CURDIR=. -j4 libdragon tools && '
-            f'make CURDIR=. -j4 install tools-install'
+            f'make CURDIR=. -j4 install tools-install && '
+            f'make CURDIR=. -j4 examples'
         )
         result = subprocess.run(
             [rf'{msys2_exe}', '--login', '-c', build_cmd],
@@ -873,9 +875,9 @@ class N64_OT_BuildTiny3d(bpy.types.Operator):
             return {"CANCELLED"}
 
         addon_prefs = arm.utils.get_arm_preferences()
-        tiny3d_path_posix = os.path.abspath(tiny3d_path).replace("\\", "/")
-        n64_toolchain_path = os.path.abspath(addon_prefs.n64_toolchain_path).replace("\\", "/")
-        mingw64_path = os.path.abspath(addon_prefs.mingw64_path).replace("\\", "/")
+        tiny3d_path_posix = _win_path_to_posix(tiny3d_path)
+        n64_toolchain_path = _win_path_to_posix(addon_prefs.n64_toolchain_path)
+        mingw64_path = _win_path_to_posix(addon_prefs.mingw64_path)
 
         print('Building Tiny3D for Nintendo 64, check console for details.')
 
@@ -891,8 +893,10 @@ class N64_OT_BuildTiny3d(bpy.types.Operator):
             f'cd "{tiny3d_path_posix}" && '
             f'make CURDIR=. clean 2>/dev/null; '
             f'make CURDIR=. -j4 && '
-            f'make CURDIR=. -C tools/gltf_importer clean 2>/dev/null; '
-            f'make CURDIR=. -C tools/gltf_importer -j4'
+            f'make CURDIR=. install && '
+            f'(cd tools/gltf_importer && make CURDIR=. clean 2>/dev/null); '
+            f'(cd tools/gltf_importer && make CURDIR=. -j4) && '
+            f'for d in examples/*/; do (cd "$d" && make T3D_INST="{n64_toolchain_path}/include" CURDIR=. -j4) || exit 1; done'
         )
         result = subprocess.run(
             [rf'{msys2_exe}', '--login', '-c', build_cmd],
