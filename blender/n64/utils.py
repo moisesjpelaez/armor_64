@@ -77,7 +77,8 @@ def copy_dir(name, path=''):
     out_path = os.path.join(arm.utils.build_dir(), 'n64', path, name)
     if os.path.exists(out_path):
         shutil.rmtree(out_path)
-    shutil.copytree(tmpl_path, out_path)
+    # Skip .j2 template files - they are rendered separately by exporters
+    shutil.copytree(tmpl_path, out_path, ignore=shutil.ignore_patterns('*.j2'))
 
 
 # =============================================================================

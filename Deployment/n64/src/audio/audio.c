@@ -156,7 +156,7 @@ void arm_audio_start(ArmSoundHandle *handle)
     if (is_stereo) {
         // Stereo needs TWO consecutive free channels
         for (int i = 0; i < AUDIO_MIXER_CHANNELS - 1; i++) {
-            uint8_t pair_mask = (1 << i) | (1 << (i + 1));
+            uint32_t pair_mask = (1u << i) | (1u << (i + 1));
             if ((state.channel_in_use & pair_mask) == 0) {
                 ch = i;
                 break;
@@ -165,7 +165,7 @@ void arm_audio_start(ArmSoundHandle *handle)
     } else {
         // Mono needs one free channel
         for (int i = 0; i < AUDIO_MIXER_CHANNELS; i++) {
-            if (!(state.channel_in_use & (1 << i))) {
+            if (!(state.channel_in_use & (1u << i))) {
                 ch = i;
                 break;
             }
@@ -221,7 +221,7 @@ void arm_audio_replay(ArmSoundHandle *handle)
     int ch = -1;
     if (is_stereo) {
         for (int i = 0; i < AUDIO_MIXER_CHANNELS - 1; i++) {
-            uint8_t pair_mask = (1 << i) | (1 << (i + 1));
+            uint32_t pair_mask = (1u << i) | (1u << (i + 1));
             if ((state.channel_in_use & pair_mask) == 0) {
                 ch = i;
                 break;
@@ -229,7 +229,7 @@ void arm_audio_replay(ArmSoundHandle *handle)
         }
     } else {
         for (int i = 0; i < AUDIO_MIXER_CHANNELS; i++) {
-            if (!(state.channel_in_use & (1 << i))) {
+            if (!(state.channel_in_use & (1u << i))) {
                 ch = i;
                 break;
             }
