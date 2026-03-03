@@ -36,6 +36,9 @@ void scene_{scene_name}_init(ArmScene *scene)
     scene->camera_count = {camera_count};
     scene->active_camera_id = 0;
 
+    // Forward-declare objects array so camera parent pointers can reference it
+    static ArmObject objects[{object_count}];
+
 {cameras_block}
 
     // Compute lifecycle flags for cameras from traits
@@ -68,7 +71,6 @@ void scene_{scene_name}_init(ArmScene *scene)
         }}
     }}
 
-    static ArmObject objects[{object_count}];
     scene->objects = objects;
     scene->object_count = {object_count};
     scene->active_count = {object_count};  // All objects start active

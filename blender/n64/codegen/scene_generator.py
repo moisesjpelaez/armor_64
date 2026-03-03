@@ -28,6 +28,15 @@ def convert_scene_data(scene_data: dict) -> dict:
         for cam in scene.get('cameras', []):
             cam['pos'] = convert_vec3_list(cam['pos'])
             cam['target'] = convert_vec3_list(cam['target'])
+            # Convert local transforms for parented cameras.
+            # Must divide by SCALE_FACTOR to compensate for the parent's
+            # scaled world_mat — same as object local_pos conversion.
+            if 'local_pos' in cam:
+                swapped = convert_vec3_list(cam['local_pos'])
+                cam['local_pos'] = [v / SCALE_FACTOR for v in swapped]
+            if 'local_target' in cam:
+                swapped = convert_vec3_list(cam['local_target'])
+                cam['local_target'] = [v / SCALE_FACTOR for v in swapped]
 
         # Convert lights
         for light in scene.get('lights', []):
@@ -174,6 +183,15 @@ def generate_camera_block(cameras: List[Dict], trait_info: dict, scene_name: str
         lines.append(f'    {prefix}.near = {cam["near"]:.6f}f;')
         lines.append(f'    {prefix}.far = {cam["far"]:.6f}f;')
 
+        # Camera parent hierarchy
+        parent_index = cam.get("parent_index", -1)
+        if parent_index >= 0 and 'local_pos' in cam:
+            lines.append(f'    {prefix}.parent_world_mat = &objects[{parent_index}].world_mat;')
+            lines.append(f'    {prefix}.local_pos = {_fmt_vec3(cam["local_pos"])};')
+            lines.append(f'    {prefix}.local_target = {_fmt_vec3(cam["local_target"])};')
+        else:
+            lines.append(f'    {prefix}.parent_world_mat = NULL;')
+
         lines.extend(generate_trait_block(prefix, cam.get("traits", []), trait_info, scene_name))
     return '\n'.join(lines)
 
@@ -193,13 +211,19 @@ def generate_light_block(lights: List[Dict], trait_info: dict, scene_name: str) 
 
 
 def generate_object_block(objects: List[Dict], trait_info: dict, scene_name: str) -> str:
-    """Generate C code for all objects in a scene."""
+    """Generate C code for all objects in a scene.
+
+    Objects include both mesh objects and empties.  Empties are lightweight
+    transform nodes with dpl=NULL and model_mat=NULL that participate in
+    the parent/child hierarchy and support traits.
+    """
     lines = []
 
     for i, obj in enumerate(objects):
         prefix = f'objects[{i}]'
         is_static = obj.get("is_static", False)
         parent_index = obj.get("parent_index", -1)
+        is_empty = obj.get("is_empty", False)
 
         # For parented objects, transform stores local-space SRT.
         # For root objects, transform stores world-space SRT (same as before).
@@ -211,10 +235,15 @@ def generate_object_block(objects: List[Dict], trait_info: dict, scene_name: str
         else:
             lines.extend(generate_transform_block(prefix, obj["pos"], obj["rot"], obj["scale"], is_static))
 
-        lines.append(f'    models_get({obj["mesh"]});')
-        lines.append(f'    {prefix}.dpl = models_get_dpl({obj["mesh"]});')
-        mat_count = "1" if is_static else "FB_COUNT"
-        lines.append(f'    {prefix}.model_mat = malloc_uncached(sizeof(T3DMat4FP) * {mat_count});')
+        if is_empty:
+            # Empty objects: no mesh, no display list, no model matrix
+            lines.append(f'    {prefix}.dpl = NULL;')
+            lines.append(f'    {prefix}.model_mat = NULL;')
+        else:
+            lines.append(f'    models_get({obj["mesh"]});')
+            lines.append(f'    {prefix}.dpl = models_get_dpl({obj["mesh"]});')
+            mat_count = "1" if is_static else "FB_COUNT"
+            lines.append(f'    {prefix}.model_mat = malloc_uncached(sizeof(T3DMat4FP) * {mat_count});')
 
         # Parent/child hierarchy
         lines.append(f'    {prefix}.parent_index = {parent_index};')

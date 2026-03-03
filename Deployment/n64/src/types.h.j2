@@ -215,10 +215,16 @@ typedef struct ArmLight {{
 
 typedef struct ArmCamera {{
     ArmTransform transform;
-    T3DVec3 target;
+    T3DVec3 target;               // World-space look-at target (updated per-frame when parented)
     float fov;
     float near;
     float far;
+
+    // Parent hierarchy (camera follows parent's world transform)
+    T3DMat4 *parent_world_mat;    // NULL = no parent; else points to parent ArmObject.world_mat
+    T3DVec3 local_pos;            // Camera position relative to parent
+    T3DVec3 local_target;         // Look-at target relative to parent
+
     uint8_t trait_count;
     uint8_t lifecycle_flags;
     ArmTrait *traits;

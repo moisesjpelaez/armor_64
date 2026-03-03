@@ -18,8 +18,25 @@
 
 static int frameIdx = 0;
 
+// Forward declaration — called in renderer_begin_frame before camera setup
+void renderer_update_objects(ArmScene *scene);
+
 void renderer_begin_frame(T3DViewport *viewport, ArmScene *scene) {
+	// Update object matrices FIRST — camera parent-follow needs the parent's world_mat
+	frameIdx = (frameIdx + 1) % FB_COUNT;
+	renderer_update_objects(scene);
+
   	ArmCamera *cam = &scene->cameras[scene->active_camera_id];
+
+	// If camera has a parent, transform local pos/target into world space
+	if (cam->parent_world_mat) {
+		T3DVec4 world_pos4, world_target4;
+		t3d_mat4_mul_vec3(&world_pos4, cam->parent_world_mat, &cam->local_pos);
+		t3d_mat4_mul_vec3(&world_target4, cam->parent_world_mat, &cam->local_target);
+		cam->transform.loc = (T3DVec3){{world_pos4.v[0], world_pos4.v[1], world_pos4.v[2]}};
+		cam->target = (T3DVec3){{world_target4.v[0], world_target4.v[1], world_target4.v[2]}};
+	}
+
   	t3d_viewport_set_projection(viewport, T3D_DEG_TO_RAD(cam->fov), cam->near, cam->far);
   	t3d_viewport_look_at(viewport, (T3DVec3 *)&cam->transform.loc, &cam->target, &(T3DVec3){{0.0f, 1.0f, 0.0f}});
 }
@@ -78,14 +95,18 @@ void renderer_update_objects(ArmScene *scene) {
 			// Store world float matrix for children to use
 			obj->world_mat = world_float;
 
-			// Step 3: Convert to fixed-point for RSP rendering
-			t3d_mat4_to_fixed(&obj->model_mat[mat_idx], &world_float);
+			// Step 3: Convert to fixed-point for RSP rendering (skip for empties)
+			if (obj->model_mat) {
+				t3d_mat4_to_fixed(&obj->model_mat[mat_idx], &world_float);
+			}
 		} else {
 			// Root object: build float matrix, store for children, convert to FP
 			T3DMat4 world_float;
 			t3d_mat4_from_srt(&world_float, obj->transform.scale.v, obj->transform.rot.v, obj->transform.loc.v);
 			obj->world_mat = world_float;
-			t3d_mat4_to_fixed(&obj->model_mat[mat_idx], &world_float);
+			if (obj->model_mat) {
+				t3d_mat4_to_fixed(&obj->model_mat[mat_idx], &world_float);
+			}
 		}
 
 		// Update cached world-space AABB for frustum culling.
@@ -133,8 +154,7 @@ void renderer_update_objects(ArmScene *scene) {
 }
 
 void renderer_draw_scene(T3DViewport *viewport, ArmScene *scene) {
-	frameIdx = (frameIdx + 1) % FB_COUNT;
-	renderer_update_objects(scene);
+	// Objects already updated in renderer_begin_frame
 
 	surface_t *fb = display_get();
 	rdpq_attach(fb, display_get_zbuf());

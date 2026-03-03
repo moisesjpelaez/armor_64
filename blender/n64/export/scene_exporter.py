@@ -60,6 +60,10 @@ def _topological_sort_objects(objects):
     Returns:
         Sorted list in the same format, with parent/child ordering preserved.
     """
+    # Stable base order: sort by name so indices are deterministic across builds.
+    # Blender's scene.collection.all_objects has no guaranteed order.
+    objects = sorted(objects, key=lambda t: t[0].name)
+
     # Build lookup: blender object name -> index in input list
     name_to_idx = {}
     for i, (obj, _, _) in enumerate(objects):
@@ -165,41 +169,63 @@ def build_scene_data(exporter, scene):
     }
 
     for obj, instance_matrix, _ in _collect_all_objects(scene):
-        if obj.type == 'CAMERA':
-            _process_camera(exporter, scene_name, obj, instance_matrix)
-        elif obj.type == 'LIGHT':
+        if obj.type == 'LIGHT':
             _process_light(exporter, scene_name, obj, instance_matrix)
 
-    # Collect mesh objects separately for topological sort (parent/child ordering)
-    mesh_objects = [
+    # Collect mesh + empty objects together for topological sort (parent/child ordering).
+    # Empties go into the same objects[] array as meshes — they're ArmObjects with
+    # dpl=NULL and model_mat=NULL.  This enables full nested parenting:
+    #   empty→mesh, mesh→empty, empty→empty, camera→any.
+    scene_objects = [
         (obj, inst_mat, iparent) for obj, inst_mat, iparent in _collect_all_objects(scene)
-        if obj.type == 'MESH'
+        if obj.type == 'MESH' or obj.type == 'EMPTY'
     ]
-    sorted_mesh_objects = _topological_sort_objects(mesh_objects)
+    sorted_scene_objects = _topological_sort_objects(scene_objects)
 
-    # Filter to only exportable objects (mesh in exported_meshes) BEFORE
-    # building the index map.  This ensures indices match the final objects[]
-    # array — if we build indices before filtering, skipped objects would
-    # cause parent_index values to point at wrong entries.
-    exportable_mesh_objects = []
-    for obj, inst_mat, iparent in sorted_mesh_objects:
-        mesh = obj.data
-        if mesh in exporter.exported_meshes:
-            exportable_mesh_objects.append((obj, inst_mat, iparent))
-        else:
-            log.warn(f'Object "{obj.name}": mesh not exported, skipping')
+    # Filter exportable:  meshes must be in exported_meshes, empties always pass.
+    # Instance collection empties (instance_type == 'COLLECTION') are instancer
+    # holders — they should NOT become scene entities (they're consumed above to
+    # build instance_matrix).  Only plain empties (instance_type != 'COLLECTION')
+    # are actual scene objects.
+    exportable_objects = []
+    for obj, inst_mat, iparent in sorted_scene_objects:
+        if obj.type == 'MESH':
+            mesh = obj.data
+            if mesh in exporter.exported_meshes:
+                exportable_objects.append((obj, inst_mat, iparent))
+            else:
+                log.warn(f'Object "{obj.name}": mesh not exported, skipping')
+        elif obj.type == 'EMPTY':
+            # Skip instance collection empties — they are consumed as instancers,
+            # not exported as scene entities.  Also skip empties that come through
+            # instance collections (inst_mat is not None) to avoid duplicates.
+            if obj.instance_type != 'COLLECTION' and inst_mat is None:
+                exportable_objects.append((obj, inst_mat, iparent))
 
     # Build name→index map for parent resolution (indices match objects[] array)
-    mesh_name_to_index = {}
-    for i, (obj, _, _) in enumerate(exportable_mesh_objects):
-        mesh_name_to_index[obj.name] = i
+    object_name_to_index = {}
+    for i, (obj, _, _) in enumerate(exportable_objects):
+        object_name_to_index[obj.name] = i
 
-    for obj, instance_matrix, instancer_parent in exportable_mesh_objects:
-        _process_mesh_object(exporter, scene_name, obj, instance_matrix, mesh_name_to_index, instancer_parent)
+    for obj, instance_matrix, instancer_parent in exportable_objects:
+        if obj.type == 'MESH':
+            _process_mesh_object(exporter, scene_name, obj, instance_matrix, object_name_to_index, instancer_parent)
+        elif obj.type == 'EMPTY':
+            _process_empty_object(exporter, scene_name, obj, object_name_to_index)
+
+    # Now process cameras (after objects are indexed, so camera parent resolution works)
+    for obj, instance_matrix, _ in _collect_all_objects(scene):
+        if obj.type == 'CAMERA':
+            _process_camera(exporter, scene_name, obj, instance_matrix, object_name_to_index)
 
 
-def _process_camera(exporter, scene_name, obj, instance_matrix=None):
-    """Process a camera object and add to scene data."""
+def _process_camera(exporter, scene_name, obj, instance_matrix=None, object_name_to_index=None):
+    """Process a camera object and add to scene data.
+
+    Args:
+        object_name_to_index: dict mapping object names to indices in the
+            unified objects[] array.  Used for camera parent resolution.
+    """
     # Compute world matrix considering instance transform
     world_matrix = instance_matrix @ obj.matrix_local if instance_matrix else obj.matrix_world
     world_pos = list(world_matrix.to_translation())
@@ -213,15 +239,36 @@ def _process_camera(exporter, scene_name, obj, instance_matrix=None):
     sensor = max(obj.data.sensor_width, obj.data.sensor_height)
     cam_fov = math.degrees(2 * math.atan((sensor * 0.5) / obj.data.lens))
 
-    exporter.scene_data[scene_name]["cameras"].append({
+    # Camera parent detection — camera can be child of any object (mesh or empty)
+    parent_index = -1
+    local_pos = None
+    local_target = None
+    if object_name_to_index and obj.parent and obj.parent.name in object_name_to_index:
+        parent_index = object_name_to_index[obj.parent.name]
+        # Compute camera pos/target relative to parent
+        parent_world = obj.parent.matrix_world
+        parent_inv = parent_world.inverted()
+        from mathutils import Vector
+        local_pos_vec = parent_inv @ Vector(world_pos)
+        local_target_vec = parent_inv @ Vector(cam_target)
+        local_pos = list(local_pos_vec)
+        local_target = list(local_target_vec)
+
+    cam_data = {
         "name": arm.utils.safesrc(linked_utils.asset_name(obj)),
         "pos": world_pos,
         "target": cam_target,
         "fov": cam_fov,
         "near": obj.data.clip_start,
         "far": obj.data.clip_end,
-        "traits": _extract_traits(obj)
-    })
+        "traits": _extract_traits(obj),
+        "parent_index": parent_index,
+    }
+    if local_pos is not None:
+        cam_data["local_pos"] = local_pos
+        cam_data["local_target"] = local_target
+
+    exporter.scene_data[scene_name]["cameras"].append(cam_data)
 
 
 def _process_light(exporter, scene_name, obj, instance_matrix=None):
@@ -239,7 +286,59 @@ def _process_light(exporter, scene_name, obj, instance_matrix=None):
     })
 
 
-def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, mesh_name_to_index=None, instancer_parent=None):
+def _process_empty_object(exporter, scene_name, obj, object_name_to_index=None):
+    """Process an empty object and add to scene data as an ArmObject (no mesh).
+
+    Empties are lightweight transform nodes in the unified objects[] array.
+    They support full parent/child hierarchy, traits, and can serve as
+    parents for cameras, mesh objects, or other empties.
+    """
+    world_matrix = obj.matrix_world
+
+    # Parent resolution — empties can parent to any object type in objects[]
+    parent_index = -1
+    has_parent = False
+    if object_name_to_index and obj.parent and obj.parent.name in object_name_to_index:
+        parent_index = object_name_to_index[obj.parent.name]
+        has_parent = True
+
+    # World-space decomposition
+    world_pos = list(world_matrix.to_translation())
+    world_quat = world_matrix.to_quaternion()
+    world_scale = world_matrix.to_scale()
+
+    # Local transform for parented empties
+    if has_parent:
+        local_matrix = obj.matrix_local
+        local_pos = list(local_matrix.to_translation())
+        local_quat = local_matrix.to_quaternion()
+        local_scale = local_matrix.to_scale()
+    else:
+        local_pos = world_pos
+        local_quat = world_quat
+        local_scale = world_scale
+
+    obj_data = {
+        "name": arm.utils.safesrc(obj.name),
+        "is_empty": True,
+        "pos": world_pos,
+        "rot": [world_quat.x, world_quat.y, world_quat.z, world_quat.w],
+        "scale": list(world_scale),
+        "visible": not obj.hide_render,
+        "bounds_min": [0, 0, 0],
+        "bounds_max": [0, 0, 0],
+        "traits": _extract_traits(obj),
+        "is_static": True,  # Computed after trait_info is loaded
+        "parent_index": parent_index,
+        "local_pos": local_pos,
+        "local_rot": [local_quat.x, local_quat.y, local_quat.z, local_quat.w],
+        "local_scale": list(local_scale),
+    }
+
+    exporter.scene_data[scene_name]["objects"].append(obj_data)
+
+
+def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object_name_to_index=None, instancer_parent=None):
     """Process a mesh object and add to scene data.
 
     Args:
@@ -265,15 +364,15 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, mesh_n
         # same collection.  Flattening all members under the instancer's
         # parent is correct for the typical use-case (decoration objects that
         # rotate/move with a mesh parent like Cube).
-        if (mesh_name_to_index and instancer_parent is not None
-                and instancer_parent.name in mesh_name_to_index):
-            parent_index = mesh_name_to_index[instancer_parent.name]
+        if (object_name_to_index and instancer_parent is not None
+                and instancer_parent.name in object_name_to_index):
+            parent_index = object_name_to_index[instancer_parent.name]
             has_parent = True
             parent_source = 'instancer'
     else:
         # Direct scene object: use Blender's obj.parent
-        if mesh_name_to_index and obj.parent and obj.parent.name in mesh_name_to_index:
-            parent_index = mesh_name_to_index[obj.parent.name]
+        if object_name_to_index and obj.parent and obj.parent.name in object_name_to_index:
+            parent_index = object_name_to_index[obj.parent.name]
             has_parent = True
             parent_source = 'direct'
 
