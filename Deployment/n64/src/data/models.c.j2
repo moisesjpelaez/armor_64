@@ -11,6 +11,7 @@ static const char *MODEL_PATHS[MODEL_COUNT] = {{
 typedef struct {{
     T3DModel *model;
     rspq_block_t *dpl;
+    rspq_block_t *shadow_dpl;  // Geometry-only DPL for shadow rendering (no materials)
     uint16_t ref_count;  // Reference count for shared models
     uint8_t loaded;
 }} ModelEntry;
@@ -22,6 +23,7 @@ void models_init(void)
     for (uint8_t i = 0; i < MODEL_COUNT; i++) {{
         g_models[i].model = NULL;
 		g_models[i].dpl = NULL;
+		g_models[i].shadow_dpl = NULL;
         g_models[i].ref_count = 0;
         g_models[i].loaded = 0;
     }}
@@ -32,6 +34,10 @@ void models_shutdown(void)
     for (uint8_t i = 0; i < MODEL_COUNT; i++) {{
         if (g_models[i].loaded) {{
             // Free display list FIRST since it references model data
+            if (g_models[i].shadow_dpl) {{
+                rspq_block_free(g_models[i].shadow_dpl);
+                g_models[i].shadow_dpl = NULL;
+            }}
             if (g_models[i].dpl) {{
                 rspq_block_free(g_models[i].dpl);
                 g_models[i].dpl = NULL;
@@ -63,6 +69,16 @@ T3DModel *models_get(ModelId id)
 		rspq_block_begin();
 		t3d_model_draw(e->model);
 		e->dpl = rspq_block_end();
+
+		// Build shadow DPL: geometry only (no materials), so shadow pass
+		// can set its own flat-color material without the model overriding it.
+		rspq_block_begin();
+		T3DModelIter shadow_iter = t3d_model_iter_create(e->model, T3D_CHUNK_TYPE_OBJECT);
+		while (t3d_model_iter_next(&shadow_iter)) {{
+			t3d_model_draw_object(shadow_iter.object, NULL);
+		}}
+		e->shadow_dpl = rspq_block_end();
+
 		e->loaded = 1;
     }}
     e->ref_count++;  // Increment reference count
@@ -72,6 +88,11 @@ T3DModel *models_get(ModelId id)
 rspq_block_t *models_get_dpl(ModelId id)
 {{
     return g_models[id].dpl;
+}}
+
+rspq_block_t *models_get_shadow_dpl(ModelId id)
+{{
+    return g_models[id].shadow_dpl;
 }}
 
 // Release a reference to a model
@@ -99,6 +120,10 @@ void models_unload(ModelId id)
     ModelEntry *e = &g_models[id];
     if (e->loaded) {{
         // Free display list FIRST since it references model data
+        if (e->shadow_dpl) {{
+            rspq_block_free(e->shadow_dpl);
+            e->shadow_dpl = NULL;
+        }}
         if (e->dpl) {{
             rspq_block_free(e->dpl);
             e->dpl = NULL;

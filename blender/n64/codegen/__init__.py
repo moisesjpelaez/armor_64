@@ -35,6 +35,7 @@ from arm.n64.codegen.scene_generator import (
     generate_physics_block,
     generate_contact_subscriptions_block,
     generate_scene_traits_block,
+    generate_shadow_color_block,
 )
 
 from arm.n64.codegen.trait_emitter import TraitEmitter
@@ -59,6 +60,7 @@ __all__ = [
     'generate_physics_block',
     'generate_contact_subscriptions_block',
     'generate_scene_traits_block',
+    'generate_shadow_color_block',
     # Classes
     'TraitEmitter',
     'AutoloadEmitter',

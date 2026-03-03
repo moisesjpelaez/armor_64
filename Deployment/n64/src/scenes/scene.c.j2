@@ -31,6 +31,8 @@ void scene_{scene_name}_init(ArmScene *scene)
     scene->world.ambient_color[2] = {ab};
     scene->world.ambient_color[3] = 0xFF;
 
+{shadow_color_block}
+
     static ArmCamera cameras[{camera_count}];
     scene->cameras = cameras;
     scene->camera_count = {camera_count};

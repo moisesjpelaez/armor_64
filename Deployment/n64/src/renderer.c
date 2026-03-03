@@ -6,6 +6,7 @@
 
 #include "engine.h"
 #include "iron/system/input.h"
+#include "shadow.h"
 #include "types.h"
 #include "utils.h"
 

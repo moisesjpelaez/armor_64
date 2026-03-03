@@ -9,6 +9,7 @@
 #include "types.h"
 #include "engine.h"
 #include "renderer.h"
+#include "shadow.h"
 #include "data/scenes.h"
 #include "data/models.h"
 #include "events/trait_events.h"
@@ -110,6 +111,7 @@ int main(void)
 
         renderer_begin_frame(&viewport, scene);
         renderer_draw_scene(&viewport, scene);
+        renderer_draw_shadows(&viewport, scene);
 #if ENGINE_ENABLE_UI
         canvas_render();
 #endif

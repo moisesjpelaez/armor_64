@@ -314,6 +314,7 @@ def _process_light(exporter, scene_name, obj, instance_matrix=None):
         "name": arm.utils.safesrc(linked_utils.asset_name(obj)),
         "pos": list(world_matrix.to_translation()),
         "color": list(obj.data.color),
+        "energy": obj.data.energy,
         "dir": list(light_dir),
         "traits": _extract_traits(obj)
     })
@@ -491,6 +492,18 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object
         "local_rot": [local_quat.x, local_quat.y, local_quat.z, local_quat.w],
         "local_scale": list(local_scale),
     }
+
+    # Shadow casting/receiving — read from first material slot (Armory material props)
+    cast_shadow = False
+    receive_shadow = False
+    if obj.material_slots:
+        mat = obj.material_slots[0].material
+        if mat:
+            cast_shadow = getattr(mat, 'arm_cast_shadow', False)
+            receive_shadow = getattr(mat, 'arm_receive_shadow', False)
+
+    obj_data["cast_shadow"] = cast_shadow
+    obj_data["receive_shadow"] = receive_shadow
 
     if rigid_body_data is not None:
         obj_data["rigid_body"] = rigid_body_data
@@ -710,6 +723,7 @@ def write_scene_c(exporter, scene):
         ar=n64_utils.to_uint8(ambient_color[0]),
         ag=n64_utils.to_uint8(ambient_color[1]),
         ab=n64_utils.to_uint8(ambient_color[2]),
+        shadow_color_block=codegen.generate_shadow_color_block(scene_data['lights'], ambient_color),
         camera_count=len(scene_data['cameras']),
         cameras_block=codegen.generate_camera_block(scene_data['cameras'], exporter.trait_info, scene_name),
         light_count=len(scene_data['lights']),

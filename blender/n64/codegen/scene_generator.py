@@ -17,6 +17,46 @@ from arm.n64.utils import convert_vec3_list, convert_quat_list, convert_scale_li
 # Scene Data Conversion
 # =============================================================================
 
+
+def compute_shadow_color(lights: List[Dict], ambient_color: list) -> list:
+    """Compute shadow overlay color from light energy and ambient.
+
+    Shadow darkness is derived automatically (WYSIWYG from Blender):
+      shadow_alpha = clamp(light_energy / (light_energy + ambient_energy), 0.3, 0.9)
+
+    Returns [R, G, B, A] as uint8 values (shadow is dark, so RGB = 0).
+    """
+    # Sum directional light energies
+    total_light_energy = 0.0
+    for light in lights:
+        total_light_energy += light.get("energy", 1.0)
+
+    # Ambient energy approximated from color brightness (0-1 range)
+    ambient_energy = (ambient_color[0] + ambient_color[1] + ambient_color[2]) / 3.0
+
+    # Avoid division by zero
+    if total_light_energy + ambient_energy < 0.001:
+        alpha = 0.5
+    else:
+        alpha = total_light_energy / (total_light_energy + ambient_energy)
+
+    # Clamp to reasonable range
+    alpha = max(0.3, min(0.9, alpha))
+
+    return [0, 0, 0, int(alpha * 255)]
+
+
+def generate_shadow_color_block(lights: List[Dict], ambient_color: list) -> str:
+    """Generate C code to initialize shadow color in ArmWorld."""
+    shadow_color = compute_shadow_color(lights, ambient_color)
+    lines = []
+    lines.append(f'    scene->world.shadow_color[0] = {shadow_color[0]};')
+    lines.append(f'    scene->world.shadow_color[1] = {shadow_color[1]};')
+    lines.append(f'    scene->world.shadow_color[2] = {shadow_color[2]};')
+    lines.append(f'    scene->world.shadow_color[3] = {shadow_color[3]};')
+    return '\n'.join(lines)
+
+
 def convert_scene_data(scene_data: dict) -> dict:
     """Apply coordinate conversion to all scene data (modifies in place).
 
@@ -238,10 +278,16 @@ def generate_object_block(objects: List[Dict], trait_info: dict, scene_name: str
         if is_empty:
             # Empty objects: no mesh, no display list, no model matrix
             lines.append(f'    {prefix}.dpl = NULL;')
+            lines.append(f'    {prefix}.shadow_dpl = NULL;')
             lines.append(f'    {prefix}.model_mat = NULL;')
         else:
+            cast_shadow = obj.get("cast_shadow", False)
             lines.append(f'    models_get({obj["mesh"]});')
             lines.append(f'    {prefix}.dpl = models_get_dpl({obj["mesh"]});')
+            if cast_shadow:
+                lines.append(f'    {prefix}.shadow_dpl = models_get_shadow_dpl({obj["mesh"]});')
+            else:
+                lines.append(f'    {prefix}.shadow_dpl = NULL;')
             mat_count = "1" if is_static else "FB_COUNT"
             lines.append(f'    {prefix}.model_mat = malloc_uncached(sizeof(T3DMat4FP) * {mat_count});')
 
@@ -288,6 +334,12 @@ def generate_object_block(objects: List[Dict], trait_info: dict, scene_name: str
         lines.append(f'    {prefix}.cached_world_aabb_max = {_fmt_vec3(world_max)};')
 
         lines.append(f'    {prefix}.rigid_body = NULL;')
+
+        # Shadow casting/receiving flags (from material properties)
+        cast_shadow = obj.get("cast_shadow", False)
+        receive_shadow = obj.get("receive_shadow", False)
+        lines.append(f'    {prefix}.cast_shadow = {str(cast_shadow).lower()};')
+        lines.append(f'    {prefix}.receive_shadow = {str(receive_shadow).lower()};')
 
         lines.extend(generate_trait_block(prefix, obj.get("traits", []), trait_info, scene_name))
     return '\n'.join(lines)
