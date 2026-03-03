@@ -236,8 +236,41 @@ def _process_camera(exporter, scene_name, obj, instance_matrix=None, object_name
         world_pos[1] - cam_dir[1],
         world_pos[2] - cam_dir[2]
     ]
-    sensor = max(obj.data.sensor_width, obj.data.sensor_height)
-    cam_fov = math.degrees(2 * math.atan((sensor * 0.5) / obj.data.lens))
+    # Compute vertical FOV — tiny3d's t3d_mat4_perspective expects vertical FOV.
+    # Blender's sensor_fit determines which dimension the focal length maps to.
+    # For AUTO (default), Blender picks the larger render dimension (horizontal
+    # for landscape).  We always need the vertical FOV for tiny3d.
+    cam_data_bl = obj.data
+    sensor_fit = cam_data_bl.sensor_fit
+    sensor_w = cam_data_bl.sensor_width
+    sensor_h = cam_data_bl.sensor_height
+    lens = cam_data_bl.lens
+
+    if sensor_fit == 'VERTICAL':
+        # Blender fits FOV to vertical sensor dimension
+        cam_fov = math.degrees(2 * math.atan((sensor_h * 0.5) / lens))
+    elif sensor_fit == 'HORIZONTAL':
+        # Blender fits FOV to horizontal sensor dimension — convert to vertical
+        # via aspect ratio (render_resolution_y / render_resolution_x)
+        import bpy as _bpy
+        res_x = _bpy.context.scene.render.resolution_x
+        res_y = _bpy.context.scene.render.resolution_y
+        hfov = 2 * math.atan((sensor_w * 0.5) / lens)
+        cam_fov = math.degrees(2 * math.atan(math.tan(hfov * 0.5) * res_y / res_x))
+    else:
+        # AUTO: Blender picks the larger render dimension as the fit axis.
+        # For landscape (width >= height), it fits horizontally, so convert to vertical.
+        # For portrait (height > width), it already is vertical.
+        import bpy as _bpy
+        res_x = _bpy.context.scene.render.resolution_x
+        res_y = _bpy.context.scene.render.resolution_y
+        if res_x >= res_y:
+            # Landscape: sensor_width maps to horizontal — derive vertical FOV
+            hfov = 2 * math.atan((sensor_w * 0.5) / lens)
+            cam_fov = math.degrees(2 * math.atan(math.tan(hfov * 0.5) * res_y / res_x))
+        else:
+            # Portrait: sensor_height maps to vertical — already vertical FOV
+            cam_fov = math.degrees(2 * math.atan((sensor_h * 0.5) / lens))
 
     # Camera parent detection — camera can be child of any object (mesh or empty)
     parent_index = -1
