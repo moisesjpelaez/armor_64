@@ -498,6 +498,18 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object
         obj_data["is_skinned"] = True
         obj_data["anim_clips"] = skinned_info.get("anim_clips", [])
 
+        # Promote armature traits to the skinned mesh child.
+        # Armature objects are filtered out of the N64 scene (only MESH/EMPTY
+        # pass), so any traits attached to the armature in Blender would be
+        # lost.  Since animation_init runs on the skinned mesh, the trait
+        # needs to live here so `object.animation` is non-NULL.
+        armature = obj.find_armature()
+        if armature is not None:
+            armature_traits = _extract_traits(armature)
+            if armature_traits:
+                obj_data["traits"] = obj_data["traits"] + armature_traits
+                log.info(f'Object "{obj.name}": promoted {len(armature_traits)} trait(s) from armature "{armature.name}"')
+
     if rigid_body_data is not None:
         obj_data["rigid_body"] = rigid_body_data
 
