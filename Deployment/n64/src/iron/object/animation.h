@@ -48,11 +48,11 @@ typedef struct ArmAnimation {
     // --- Animation clips ---
     T3DAnim anims[ANIM_MAX_CLIPS];
     const char *anim_names[ANIM_MAX_CLIPS];
-    uint8_t anim_count;
+    uint16_t anim_count;
 
     // --- Playback state ---
-    uint8_t current_anim;           // Index of primary clip (attached to skeleton)
-    uint8_t blend_anim;             // Index of blend clip (0xFF = none)
+    uint16_t current_anim;           // Index of primary clip (attached to skeleton)
+    uint16_t blend_anim;             // Index of blend clip (0xFFFF = none)
     float blend_factor;             // 0.0 = current only, 1.0 = blend only
     bool playing;
     float speed;

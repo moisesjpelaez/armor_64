@@ -44,7 +44,7 @@ void animation_init(ArmAnimation *anim, T3DModel *model)
 
     // Auto-discover animation clips from the model
     uint32_t model_anim_count = t3d_model_get_animation_count(model);
-    uint8_t count = model_anim_count < ANIM_MAX_CLIPS ? (uint8_t)model_anim_count : ANIM_MAX_CLIPS;
+    uint16_t count = model_anim_count < ANIM_MAX_CLIPS ? (uint16_t)model_anim_count : ANIM_MAX_CLIPS;
     anim->anim_count = count;
 
     if (count > 0) {
@@ -52,20 +52,14 @@ void animation_init(ArmAnimation *anim, T3DModel *model)
         t3d_model_get_animations(model, anim_chunks);
 
         debugf("[animation] Model has %d clips:\n", count);
-        for (uint8_t i = 0; i < count; i++) {
+        for (uint16_t i = 0; i < count; i++) {
             debugf("[animation]   [%d] \"%s\"\n", i, anim_chunks[i]->name);
             anim->anim_names[i] = anim_chunks[i]->name;
             anim->anims[i]      = t3d_anim_create(model, anim_chunks[i]->name);
-
-            if (i == 0) {
-                // First clip: attach to main skeleton and auto-play
-                t3d_anim_attach(&anim->anims[i], &anim->skeleton);
-            } else {
-                // Extra clips: attach to blend skeleton, start paused
-                t3d_anim_attach(&anim->anims[i], &anim->skeleton_blend);
-                t3d_anim_set_playing(&anim->anims[i], false);
-            }
+            t3d_anim_attach(&anim->anims[i], &anim->skeleton);
         }
+        // Auto-play first clip if available
+        t3d_anim_set_playing(&anim->anims[0], true);
     }
 
     // Record skinned draw display list (uses main skeleton)
@@ -83,7 +77,7 @@ void animation_destroy(ArmAnimation *anim)
         anim->dpl_skinned = NULL;
     }
 
-    for (uint8_t i = 0; i < anim->anim_count; i++) {
+    for (uint16_t i = 0; i < anim->anim_count; i++) {
         t3d_anim_destroy(&anim->anims[i]);
     }
 
@@ -101,7 +95,7 @@ void animation_destroy(ArmAnimation *anim)
 int animation_find(const ArmAnimation *anim, const char *name)
 {
     if (!anim || !name) return -1;
-    for (uint8_t i = 0; i < anim->anim_count; i++) {
+    for (uint16_t i = 0; i < anim->anim_count; i++) {
         if (strcmp(anim->anim_names[i], name) == 0) {
             return i;
         }
@@ -123,11 +117,10 @@ bool animation_play(ArmAnimation *anim, const char *name)
         t3d_anim_set_playing(&anim->anims[anim->current_anim], false);
     }
 
-    // Attach new clip to main skeleton and start
-    anim->current_anim = (uint8_t)idx;
-    t3d_anim_attach(&anim->anims[idx], &anim->skeleton);
-    t3d_anim_set_time(&anim->anims[idx], 0.0f);
+    // Start new clip (already attached in init)
+    anim->current_anim = (uint16_t)idx;
     t3d_anim_set_playing(&anim->anims[idx], true);
+    t3d_anim_set_time(&anim->anims[idx], 0.0f);
     anim->playing      = true;
     anim->blend_anim   = 0xFF;
     anim->blend_factor = 0.0f;
