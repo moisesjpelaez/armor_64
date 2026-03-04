@@ -52,6 +52,9 @@ def _collect_linked_instance_collections():
 def prepare_linked_for_export():
     """Create temp scene with localized copies of linked objects for export.
 
+    Copies ALL object types (mesh, armature, empty, etc.) and rebuilds
+    parent-child + modifier references so any hierarchy depth works.
+
     Returns:
         List of (local_object_name, original_mesh_name) tuples for export
     """
@@ -59,58 +62,71 @@ def prepare_linked_for_export():
     if not linked_collections:
         return []
 
-    # Create temporary scene
     temp_scene = bpy.data.scenes.new(TEMP_SCENE_NAME)
     _state.temp_scene_name = temp_scene.name
-
     temp_collection = bpy.data.collections.new(TEMP_COLLECTION_NAME)
     temp_scene.collection.children.link(temp_collection)
-
-    # Ensure view layer exists (required for selection/export)
     if not temp_scene.view_layers:
         temp_scene.view_layers.new("ViewLayer")
 
-    local_objects = []
+    mesh_objects = []
     processed_meshes = set()
 
     for coll in linked_collections:
+        # --- Copy all objects, build name -> local mapping ---
+        obj_map = {}
+        for obj in coll.all_objects:
+            local = obj.copy()
+
+            if obj.type == 'MESH':
+                mesh_name = linked_utils.asset_name(obj.data)
+                local.name = f"_armory_temp_{mesh_name}"
+                if obj.data.library:
+                    local_data = obj.data.copy()
+                    local_data.name = mesh_name
+                    local.data = local_data
+                    _state.temp_mesh_names.append(mesh_name)
+                for slot in local.material_slots:
+                    if slot.material and slot.material.library:
+                        local_mat = slot.material.copy()
+                        local_mat.name = linked_utils.asset_name(slot.material)
+                        slot.material = local_mat
+                        _state.temp_material_names.append(local_mat.name)
+            elif obj.type == 'ARMATURE':
+                local.name = f"_armory_temp_arm_{linked_utils.asset_name(obj.data)}"
+                if obj.data.library:
+                    local.data = obj.data.copy()
+            else:
+                local.name = f"_armory_temp_{obj.name}"
+
+            _state.temp_object_names.append(local.name)
+            temp_collection.objects.link(local)
+            obj_map[obj.name] = local
+
+        # --- Fix ALL parent + modifier references ---
+        for obj in coll.all_objects:
+            local = obj_map.get(obj.name)
+            if not local:
+                continue
+            if obj.parent and obj.parent.name in obj_map:
+                local.parent = obj_map[obj.parent.name]
+                local.matrix_parent_inverse = obj.matrix_parent_inverse.copy()
+            for mod in local.modifiers:
+                if mod.type == 'ARMATURE' and mod.object and mod.object.name in obj_map:
+                    mod.object = obj_map[mod.object.name]
+
+        # --- Collect mesh objects for export ---
         for obj in coll.all_objects:
             if obj.type != 'MESH':
                 continue
-
-            mesh = obj.data
-            mesh_name = linked_utils.asset_name(mesh)
+            mesh_name = linked_utils.asset_name(obj.data)
             if mesh_name in processed_meshes:
                 continue
             processed_meshes.add(mesh_name)
+            _state.original_mesh_refs[mesh_name] = obj.data
+            mesh_objects.append((obj_map[obj.name].name, mesh_name))
 
-            # Store reference to original mesh for exported_meshes lookup
-            _state.original_mesh_refs[mesh_name] = mesh
-
-            # Create local copy of the object
-            local_obj = obj.copy()
-            local_obj.name = f"_armory_temp_{mesh_name}"
-            _state.temp_object_names.append(local_obj.name)
-
-            # Make mesh data local
-            if mesh.library:
-                local_mesh = mesh.copy()
-                local_mesh.name = mesh_name
-                local_obj.data = local_mesh
-                _state.temp_mesh_names.append(local_mesh.name)
-
-            # Make materials local (required for Fast64 conversion)
-            for slot in local_obj.material_slots:
-                if slot.material and slot.material.library:
-                    local_mat = slot.material.copy()
-                    local_mat.name = linked_utils.asset_name(slot.material)
-                    slot.material = local_mat
-                    _state.temp_material_names.append(local_mat.name)
-
-            temp_collection.objects.link(local_obj)
-            local_objects.append((local_obj.name, mesh_name))
-
-    return local_objects
+    return mesh_objects
 
 
 def get_temp_scene():

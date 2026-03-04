@@ -239,11 +239,23 @@ def generate_object_block(objects: List[Dict], trait_info: dict, scene_name: str
             # Empty objects: no mesh, no display list, no model matrix
             lines.append(f'    {prefix}.dpl = NULL;')
             lines.append(f'    {prefix}.model_mat = NULL;')
+            lines.append(f'    {prefix}.animation = NULL;')
+        elif obj.get("is_skinned", False):
+            # Skinned mesh: load raw model (no DPL baking), init animation system
+            mat_count = "1" if is_static else "FB_COUNT"
+            lines.append(f'    {{')
+            lines.append(f'        T3DModel *mdl = models_get_raw({obj["mesh"]});')
+            lines.append(f'        {prefix}.model_mat = malloc_uncached(sizeof(T3DMat4FP) * {mat_count});')
+            lines.append(f'        {prefix}.animation = malloc(sizeof(ArmAnimation));')
+            lines.append(f'        animation_init({prefix}.animation, mdl);')
+            lines.append(f'        {prefix}.dpl = {prefix}.animation->dpl_skinned;')
+            lines.append(f'    }}')
         else:
             lines.append(f'    models_get({obj["mesh"]});')
             lines.append(f'    {prefix}.dpl = models_get_dpl({obj["mesh"]});')
             mat_count = "1" if is_static else "FB_COUNT"
             lines.append(f'    {prefix}.model_mat = malloc_uncached(sizeof(T3DMat4FP) * {mat_count});')
+            lines.append(f'    {prefix}.animation = NULL;')
 
         # Parent/child hierarchy
         lines.append(f'    {prefix}.parent_index = {parent_index};')

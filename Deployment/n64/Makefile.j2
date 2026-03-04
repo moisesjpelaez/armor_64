@@ -24,6 +24,7 @@ src = \
 	src/events/trait_events.c \
 	src/iron/object/transform.c \
 	src/iron/object/object.c \
+	src/iron/object/animation.c \
 	src/iron/system/input.c \
 {scene_files}
 
@@ -41,8 +42,10 @@ src = \
 
 assets_png = $(wildcard assets/*.png)
 assets_gltf = $(wildcard assets/*.gltf)
+assets_glb = $(wildcard assets/*.glb)
 assets_conv = $(addprefix filesystem/,$(notdir $(assets_png:%.png=%.sprite))) \
 			  $(addprefix filesystem/,$(notdir $(assets_gltf:%.gltf=%.t3dm))) \
+			  $(addprefix filesystem/,$(notdir $(assets_glb:%.glb=%.t3dm))) \
 			  $(font_conv) \
 			  $(audio_conv)
 
@@ -69,7 +72,13 @@ filesystem/%.t3dm: assets/%.gltf
 	@mkdir -p $(dir $@)
 	@echo "    [T3D-MODEL] $@"
 	$(T3D_GLTF_TO_3D) "$<" $@
-	$(N64_BINDIR)/mkasset -c 2 -o filesystem $@
+	$(N64_BINDIR)/mkasset -c 2 -w 256 -o filesystem $@
+
+filesystem/%.t3dm: assets/%.glb
+	@mkdir -p $(dir $@)
+	@echo "    [T3D-MODEL] $@"
+	$(T3D_GLTF_TO_3D) --verbose "$<" $@
+	$(N64_BINDIR)/mkasset -c 2 -w 256 -o filesystem $@
 
 $(BUILD_DIR)/$(ROM_NAME).dfs: $(assets_conv)
 $(BUILD_DIR)/$(ROM_NAME).elf: $(src:%.c=$(BUILD_DIR)/%.o)

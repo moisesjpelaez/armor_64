@@ -16,6 +16,7 @@ void models_init(void);
 void models_shutdown(void);
 
 T3DModel *models_get(ModelId id);
+T3DModel *models_get_raw(ModelId id);     // Load without DPL baking (for skinned models)
 rspq_block_t *models_get_dpl(ModelId id);
 
 void models_release(ModelId id);          // Release a reference to a model

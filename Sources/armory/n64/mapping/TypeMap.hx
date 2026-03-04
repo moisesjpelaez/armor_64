@@ -31,6 +31,10 @@ class TypeMap {
         "Object" => "ArmObject*",
         "iron.object.Object" => "ArmObject*",
 
+        // Animation types
+        "Animation" => "ArmAnimation*",
+        "iron.object.Animation" => "ArmAnimation*",
+
         // Vector types
         "Vec2" => "ArmVec2",
         "Vec3" => "ArmVec3",

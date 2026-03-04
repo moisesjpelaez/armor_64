@@ -5,6 +5,7 @@
 #include <t3d/t3dmodel.h>
 
 #include "engine.h"
+#include "iron/object/animation.h"
 #include "iron/system/input.h"
 #include "types.h"
 #include "utils.h"
@@ -197,6 +198,12 @@ void renderer_draw_scene(T3DViewport *viewport, ArmScene *scene) {
 
 		visible_count++;
 		int mat_idx = obj->is_static ? 0 : frameIdx;
+
+		// Skinned models: select skeleton buffer before drawing
+		if (obj->animation) {
+			animation_use(obj->animation);
+		}
+
 		t3d_matrix_set(&obj->model_mat[mat_idx], true);
 		rspq_block_run(obj->dpl);
 	}

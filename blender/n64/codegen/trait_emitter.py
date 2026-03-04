@@ -649,6 +649,10 @@ class TraitEmitter:
                         return f"!arm_audio_is_playing({obj})"
                     return f"{obj}->{field}"
 
+                # Animation field on ArmObject parameters/locals: o.animation -> o->animation
+                if field == "animation":
+                    return f"{obj}->animation"
+
                 return f"({obj}).{field}"
 
         return field
@@ -1587,6 +1591,25 @@ class TraitEmitter:
         obj = self.emit(obj_node)
         if not obj:
             return ""
+
+        # Determine receiver type for method routing
+        receiver_ctype = ""
+        receiver_name = obj_node.get("value", "")
+        if obj_node.get("type") in ("member", "inherited_member"):
+            receiver_ctype = self._get_member_ctype(receiver_name)
+
+        # Animation methods: play(name), pause(), resume()
+        if receiver_ctype == "ArmAnimation*":
+            if method == "play":
+                anim_name = self.emit(args[0]) if args else '""'
+                return f"animation_play({obj}, {anim_name})"
+            elif method == "pause":
+                return f"animation_pause({obj})"
+            elif method == "resume":
+                return f"animation_resume({obj})"
+            elif method == "setSpeed":
+                spd = self.emit(args[0]) if args else "1.0f"
+                return f"animation_set_speed({obj}, {spd})"
 
         # Audio handle methods
         if method == "play":

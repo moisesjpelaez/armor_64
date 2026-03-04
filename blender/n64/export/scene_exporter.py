@@ -492,6 +492,12 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object
         "local_scale": list(local_scale),
     }
 
+    # Skinned mesh detection — check exporter.skinned_meshes populated by mesh_exporter
+    skinned_info = getattr(exporter, 'skinned_meshes', {}).get(mesh_name)
+    if skinned_info:
+        obj_data["is_skinned"] = True
+        obj_data["anim_clips"] = skinned_info.get("anim_clips", [])
+
     if rigid_body_data is not None:
         obj_data["rigid_body"] = rigid_body_data
 

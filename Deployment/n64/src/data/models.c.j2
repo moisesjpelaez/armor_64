@@ -69,6 +69,27 @@ T3DModel *models_get(ModelId id)
     return e->model;
 }}
 
+T3DModel *models_get_raw(ModelId id)
+{{
+    if (id < 0 || id >= MODEL_COUNT) {{
+        return NULL;
+    }}
+
+    ModelEntry *e = &g_models[id];
+    if (!e->loaded) {{
+        const char *path = MODEL_PATHS[id];
+        e->model = t3d_model_load(path);
+        if (!e->model) {{
+            debugf("Failed to load model: %s\n", path);
+            return NULL;
+        }}
+        // No DPL baking — skinned models record their own via animation_init()
+        e->loaded = 1;
+    }}
+    e->ref_count++;
+    return e->model;
+}}
+
 rspq_block_t *models_get_dpl(ModelId id)
 {{
     return g_models[id].dpl;

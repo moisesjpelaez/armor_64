@@ -6,6 +6,7 @@
 #include "../types.h"
 #include "../engine.h"
 #include "../renderer.h"
+#include "../iron/object/animation.h"
 /* N64 Exporter - Generated scene data and initialization
  * This file is auto-generated from Blender scenes. Do not edit.
  * Template: scenes.c.j2
@@ -172,6 +173,16 @@ void scene_on_update(SceneId id, float dt)
 {{
 	ArmScene *s = &g_scenes[id];
 
+	// Update skeletal animations before trait updates
+	if (s->objects) {{
+		for (uint16_t i = 0; i < s->object_count; i++) {{
+			if (s->objects[i].is_removed) continue;
+			if (s->objects[i].animation) {{
+				animation_update(s->objects[i].animation, dt);
+			}}
+		}}
+	}}
+
 	// Scene-level traits
 	for (uint8_t i = 0; i < s->trait_count; i++) {{
 		if (s->traits[i].on_update) s->traits[i].on_update(s, dt, s->traits[i].data);
@@ -331,6 +342,7 @@ void scene_clear(SceneId id)
 #if ENGINE_ENABLE_PHYSICS
             if (s->objects[i].rigid_body) physics_remove_body(&s->objects[i]);
 #endif
+            if (s->objects[i].animation) {{ animation_destroy(s->objects[i].animation); free(s->objects[i].animation); s->objects[i].animation = NULL; }}
             if (s->objects[i].model_mat) {{ free_uncached(s->objects[i].model_mat); s->objects[i].model_mat = NULL; }}
             // Free trait data (malloc'd) before freeing traits array
             if (s->objects[i].traits) {{

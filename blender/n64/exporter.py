@@ -328,6 +328,8 @@ class N64Exporter:
         n64_utils.copy_src('iron/object/transform.c', 'src')
         n64_utils.copy_src('iron/object/object.h', 'src')
         n64_utils.copy_src('iron/object/object.c', 'src')
+        n64_utils.copy_src('iron/object/animation.h', 'src')
+        n64_utils.copy_src('iron/object/animation.c', 'src')
         n64_utils.copy_src('iron/system/input.c', 'src')
         n64_utils.copy_src('iron/system/input.h', 'src')
 

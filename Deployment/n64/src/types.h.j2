@@ -72,6 +72,9 @@
 extern "C" {{
 #endif
 
+// Forward declaration — full definition in iron/object/animation.h
+typedef struct ArmAnimation ArmAnimation;
+
 #define FB_COUNT 3 {debug_hud_define}
 
 // Number of frames to keep transform dirty for double/triple buffering
@@ -192,6 +195,7 @@ typedef struct ArmObject {{
     T3DVec3 bounds_min;           // 12 bytes: local-space AABB min
     T3DVec3 bounds_max;           // 12 bytes: local-space AABB max
     struct OimoRigidBody *rigid_body;  // 4 bytes
+    ArmAnimation *animation;      // 4 bytes: skeletal animation (NULL = static mesh)
     ArmTrait *traits;             // 4 bytes
 
     // === LIFECYCLE FLAGS (bitmask for fast dispatch) ===
