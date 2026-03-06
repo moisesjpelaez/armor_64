@@ -19,6 +19,7 @@ Supported features:
   - `RigidBody.applyForce`
   - `RigidBody.notifyOnContact`
   - shapes and contacts debugging
+  - sphere, box, capsule and static mesh colliders
 - UI ([Koui Editor](https://github.com/moisesjpelaez/koui_editor)):
   - labels (font family, text color and font size)
   - image panels
