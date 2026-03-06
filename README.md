@@ -4,10 +4,11 @@ Export games for the Nintendo 64 with [Armory 3D](https://github.com/armory3d/ar
 > Note: this project is experimental. Working with Armory 2026.2 and Blender 4.5.
 
 Supported features:
-- Scenes (flattened, no parent/child hierarchy):
+- Scenes:
   - cameras
   - directional lights
   - transitions (using `Scene.setActive`)
+  - parent/child hierarchy (wip)
 - Objects with Traits:
   - `Transform.translate`
   - `Transform.rotate`
@@ -25,6 +26,7 @@ Supported features:
 - Render2D (`kha.graphics2.Graphics`):
   - fillRect
   - color
+- Animation actions (wip)
 
 ## Pre-requisites
 - Windows 11
