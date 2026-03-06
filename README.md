@@ -15,7 +15,7 @@ Supported features:
   - `Transform.scale`
 - Asset brower/Linked blend files
 - Gamepad input (with hardcoded mapping)
-- Physics (a stripped down 'OimoPhysics' engine):
+- Physics (a stripped down [OimoPhysics](https://github.com/armory3d/oimo_module) engine):
   - `RigidBody.applyForce`
   - `RigidBody.notifyOnContact`
   - shapes and contacts debugging
@@ -39,9 +39,21 @@ Supported features:
 ## Installation
 - Locate the `.blend` file you are working with
 - Create `Libraries` folder alongside your `.blend` file
-- `git clone https://github.com/DragonMinded/libdragon.git -b preview` into `Libraries` folder
-- `git clone https://github.com/HailToDodongo/tiny3d.git` into `Libraries` folder
-- `git clone https://github.com/moisesjpelaez/n64_exporter.git` into `Libraries` folder
+- Clone these into `Libraries` folder:
+  ```
+  git clone https://github.com/DragonMinded/libdragon.git -b preview
+  git clone https://github.com/HailToDodongo/tiny3d.git
+  git clone https://github.com/moisesjpelaez/n64_exporter.git
+  git clone https://github.com/moisesjpelaez/koui_editor.git
+  git clone https://github.com/armory3d/oimo_module
+  git clone https://github.com/armory3d/OimoPhysics
+  ```
+- Create `Subprojects` folder alongside your `.blend` file
+- Clone these into `Subprojects` folder:
+  ```
+  git clone https://github.com/MoritzBrueckner/aura.git
+  git clone https://gitlab.com/moises.jpelaez/Koui.git -b runtime_theme_parser
+  ```
 
 ## Setup
 - Go to `Edit > Preferences > Add-ons > Armory > N64 Settings` and set the paths for:
@@ -52,6 +64,7 @@ Supported features:
 - Click `Install Dependencies` and wait for it to finish
 - Click `Build libdragon` and wait for it to finish
 - Click `Build Tiny3D` and wait for it to finish
+- Set `Render > Armory Project > Modules > Physics Engine` to Oimo
 
 ## License
 This project is licensed under the terms of the zlib License. See the [LICENSE](LICENSE.md) file for details.
