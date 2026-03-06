@@ -15,7 +15,7 @@ Supported features:
   - `Transform.scale`
 - Asset brower/Linked blend files
 - Gamepad input (with hardcoded mapping)
-- Physics (a stripped down [OimoPhysics](https://github.com/armory3d/oimo_module) engine):
+- Physics (a stripped down [OimoPhysics](https://github.com/saharan/OimoPhysics) engine):
   - `RigidBody.applyForce`
   - `RigidBody.notifyOnContact`
   - shapes and contacts debugging
