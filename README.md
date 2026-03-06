@@ -13,7 +13,7 @@ Supported features:
   - `Transform.translate`
   - `Transform.rotate`
   - `Transform.scale`
-- Asset brower/Linked blend files (flattened, no parent/child hierarchies)
+- Asset brower/Linked blend files
 - Gamepad input (with hardcoded mapping)
 - Physics (a stripped down 'OimoPhysics' engine):
   - `RigidBody.applyForce`
