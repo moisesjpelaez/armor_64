@@ -57,6 +57,16 @@ void animation_init(ArmAnimation *anim, T3DModel *model)
             anim->anim_names[i] = anim_chunks[i]->name;
             anim->anims[i]      = t3d_anim_create(model, anim_chunks[i]->name);
             t3d_anim_attach(&anim->anims[i], &anim->skeleton);
+
+            T3DAnim *ta = &anim->anims[i];
+            for (int c = 0; c < ta->animRef->channelsQuat; c++) {
+                ta->targetsQuat[c].kfCurr = *ta->targetsQuat[c].targetQuat;
+                ta->targetsQuat[c].kfNext = *ta->targetsQuat[c].targetQuat;
+            }
+            for (int c = 0; c < ta->animRef->channelsScalar; c++) {
+                ta->targetsScalar[c].kfCurr = *ta->targetsScalar[c].targetScalar;
+                ta->targetsScalar[c].kfNext = *ta->targetsScalar[c].targetScalar;
+            }
         }
         // Auto-play first clip if available
         t3d_anim_set_playing(&anim->anims[0], true);
