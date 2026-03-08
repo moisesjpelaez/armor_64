@@ -41,7 +41,7 @@ def _collect_all_objects(scene):
             coll = obj.instance_collection
             instancer_parent = obj.parent  # e.g. Cube
             for cobj in coll.all_objects:
-                objects.append((cobj, obj.matrix_world, instancer_parent))
+                objects.append((cobj, obj.matrix_world @ cobj.matrix_world, instancer_parent))
         else:
             objects.append((obj, None, None))
 
@@ -227,7 +227,7 @@ def _process_camera(exporter, scene_name, obj, instance_matrix=None, object_name
             unified objects[] array.  Used for camera parent resolution.
     """
     # Compute world matrix considering instance transform
-    world_matrix = instance_matrix @ obj.matrix_local if instance_matrix else obj.matrix_world
+    world_matrix = instance_matrix if instance_matrix else obj.matrix_world
     world_pos = list(world_matrix.to_translation())
 
     cam_dir = world_matrix.to_3x3().col[2]
@@ -307,7 +307,7 @@ def _process_camera(exporter, scene_name, obj, instance_matrix=None, object_name
 def _process_light(exporter, scene_name, obj, instance_matrix=None):
     """Process a light object and add to scene data."""
     # Compute world matrix considering instance transform
-    world_matrix = instance_matrix @ obj.matrix_local if instance_matrix else obj.matrix_world
+    world_matrix = instance_matrix if instance_matrix else obj.matrix_world
     light_dir = world_matrix.to_3x3().col[2]
 
     exporter.scene_data[scene_name]["lights"].append({
@@ -419,7 +419,7 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object
                          f'Parent "{parent_name}" will be ignored for physics sync.')
 
     # Compute world matrix considering instance transform
-    world_matrix = instance_matrix @ obj.matrix_local if instance_matrix else obj.matrix_world
+    world_matrix = instance_matrix if instance_matrix else obj.matrix_world
 
     # World-space decomposition (always needed for AABB computation and obj_data["pos"])
     world_pos = list(world_matrix.to_translation())
