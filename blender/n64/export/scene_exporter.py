@@ -719,6 +719,26 @@ def write_scene_c(exporter, scene):
         tmpl_content = f.read()
 
     scene_traits = scene_data.get('traits', [])
+    objects = scene_data['objects']
+
+    # Count objects with physics bodies, animations, render2d callbacks, and parented objects
+    physics_count = sum(1 for obj in objects if obj.get('rigid_body') is not None)
+    animated_count = sum(1 for obj in objects if obj.get('is_skinned', False))
+    has_parented = any(obj.get('parent_index', -1) >= 0 for obj in objects)
+
+    # Count render2d objects from trait info
+    render2d_count = 0
+    for obj in objects:
+        for trait in obj.get('traits', []):
+            trait_ir = n64_utils.get_trait(exporter.trait_info, trait['class_name'])
+            if 'on_render2d' in trait_ir.get('events', {}):
+                render2d_count += 1
+                break  # Only count once per object
+
+    # Use at least 1 for array sizes to avoid zero-length arrays
+    physics_object_count = max(1, physics_count)
+    animated_object_count = max(1, animated_count)
+    render2d_object_count = max(1, render2d_count)
 
     output = tmpl_content.format(
         scene_name=scene_name,
@@ -732,10 +752,14 @@ def write_scene_c(exporter, scene):
         cameras_block=codegen.generate_camera_block(scene_data['cameras'], exporter.trait_info, scene_name),
         light_count=len(scene_data['lights']),
         lights_block=codegen.generate_light_block(scene_data['lights'], exporter.trait_info, scene_name),
-        object_count=len(scene_data['objects']),
-        objects_block=codegen.generate_object_block(scene_data['objects'], exporter.trait_info, scene_name),
-        physics_block=codegen.generate_physics_block(scene_data['objects'], scene_data['world']),
-        contact_subs_block=codegen.generate_contact_subscriptions_block(scene_data['objects'], exporter.trait_info),
+        object_count=len(objects),
+        physics_object_count=physics_object_count,
+        animated_object_count=animated_object_count,
+        render2d_object_count=render2d_object_count,
+        has_parented_objects='true' if has_parented else 'false',
+        objects_block=codegen.generate_object_block(objects, exporter.trait_info, scene_name),
+        physics_block=codegen.generate_physics_block(objects, scene_data['world']),
+        contact_subs_block=codegen.generate_contact_subscriptions_block(objects, exporter.trait_info),
         scene_trait_count=len(scene_traits),
         scene_traits_block=codegen.generate_scene_traits_block(scene_traits, exporter.trait_info, scene_name)
     )

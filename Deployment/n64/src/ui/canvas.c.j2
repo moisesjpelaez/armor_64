@@ -303,13 +303,14 @@ void canvas_init(void)
     if (g_initialized) return;
     g_initialized = true;
 
+    // Note: Static arrays in BSS are zero-initialized at startup,
+    // so we only need to initialize counts/indices. canvas_clear()
+    // handles memsets for subsequent scene changes.
+
 #if UI_LABEL_COUNT > 0
     g_label_pool_used = 0;
     g_label_render_count = 0;
     g_canvas_label_count = 0;
-    memset(g_label_pool, 0, sizeof(g_label_pool));
-    memset(g_label_render_list, 0, sizeof(g_label_render_list));
-    memset(g_canvas_labels, 0, sizeof(g_canvas_labels));
 
     // Load all fonts (each size variant) and get the default rdpq ID
     // This ensures fonts are loaded before canvas_scene_init() assigns font_ids
@@ -327,21 +328,15 @@ void canvas_init(void)
     g_image_pool_used = 0;
     g_image_render_count = 0;
     g_canvas_image_count = 0;
-    memset(g_image_pool, 0, sizeof(g_image_pool));
-    memset(g_image_render_list, 0, sizeof(g_image_render_list));
-    memset(g_canvas_images, 0, sizeof(g_canvas_images));
 #endif
 
 #if UI_GROUP_COUNT > 0
     g_group_pool_used = 0;
     g_canvas_group_count = 0;
-    memset(g_group_pool, 0, sizeof(g_group_pool));
-    memset(g_canvas_groups, 0, sizeof(g_canvas_groups));
 #endif
 
 #if UI_ELEMENT_COUNT > 0
     g_canvas_element_count = 0;
-    memset(g_canvas_elements, 0, sizeof(g_canvas_elements));
 #endif
 }}
 
@@ -461,8 +456,13 @@ void ui_label_set_position(UILabel *label, int16_t x, int16_t y)
 void ui_label_set_text(UILabel *label, const char *text)
 {{
     if (label && text) {{
-        strncpy(label->text, text, UI_LABEL_TEXT_SIZE - 1);
-        label->text[UI_LABEL_TEXT_SIZE - 1] = '\0';
+        // Optimized: copy only actual text length instead of full buffer
+        size_t len = strlen(text);
+        if (len >= UI_LABEL_TEXT_SIZE) {{
+            len = UI_LABEL_TEXT_SIZE - 1;
+        }}
+        memcpy(label->text, text, len);
+        label->text[len] = '\0';
     }}
 }}
 

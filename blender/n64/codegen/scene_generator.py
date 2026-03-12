@@ -109,10 +109,29 @@ def generate_trait_block(prefix: str, traits: List[Dict],
     """Generate C code for trait initialization on an object.
 
     Pure 1:1 emitter - all data comes from macro-generated trait_info.
+    Pre-computes lifecycle_flags at export time to avoid runtime trait iteration.
     """
     lines = []
     lines.append(f'    {prefix}.trait_count = {len(traits)};')
-    lines.append(f'    {prefix}.lifecycle_flags = 0;')
+
+    # Pre-compute lifecycle flags from trait info
+    lifecycle_flags = 0
+    for trait in traits:
+        trait_class = trait["class_name"]
+        trait_ir = n64_utils.get_trait(trait_info, trait_class)
+        events = trait_ir.get("events", {})
+
+        # Check for lifecycle events
+        if "on_fixed_update" in events:
+            lifecycle_flags |= 1  # ARM_LIFECYCLE_FIXED_UPDATE
+        if "on_update" in events:
+            lifecycle_flags |= 2  # ARM_LIFECYCLE_UPDATE
+        if "on_late_update" in events:
+            lifecycle_flags |= 4  # ARM_LIFECYCLE_LATE_UPDATE
+        if "on_render2d" in events:
+            lifecycle_flags |= 8  # ARM_LIFECYCLE_RENDER2D
+
+    lines.append(f'    {prefix}.lifecycle_flags = {lifecycle_flags};')
 
     if len(traits) > 0:
         lines.append(f'    {prefix}.traits = malloc(sizeof(ArmTrait) * {len(traits)});')

@@ -42,17 +42,7 @@ void scene_{scene_name}_init(ArmScene *scene)
 
 {cameras_block}
 
-    // Compute lifecycle flags for cameras from traits
-    for (uint8_t i = 0; i < scene->camera_count; i++) {{
-        if (scene->cameras[i].trait_count > 0) {{
-            scene->cameras[i].lifecycle_flags = 0;
-            for (uint8_t t = 0; t < scene->cameras[i].trait_count; t++) {{
-                if (scene->cameras[i].traits[t].on_fixed_update) scene->cameras[i].lifecycle_flags |= ARM_LIFECYCLE_FIXED_UPDATE;
-                if (scene->cameras[i].traits[t].on_update) scene->cameras[i].lifecycle_flags |= ARM_LIFECYCLE_UPDATE;
-                if (scene->cameras[i].traits[t].on_late_update) scene->cameras[i].lifecycle_flags |= ARM_LIFECYCLE_LATE_UPDATE;
-            }}
-        }}
-    }}
+    // Lifecycle flags for cameras are pre-computed at export time
 
     static ArmLight lights[{light_count}];
     scene->lights = lights;
@@ -60,17 +50,7 @@ void scene_{scene_name}_init(ArmScene *scene)
 
 {lights_block}
 
-    // Compute lifecycle flags for lights from traits
-    for (uint8_t i = 0; i < scene->light_count; i++) {{
-        if (scene->lights[i].trait_count > 0) {{
-            scene->lights[i].lifecycle_flags = 0;
-            for (uint8_t t = 0; t < scene->lights[i].trait_count; t++) {{
-                if (scene->lights[i].traits[t].on_fixed_update) scene->lights[i].lifecycle_flags |= ARM_LIFECYCLE_FIXED_UPDATE;
-                if (scene->lights[i].traits[t].on_update) scene->lights[i].lifecycle_flags |= ARM_LIFECYCLE_UPDATE;
-                if (scene->lights[i].traits[t].on_late_update) scene->lights[i].lifecycle_flags |= ARM_LIFECYCLE_LATE_UPDATE;
-            }}
-        }}
-    }}
+    // Lifecycle flags for lights are pre-computed at export time
 
     scene->objects = objects;
     scene->object_count = {object_count};
@@ -87,28 +67,55 @@ void scene_{scene_name}_init(ArmScene *scene)
     scene->active_objects = active_objects;
     scene->active_trait_count = 0;
 
+    // Initialize physics objects list (objects with rigid bodies)
+    static uint16_t physics_objects[{physics_object_count}];
+    scene->physics_objects = physics_objects;
+    scene->physics_count = 0;
+
+    // Initialize animated objects list (objects with skeletal animation)
+    static uint16_t animated_objects[{animated_object_count}];
+    scene->animated_objects = animated_objects;
+    scene->animated_count = 0;
+
+    // Initialize render2d objects list (objects with on_render2d callbacks)
+    static uint16_t render2d_objects[{render2d_object_count}];
+    scene->render2d_objects = render2d_objects;
+    scene->render2d_count = 0;
+
+    // Scene-level flags (computed at export time)
+    scene->has_parented_objects = {has_parented_objects};
+
 {objects_block}
 
-    // Build active objects list and lifecycle flags after objects are initialized
+    // Build active/animated/render2d lists from pre-computed flags
+    // Note: physics_objects is populated AFTER physics_block creates bodies
     for (uint16_t i = 0; i < scene->object_count; i++) {{
         ArmObject *obj = &scene->objects[i];
-        if (obj->trait_count > 0 && !obj->is_removed) {{
-            // Compute lifecycle flags from traits
-            obj->lifecycle_flags = 0;
-            for (uint8_t t = 0; t < obj->trait_count; t++) {{
-                if (obj->traits[t].on_fixed_update) obj->lifecycle_flags |= ARM_LIFECYCLE_FIXED_UPDATE;
-                if (obj->traits[t].on_update) obj->lifecycle_flags |= ARM_LIFECYCLE_UPDATE;
-                if (obj->traits[t].on_late_update) obj->lifecycle_flags |= ARM_LIFECYCLE_LATE_UPDATE;
-            }}
-            // Add to active list if has any update callbacks
-            if (obj->lifecycle_flags != 0) {{
-                scene->active_objects[scene->active_trait_count++] = i;
-            }}
+        if (obj->is_removed) continue;
+
+        // Add to active list if has any update callbacks
+        if (obj->lifecycle_flags & (ARM_LIFECYCLE_FIXED_UPDATE | ARM_LIFECYCLE_UPDATE | ARM_LIFECYCLE_LATE_UPDATE)) {{
+            scene->active_objects[scene->active_trait_count++] = i;
+        }}
+        // Add to render2d list if has render2d callback
+        if (obj->lifecycle_flags & ARM_LIFECYCLE_RENDER2D) {{
+            scene->render2d_objects[scene->render2d_count++] = i;
+        }}
+        // Add to animated list if has animation
+        if (obj->animation) {{
+            scene->animated_objects[scene->animated_count++] = i;
         }}
     }}
 
 #if ENGINE_ENABLE_PHYSICS
 {physics_block}
+    // Re-populate physics list after bodies are created
+    scene->physics_count = 0;
+    for (uint16_t i = 0; i < scene->object_count; i++) {{
+        if (scene->objects[i].rigid_body && !scene->objects[i].is_removed) {{
+            scene->physics_objects[scene->physics_count++] = i;
+        }}
+    }}
 {contact_subs_block}
 #endif
 

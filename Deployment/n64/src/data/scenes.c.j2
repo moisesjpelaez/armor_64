@@ -154,15 +154,15 @@ void scene_sync_physics(SceneId id)
 {{
 #if ENGINE_ENABLE_PHYSICS
 	ArmScene *s = &g_scenes[id];
-	if (s->objects) {{
-		for (uint16_t i = 0; i < s->object_count; i++) {{
-			if (s->objects[i].is_removed) continue;
-			// Skip parented objects - physics sync writes world-space position
-			// back to transform.loc, but parented objects store local-space there.
-			// Parented physics bodies are blocked at export time with a warning.
-			if (s->objects[i].parent_index >= 0) continue;
-			physics_sync_object(&s->objects[i]);
-		}}
+	// Use physics_objects list for O(physics) instead of O(total)
+	for (uint16_t i = 0; i < s->physics_count; i++) {{
+		ArmObject *obj = &s->objects[s->physics_objects[i]];
+		if (obj->is_removed) continue;
+		// Skip parented objects - physics sync writes world-space position
+		// back to transform.loc, but parented objects store local-space there.
+		// Parented physics bodies are blocked at export time with a warning.
+		if (obj->parent_index >= 0) continue;
+		physics_sync_object(obj);
 	}}
 #else
 	(void)id;
@@ -173,13 +173,11 @@ void scene_on_update(SceneId id, float dt)
 {{
 	ArmScene *s = &g_scenes[id];
 
-	// Update skeletal animations before trait updates
-	if (s->objects) {{
-		for (uint16_t i = 0; i < s->object_count; i++) {{
-			if (s->objects[i].is_removed) continue;
-			if (s->objects[i].animation) {{
-				animation_update(s->objects[i].animation, dt);
-			}}
+	// Update skeletal animations using animated_objects list
+	for (uint16_t i = 0; i < s->animated_count; i++) {{
+		ArmObject *obj = &s->objects[s->animated_objects[i]];
+		if (!obj->is_removed && obj->animation) {{
+			animation_update(obj->animation, dt);
 		}}
 	}}
 
@@ -288,13 +286,12 @@ void scene_on_render2d(SceneId id)
 		}}
 	}}
 
-	// Objects
-	if (s->objects) {{
-		for (uint16_t i = 0; i < s->object_count; i++) {{
-			if (s->objects[i].is_removed) continue;
-			for (uint8_t t = 0; t < s->objects[i].trait_count; t++) {{
-				if (s->objects[i].traits[t].on_render2d) s->objects[i].traits[t].on_render2d(&s->objects[i], s->objects[i].traits[t].data);
-			}}
+	// Objects - use render2d_objects list for O(render2d) instead of O(total)
+	for (uint16_t i = 0; i < s->render2d_count; i++) {{
+		ArmObject *obj = &s->objects[s->render2d_objects[i]];
+		if (obj->is_removed) continue;
+		for (uint8_t t = 0; t < obj->trait_count; t++) {{
+			if (obj->traits[t].on_render2d) obj->traits[t].on_render2d(obj, obj->traits[t].data);
 		}}
 	}}
 }}
@@ -411,6 +408,13 @@ void scene_clear(SceneId id)
 	s->free_capacity = 0;
 	s->active_objects = NULL;
 	s->active_trait_count = 0;
+	s->physics_objects = NULL;
+	s->physics_count = 0;
+	s->animated_objects = NULL;
+	s->animated_count = 0;
+	s->render2d_objects = NULL;
+	s->render2d_count = 0;
+	s->has_parented_objects = false;
     s->trait_count = 0;
     s->lifecycle_flags = 0;
 }}

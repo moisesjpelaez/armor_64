@@ -207,6 +207,7 @@ typedef struct ArmObject {{
 #define ARM_LIFECYCLE_FIXED_UPDATE (1 << 0)
 #define ARM_LIFECYCLE_UPDATE       (1 << 1)
 #define ARM_LIFECYCLE_LATE_UPDATE  (1 << 2)
+#define ARM_LIFECYCLE_RENDER2D     (1 << 3)
 
 typedef struct ArmLight {{
     ArmTransform transform;
@@ -262,6 +263,23 @@ typedef struct ArmScene {{
     // Avoids iterating entire object array when most objects have no traits
     uint16_t *active_objects;     // Array of object indices with active traits
     uint16_t active_trait_count;  // Count of objects with traits
+
+    // Physics objects - indices of objects with rigid bodies
+    // Avoids iterating all objects for physics sync
+    uint16_t *physics_objects;    // Array of object indices with physics bodies
+    uint16_t physics_count;       // Count of objects with physics
+
+    // Animated objects - indices of objects with skeletal animation
+    // Avoids iterating all objects for animation update
+    uint16_t *animated_objects;   // Array of object indices with animation
+    uint16_t animated_count;      // Count of animated objects
+
+    // Render2D objects - indices of objects with on_render2d callbacks
+    uint16_t *render2d_objects;   // Array of object indices with render2d
+    uint16_t render2d_count;      // Count of render2d objects
+
+    // Scene flags
+    bool has_parented_objects;    // True if any object has parent_index >= 0
 
     uint8_t trait_count;
     uint8_t lifecycle_flags;      // Scene-level trait lifecycle flags

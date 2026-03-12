@@ -395,6 +395,10 @@ class TraitExtractor implements IExtractorContext {
                     meta.dynamic_updates.push(callbackName);
                 }
             }
+            // Also register canonical on_update to mark lifecycle presence for export-time flags
+            if (!events.exists("on_update")) {
+                events.set("on_update", []);
+            }
         } else if (lifecycles.update != null) {
             // Fallback for inline/anonymous update functions
             extractEvents("on_update", lifecycles.update);
@@ -411,6 +415,10 @@ class TraitExtractor implements IExtractorContext {
                     extractEvents("on_fixed_update_" + callbackName, body);
                     meta.dynamic_fixed_updates.push(callbackName);
                 }
+            }
+            // Also register canonical on_fixed_update to mark lifecycle presence for export-time flags
+            if (!events.exists("on_fixed_update")) {
+                events.set("on_fixed_update", []);
             }
         } else if (lifecycles.fixed_update != null) {
             // Fallback for inline/anonymous fixed update functions

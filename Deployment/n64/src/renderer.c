@@ -44,15 +44,18 @@ void renderer_begin_frame(T3DViewport *viewport, ArmScene *scene) {
 
 void renderer_update_objects(ArmScene *scene) {
 	// === Pass 1: Propagate parent→child dirty flags ===
+	// Skip this pass entirely if scene has no parented objects (common case).
 	// Objects are topologically sorted (parents before children at export time),
 	// so a single forward pass is sufficient for arbitrary nesting depth.
-	for (uint16_t i = 0; i < scene->object_count; i++) {
-		ArmObject *obj = &scene->objects[i];
-		if (obj->is_removed) continue;
-		if (obj->parent_index >= 0 && scene->objects[obj->parent_index].transform.dirty > 0) {
-			// Parent is dirty → child must recompute its world matrix
-			if (obj->transform.dirty == 0) {
-				obj->transform.dirty = obj->is_static ? 1 : FB_COUNT;
+	if (scene->has_parented_objects) {
+		for (uint16_t i = 0; i < scene->object_count; i++) {
+			ArmObject *obj = &scene->objects[i];
+			if (obj->is_removed) continue;
+			if (obj->parent_index >= 0 && scene->objects[obj->parent_index].transform.dirty > 0) {
+				// Parent is dirty → child must recompute its world matrix
+				if (obj->transform.dirty == 0) {
+					obj->transform.dirty = obj->is_static ? 1 : FB_COUNT;
+				}
 			}
 		}
 	}
