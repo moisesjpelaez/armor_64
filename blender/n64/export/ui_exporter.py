@@ -762,6 +762,34 @@ def write_canvas_h(exporter):
         elements = canvas.get('elements', [])
         total_element_count = max(total_element_count, len(elements))
 
+    # Calculate max pool sizes from actual canvas data
+    # Take the max count across all canvases and add a small buffer for runtime additions
+    max_labels = max(1, total_label_count + 4)
+    max_images = max(1, total_image_count + 4)
+    max_groups = max(1, total_group_count + 2)
+
+    # Calculate max group children from actual group data
+    max_group_children = 8  # Minimum default
+    for canvas_name, canvas in exporter.ui_canvas_data.items():
+        for group in canvas.get('groups', []):
+            child_count = max(
+                len(group.get('child_image_indices', [])),
+                len(group.get('child_label_indices', []))
+            )
+            max_group_children = max(max_group_children, child_count)
+
+    # Calculate max label text size from actual text content
+    max_label_text_size = 32  # Minimum default
+    for canvas_name, canvas in exporter.ui_canvas_data.items():
+        for label in canvas.get('labels', []):
+            text_len = len(label.get('text', '')) + 1  # +1 for null terminator
+            max_label_text_size = max(max_label_text_size, text_len)
+    # Round up to nearest power of 2 for alignment
+    max_label_text_size = 1 << (max_label_text_size - 1).bit_length()
+
+    log.info(f'UI pool sizes: labels={max_labels}, images={max_images}, groups={max_groups}, '
+             f'group_children={max_group_children}, text_size={max_label_text_size}')
+
     output = tmpl_content.format(
         canvas_width=canvas_width,
         canvas_height=canvas_height,
@@ -771,7 +799,12 @@ def write_canvas_h(exporter):
         image_count=total_image_count,
         group_defines='\n'.join(group_defines_lines) if group_defines_lines else '// No groups',
         group_count=total_group_count,
-        element_count=total_element_count
+        element_count=total_element_count,
+        max_labels=max_labels,
+        max_images=max_images,
+        max_groups=max_groups,
+        max_group_children=max_group_children,
+        max_label_text_size=max_label_text_size
     )
 
     with open(out_path, 'w', encoding='utf-8') as f:

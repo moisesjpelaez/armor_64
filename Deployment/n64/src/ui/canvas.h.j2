@@ -33,27 +33,14 @@ extern "C" {{
 
 #if UI_LABEL_COUNT > 0 || UI_IMAGE_COUNT > 0 || UI_GROUP_COUNT > 0
 
-// Max UI elements
-#ifndef UI_MAX_LABELS
-#define UI_MAX_LABELS 32
-#endif
+// Max UI elements (calculated from canvas data at export time)
+#define UI_MAX_LABELS {max_labels}
+#define UI_MAX_IMAGES {max_images}
+#define UI_MAX_GROUPS {max_groups}
+#define UI_MAX_GROUP_CHILDREN {max_group_children}
 
-#ifndef UI_MAX_IMAGES
-#define UI_MAX_IMAGES 16
-#endif
-
-#ifndef UI_MAX_GROUPS
-#define UI_MAX_GROUPS 8
-#endif
-
-#ifndef UI_MAX_GROUP_CHILDREN
-#define UI_MAX_GROUP_CHILDREN 8
-#endif
-
-// Max text length for labels
-#ifndef UI_LABEL_TEXT_SIZE
-#define UI_LABEL_TEXT_SIZE 64
-#endif
+// Max text length for labels (from longest text in canvases)
+#define UI_LABEL_TEXT_SIZE {max_label_text_size}
 
 // Canvas dimensions
 #define CANVAS_WIDTH {canvas_width}
