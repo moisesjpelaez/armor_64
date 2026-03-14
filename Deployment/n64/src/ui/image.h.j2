@@ -1,0 +1,67 @@
+/* N64 Exporter - UI Image declarations
+ * Auto-generated from Koui canvas data. Do not edit directly.
+ * Template: image.h.j2
+ */
+#pragma once
+
+#include <stdint.h>
+#include <stdbool.h>
+#include "../data/scenes.h"
+
+#ifdef __cplusplus
+extern "C" {{
+#endif
+
+// Image key defines (generated from Koui Editor canvas JSON)
+{image_defines}
+
+#define UI_IMAGE_COUNT  {image_count}
+#define UI_MAX_IMAGES   {max_images}
+
+// Forward declaration for sprite_t (avoids including libdragon in this header)
+struct sprite_s;
+typedef struct sprite_s sprite_t;
+
+// Runtime image element (always defined for type compatibility)
+typedef struct {{
+    int16_t  pos_x, pos_y;
+    int16_t  width, height;
+    sprite_t *sprite;     // Pointer to loaded sprite (NULL until scene init)
+    bool     scale;       // Scale sprite to width/height
+    bool     visible;
+    uint8_t  align_h;     // 0=left, 1=center, 2=right
+    int16_t  align_width; // Container width for alignment (0=none)
+}} UIImage;
+
+#if UI_IMAGE_COUNT > 0
+
+// Image management
+UIImage* ui_image_create(sprite_t *sprite);
+void     ui_image_add(UIImage *image);
+void     ui_image_remove(UIImage *image);
+void     ui_image_set_position(UIImage *image, int16_t x, int16_t y);
+void     ui_image_set_size(UIImage *image, int16_t width, int16_t height);
+UIImage* canvas_get_image(int index);
+
+// Internal - called by canvas orchestrator
+void image_clear(void);
+void image_scene_init(SceneId scene_id);
+void image_render(void);
+
+#else
+
+static inline UIImage* ui_image_create(sprite_t *s) {{ (void)s; return NULL; }}
+static inline void     ui_image_add(UIImage *i) {{ (void)i; }}
+static inline void     ui_image_remove(UIImage *i) {{ (void)i; }}
+static inline void     ui_image_set_position(UIImage *img, int16_t x, int16_t y) {{ (void)img; (void)x; (void)y; }}
+static inline void     ui_image_set_size(UIImage *img, int16_t w, int16_t h) {{ (void)img; (void)w; (void)h; }}
+static inline UIImage* canvas_get_image(int i) {{ (void)i; return NULL; }}
+static inline void     image_clear(void) {{}}
+static inline void     image_scene_init(SceneId s) {{ (void)s; }}
+static inline void     image_render(void) {{}}
+
+#endif // UI_IMAGE_COUNT > 0
+
+#ifdef __cplusplus
+}}
+#endif

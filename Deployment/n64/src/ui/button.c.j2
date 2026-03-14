@@ -1,0 +1,382 @@
+/* N64 Exporter - UI Button implementation
+ * Auto-generated from Koui canvas data. Do not edit directly.
+ * Template: button.c.j2
+ *
+ * Replicates Koui Button + EventHandler behavior 1:1:
+ *
+ *   Focus navigation (EventHandler.onGamepadButton / onGamepadAxis):
+ *   - DPad pressed (value==1.0): if no focus → focusFirstElement(); else navigate focus graph
+ *   - Analog stick: threshold-crossing detection (previous value crosses ±0.5) + 0.2s cooldown
+ *   - Only DPad/stick directions navigate; A button does NOT navigate
+ *   - No auto-focus on scene init — only on first directional input
+ *
+ *   Button press (Button._onGamepadButton → synthetic _onClick):
+ *   - A ButtonDown → isPressed = true  (ClickStart)
+ *   - A ButtonUp   → isPressed = false (ClickEnd); _activated = true for one frame
+ *
+ *   Focus change (Button._onFocus):
+ *   - FocusLoose → isPressed = false (non-toggle buttons)
+ *
+ *   Rendering (Button.draw):
+ *   - isPressed → "click" colors
+ *   - focused   → "hover" colors
+ *   - else      → default colors
+ */
+#include "button.h"
+#include "fonts.h"
+#include "../iron/system/input.h"
+#include <libdragon.h>
+#include <string.h>
+
+#if UI_BUTTON_COUNT > 0
+
+// ============================================================================
+// Static pool
+// ============================================================================
+
+static UIButton g_buttons[UI_MAX_BUTTONS];
+static int      g_button_count  = 0;
+static int      g_focused_index = -1;  // -1 = no button focused
+
+// Analog stick previous values for threshold-crossing detection
+static float g_stick_prev_x = 0.0f;
+static float g_stick_prev_y = 0.0f;
+
+// ============================================================================
+// Compile-time definition struct
+// ============================================================================
+
+typedef struct {{
+    int16_t pos_x, pos_y, width, height;
+    // Colors: stored as RGBA components for static init without libdragon macros
+    uint8_t bg_r, bg_g, bg_b, bg_a;
+    uint8_t border_r, border_g, border_b, border_a;
+    uint8_t hover_bg_r, hover_bg_g, hover_bg_b, hover_bg_a;
+    uint8_t hover_border_r, hover_border_g, hover_border_b, hover_border_a;
+    uint8_t click_bg_r, click_bg_g, click_bg_b, click_bg_a;
+    uint8_t click_border_r, click_border_g, click_border_b, click_border_a;
+    int8_t  border_size;
+    const char *text;
+    uint8_t font_id;           // Logical ID → fonts_get_rdpq_id()
+    int8_t  font_baseline_offset;
+    uint8_t text_style_id;
+    uint8_t hover_text_style_id;
+    int8_t  focus_up, focus_down, focus_left, focus_right;
+    bool    visible;
+}} UIButtonDef;
+
+// ============================================================================
+// Per-canvas static button definition arrays
+// ============================================================================
+{canvas_button_arrays}
+
+// ============================================================================
+// Internal load helper
+// ============================================================================
+
+static void load_buttons(const UIButtonDef *defs, int count) {{
+    for (int i = 0; i < count && g_button_count < UI_MAX_BUTTONS; i++) {{
+        const UIButtonDef *def = &defs[i];
+        UIButton *btn = &g_buttons[g_button_count++];
+
+        btn->pos_x   = def->pos_x;   btn->pos_y    = def->pos_y;
+        btn->width   = def->width;   btn->height   = def->height;
+
+        btn->bg_r = def->bg_r; btn->bg_g = def->bg_g;
+        btn->bg_b = def->bg_b; btn->bg_a = def->bg_a;
+        btn->border_r = def->border_r; btn->border_g = def->border_g;
+        btn->border_b = def->border_b; btn->border_a = def->border_a;
+
+        btn->hover_bg_r = def->hover_bg_r; btn->hover_bg_g = def->hover_bg_g;
+        btn->hover_bg_b = def->hover_bg_b; btn->hover_bg_a = def->hover_bg_a;
+        btn->hover_border_r = def->hover_border_r; btn->hover_border_g = def->hover_border_g;
+        btn->hover_border_b = def->hover_border_b; btn->hover_border_a = def->hover_border_a;
+
+        btn->click_bg_r = def->click_bg_r; btn->click_bg_g = def->click_bg_g;
+        btn->click_bg_b = def->click_bg_b; btn->click_bg_a = def->click_bg_a;
+        btn->click_border_r = def->click_border_r; btn->click_border_g = def->click_border_g;
+        btn->click_border_b = def->click_border_b; btn->click_border_a = def->click_border_a;
+
+        btn->border_size          = def->border_size;
+        btn->font_rdpq_id         = fonts_get_rdpq_id(def->font_id);
+        btn->font_baseline_offset = def->font_baseline_offset;
+        btn->text_style_id        = def->text_style_id;
+        btn->hover_text_style_id  = def->hover_text_style_id;
+        btn->focus_up             = def->focus_up;
+        btn->focus_down           = def->focus_down;
+        btn->focus_left           = def->focus_left;
+        btn->focus_right          = def->focus_right;
+        btn->visible              = def->visible;
+        btn->focused              = false;
+        btn->isPressed            = false;
+        btn->_activated           = false;
+
+        if (def->text) {{
+            strncpy(btn->text, def->text, UI_BUTTON_TEXT_SIZE - 1);
+            btn->text[UI_BUTTON_TEXT_SIZE - 1] = '\0';
+        }} else {{
+            btn->text[0] = '\0';
+        }}
+    }}
+}}
+
+// ============================================================================
+// Scene init — auto-focus first visible button (N64-specific)
+// ============================================================================
+
+void button_scene_init(SceneId scene_id) {{
+    switch (scene_id) {{
+{button_scene_init_cases}
+        default: break;
+    }}
+
+    g_focused_index = -1;
+    g_stick_prev_x  = 0.0f;
+    g_stick_prev_y  = 0.0f;
+
+    // N64: auto-focus first visible button on scene load
+    for (int i = 0; i < g_button_count; i++) {{
+        if (g_buttons[i].visible) {{
+            g_focused_index          = i;
+            g_buttons[i].focused     = true;
+            break;
+        }}
+    }}
+}}
+
+// ============================================================================
+// Focus management — mirrors Koui EventHandler.setFocus / FocusEvent
+// ============================================================================
+
+// Koui: EventHandler.setFocus fires FocusLoose on old, FocusGet on new.
+// Button._onFocus(FocusLoose) → isFocused=false, isPressed=false (non-toggle)
+// Button._onFocus(FocusGet)   → isFocused=true
+static void set_focus(int index) {{
+    if (index < 0 || index >= g_button_count) return;
+    if (!g_buttons[index].visible) return;
+    if (g_focused_index == index) return;  // Koui: if (elemFocused == element) return
+
+    // FocusLoose on old element
+    if (g_focused_index >= 0 && g_focused_index < g_button_count) {{
+        g_buttons[g_focused_index].focused = false;
+        g_buttons[g_focused_index].isPressed = false;  // Koui: _onFocus(FocusLoose) clears press
+    }}
+
+    // FocusGet on new element
+    g_focused_index           = index;
+    g_buttons[index].focused  = true;
+}}
+
+// Koui: EventHandler.focusFirstElement — grab first visible focusable element
+static void focus_first_element(void) {{
+    for (int i = 0; i < g_button_count; i++) {{
+        if (g_buttons[i].visible) {{
+            set_focus(i);
+            return;
+        }}
+    }}
+}}
+
+// ============================================================================
+// Input update — replicates Koui EventHandler.onGamepadButton + onGamepadAxis
+// ============================================================================
+
+void button_update(float dt) {{
+    if (g_button_count == 0) return;
+
+    // Clear _activated flags from previous frame
+    for (int i = 0; i < g_button_count; i++)
+        g_buttons[i]._activated = false;
+
+    // === A button: press/release handling ===
+    // Koui: _onGamepadButton(A, ButtonDown) → synthetic ClickStart → isPressed = true
+    // Koui: _onGamepadButton(A, ButtonUp)   → synthetic ClickEnd   → isPressed = false
+    if (g_focused_index >= 0) {{
+        UIButton *focused = &g_buttons[g_focused_index];
+        if (input_started(N64_BTN_A)) {{
+            focused->isPressed = true;
+        }}
+        if (input_released(N64_BTN_A) && focused->isPressed) {{
+            focused->isPressed = false;
+            focused->_activated = true;
+        }}
+    }}
+
+    // === DPad navigation (Koui: onGamepadButton value==1.0) ===
+    // Only fires on first frame of press (input_started)
+    int dpad_dir = -1;  // -1 = no direction
+    if (input_started(N64_BTN_DUP))    dpad_dir = 0;  // up
+    if (input_started(N64_BTN_DDOWN))  dpad_dir = 1;  // down
+    if (input_started(N64_BTN_DLEFT))  dpad_dir = 2;  // left
+    if (input_started(N64_BTN_DRIGHT)) dpad_dir = 3;  // right
+
+    if (dpad_dir >= 0) {{
+        if (g_focused_index < 0) {{
+            // Koui: if (elemFocused == null && isDPad) → focusFirstElement()
+            focus_first_element();
+        }} else {{
+            // Koui: navigate focus graph, then fire ButtonDown on focused
+            UIButton *cur = &g_buttons[g_focused_index];
+            if      (dpad_dir == 0 && cur->focus_up    >= 0) set_focus(cur->focus_up);
+            else if (dpad_dir == 1 && cur->focus_down  >= 0) set_focus(cur->focus_down);
+            else if (dpad_dir == 2 && cur->focus_left  >= 0) set_focus(cur->focus_left);
+            else if (dpad_dir == 3 && cur->focus_right >= 0) set_focus(cur->focus_right);
+        }}
+    }}
+
+    // === Analog stick navigation (Koui: onGamepadAxis) ===
+    // Threshold-crossing detection: only trigger when previous was inside ±0.5
+    // and current crosses outside ±0.5, plus 0.2s cooldown
+    static float axis_wait = 0.0f;
+    float sx = input_stick_x();
+    float sy = input_stick_y();
+    // N64: stick_y positive = up, Koui axis 1: positive = up, negative = down
+
+    int axis_dir = -1;
+    if (axis_wait <= 0.0f) {{
+        // Vertical: check threshold crossing (Koui: axis == 1)
+        // Koui: value > 0.5 → DPAD_UP, value < -0.5 → DPAD_DOWN
+        if (sy > 0.5f && g_stick_prev_y <= 0.5f)        axis_dir = 0;  // up
+        else if (sy < -0.5f && g_stick_prev_y >= -0.5f)  axis_dir = 1;  // down
+        // Horizontal: check threshold crossing (Koui: axis == 0)
+        else if (sx < -0.5f && g_stick_prev_x >= -0.5f)  axis_dir = 2;  // left
+        else if (sx > 0.5f && g_stick_prev_x <= 0.5f)    axis_dir = 3;  // right
+    }}
+
+    if (axis_dir >= 0) {{
+        if (g_focused_index < 0) {{
+            focus_first_element();
+        }} else {{
+            UIButton *cur = &g_buttons[g_focused_index];
+            if      (axis_dir == 0 && cur->focus_up    >= 0) set_focus(cur->focus_up);
+            else if (axis_dir == 1 && cur->focus_down  >= 0) set_focus(cur->focus_down);
+            else if (axis_dir == 2 && cur->focus_left  >= 0) set_focus(cur->focus_left);
+            else if (axis_dir == 3 && cur->focus_right >= 0) set_focus(cur->focus_right);
+        }}
+        axis_wait = 0.2f;
+    }}
+
+    // Update previous stick values (Koui: always update previous regardless of deadzone)
+    g_stick_prev_x = sx;
+    g_stick_prev_y = sy;
+
+    // Decrement cooldown
+    if (axis_wait > 0.0f) axis_wait -= dt;
+}}
+
+// ============================================================================
+// Rendering — mirrors Koui Button.draw state selection
+// ============================================================================
+
+void button_render(void) {{
+    if (g_button_count == 0) return;
+
+    // Pass 1: all backgrounds and borders (solid color fills)
+    rdpq_set_mode_standard();
+    rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
+    for (int i = 0; i < g_button_count; i++) {{
+        UIButton *btn = &g_buttons[i];
+        if (!btn->visible) continue;
+
+        uint8_t bg_r, bg_g, bg_b, bg_a;
+        uint8_t bdr_r, bdr_g, bdr_b, bdr_a;
+
+        if (btn->isPressed) {{
+            bg_r = btn->click_bg_r; bg_g = btn->click_bg_g;
+            bg_b = btn->click_bg_b; bg_a = btn->click_bg_a;
+            bdr_r = btn->click_border_r; bdr_g = btn->click_border_g;
+            bdr_b = btn->click_border_b; bdr_a = btn->click_border_a;
+        }} else if (btn->focused) {{
+            bg_r = btn->hover_bg_r; bg_g = btn->hover_bg_g;
+            bg_b = btn->hover_bg_b; bg_a = btn->hover_bg_a;
+            bdr_r = btn->hover_border_r; bdr_g = btn->hover_border_g;
+            bdr_b = btn->hover_border_b; bdr_a = btn->hover_border_a;
+        }} else {{
+            bg_r = btn->bg_r; bg_g = btn->bg_g;
+            bg_b = btn->bg_b; bg_a = btn->bg_a;
+            bdr_r = btn->border_r; bdr_g = btn->border_g;
+            bdr_b = btn->border_b; bdr_a = btn->border_a;
+        }}
+
+        int16_t x0 = btn->pos_x, y0 = btn->pos_y;
+        int16_t x1 = x0 + btn->width, y1 = y0 + btn->height;
+
+        rdpq_set_prim_color(RGBA32(bg_r, bg_g, bg_b, bg_a));
+        rdpq_fill_rectangle(x0, y0, x1, y1);
+
+        if (btn->border_size > 0) {{
+            int16_t bs = btn->border_size;
+            rdpq_set_prim_color(RGBA32(bdr_r, bdr_g, bdr_b, bdr_a));
+            rdpq_fill_rectangle(x0,      y0,      x1,      y0 + bs);
+            rdpq_fill_rectangle(x0,      y1 - bs, x1,      y1);
+            rdpq_fill_rectangle(x0,      y0 + bs, x0 + bs, y1 - bs);
+            rdpq_fill_rectangle(x1 - bs, y0 + bs, x1,      y1 - bs);
+        }}
+    }}
+
+    // Pass 2: all button text
+    rdpq_set_mode_standard();
+    rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
+    for (int i = 0; i < g_button_count; i++) {{
+        UIButton *btn = &g_buttons[i];
+        if (!btn->visible || !btn->text[0] || !btn->font_rdpq_id) continue;
+
+        uint8_t text_style = (btn->isPressed || btn->focused)
+            ? btn->hover_text_style_id : btn->text_style_id;
+        rdpq_textparms_t parms = {{
+            .style_id = text_style,
+            .align    = ALIGN_CENTER,
+            .width    = btn->width,
+        }};
+        rdpq_text_print(&parms, btn->font_rdpq_id,
+            btn->pos_x, btn->pos_y + btn->font_baseline_offset, btn->text);
+    }}
+}}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+UIButton* canvas_get_button(int index) {{
+    if (index >= 0 && index < g_button_count)
+        return &g_buttons[index];
+    return NULL;
+}}
+
+// Returns true once per A press-release cycle (the frame A is released).
+bool button_was_pressed(int index) {{
+    if (index < 0 || index >= g_button_count) return false;
+    if (g_buttons[index]._activated) {{
+        g_buttons[index]._activated = false;
+        return true;
+    }}
+    return false;
+}}
+
+void button_set_focus(int index) {{ set_focus(index); }}
+
+void button_clear_focus(void) {{
+    if (g_focused_index >= 0 && g_focused_index < g_button_count) {{
+        g_buttons[g_focused_index].focused = false;
+        g_buttons[g_focused_index].isPressed = false;
+    }}
+    g_focused_index = -1;
+}}
+
+void button_init(void) {{
+    // BSS zero-initialized at startup; nothing to do
+}}
+
+void button_clear(void) {{
+    if (g_focused_index >= 0 && g_focused_index < g_button_count) {{
+        g_buttons[g_focused_index].focused = false;
+        g_buttons[g_focused_index].isPressed = false;
+    }}
+    g_focused_index = -1;
+    g_button_count  = 0;
+    g_stick_prev_x  = 0.0f;
+    g_stick_prev_y  = 0.0f;
+    memset(g_buttons, 0, sizeof(g_buttons));
+}}
+
+#endif // UI_BUTTON_COUNT > 0

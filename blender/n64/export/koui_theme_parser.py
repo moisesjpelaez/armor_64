@@ -222,7 +222,76 @@ class KouiThemeParser:
         except (ValueError, TypeError):
             return default
 
-    @staticmethod
+    # -------------------------------------------------------------------------
+    # Button / stateful color helpers
+    # -------------------------------------------------------------------------
+
+    def _get_effective_style(self, tID: str, state: str) -> dict:
+        """Get the effective style for *tID* in *state* (e.g. 'hover', 'click').
+
+        Starts from the resolved base style of *tID* and deep-merges the first
+        state-specific selector found when walking up the parent chain:
+          - If '_button!hover' exists  → use it
+          - Else if '_root!hover' exists → use it
+          - Else return the base style unchanged
+
+        This mirrors Koui's inheritance: '_button > _root:' (empty body) means
+        the button's hover colours come from '_root!hover'.
+        """
+        base = self._deep_merge(self.resolved.get(tID, {}), {})  # deep copy
+
+        # Walk the parent chain to find the nearest state selector
+        current = tID
+        while current:
+            state_selector = f"{current}!{state}"
+            if state_selector in self.resolved:
+                override = self.resolved[state_selector]
+                return self._deep_merge(base, override)
+            raw = self.selectors.get(current, {})
+            current = raw.get('_parent')
+
+        return base
+
+    def get_bg_color(self, tID: str, state: str = 'default',
+                     default: str = '#262833') -> str:
+        """Return the background colour hex string for *tID* in *state*.
+
+        Uses gradient.colorTopLeft when color.useGradient is truthy,
+        otherwise falls back to color.bg.
+        """
+        if state == 'default':
+            style = self.resolved.get(tID, {})
+        else:
+            style = self._get_effective_style(tID, state)
+
+        use_gradient = self._get_nested_property(style, ['color', 'useGradient'], 'false')
+        if str(use_gradient).lower() == 'true':
+            color = self._get_nested_property(
+                style, ['color', 'gradient', 'colorTopLeft'], default)
+        else:
+            color = self._get_nested_property(style, ['color', 'bg'], default)
+        return color if color else default
+
+    def get_border_color(self, tID: str, state: str = 'default',
+                         default: str = '#1f2028') -> str:
+        """Return the border colour hex string for *tID* in *state*."""
+        if state == 'default':
+            style = self.resolved.get(tID, {})
+        else:
+            style = self._get_effective_style(tID, state)
+
+        color = self._get_nested_property(style, ['border', 'color'], default)
+        return color if color else default
+
+    def get_border_size(self, tID: str, default: int = 2) -> int:
+        """Return border.size for *tID* (state-independent)."""
+        style = self.resolved.get(tID, {})
+        try:
+            return int(self._get_nested_property(style, ['border', 'size'], default))
+        except (ValueError, TypeError):
+            return default
+
+
     def parse_hex_color(hex_color: str) -> tuple:
         """Parse Koui hex color (#RRGGBB or #RRGGBBAA) to (r, g, b, a) tuple (0-255)."""
         hex_color = hex_color.lstrip('#')

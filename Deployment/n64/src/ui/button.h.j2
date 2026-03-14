@@ -1,0 +1,98 @@
+/* N64 Exporter - UI Button declarations
+ * Auto-generated from Koui canvas data. Do not edit directly.
+ * Template: button.h.j2
+ */
+#pragma once
+
+#include <stdint.h>
+#include <stdbool.h>
+#include "../data/scenes.h"
+
+#ifdef __cplusplus
+extern "C" {{
+#endif
+
+// Button key defines (generated from Koui Editor canvas JSON)
+{button_defines}
+
+#define UI_BUTTON_COUNT    {button_count}
+#define UI_MAX_BUTTONS     {max_buttons}
+#define UI_BUTTON_TEXT_SIZE 32
+
+// Runtime button element.
+// Colors stored as RGBA components — no libdragon dependency in this header.
+typedef struct {{
+    int16_t pos_x, pos_y, width, height;
+
+    // Normal state
+    uint8_t bg_r, bg_g, bg_b, bg_a;
+    uint8_t border_r, border_g, border_b, border_a;
+
+    // Hover / focus state  (Koui: isHovered || isFocused → "hover")
+    uint8_t hover_bg_r, hover_bg_g, hover_bg_b, hover_bg_a;
+    uint8_t hover_border_r, hover_border_g, hover_border_b, hover_border_a;
+
+    // Click / press state  (Koui: isPressed → "click")
+    uint8_t click_bg_r, click_bg_g, click_bg_b, click_bg_a;
+    uint8_t click_border_r, click_border_g, click_border_b, click_border_a;
+
+    // Border thickness in pixels
+    int8_t border_size;
+
+    // Text
+    char    text[UI_BUTTON_TEXT_SIZE];
+    uint8_t font_rdpq_id;          // rdpq font ID (from fonts_get_rdpq_id)
+    int8_t  font_baseline_offset;  // Y offset from pos_y for vertically-centered text
+    uint8_t text_style_id;         // rdpq style for normal text color
+    uint8_t hover_text_style_id;   // rdpq style for focused / hover text color
+
+    // Focus navigation: resolved button indices; -1 = no connection
+    int8_t focus_up, focus_down, focus_left, focus_right;
+
+    // Runtime state (mirrors Koui Button fields)
+    bool focused;    // Koui: isFocused — set by focus graph navigation
+    bool visible;
+    bool isPressed;  // Koui: isPressed — true while A held, cleared on release or focus loss
+    bool _activated; // One-frame flag: true the frame A is released on a pressed button
+}} UIButton;
+
+#if UI_BUTTON_COUNT > 0
+
+// ---- Public API ----
+
+// Get button by canvas index (matches UI_BUTTON_* defines).
+UIButton* canvas_get_button(int index);
+
+// Returns true if the button was activated (A pressed while focused) since the
+// last call, then clears the flag.  Intended for use in Armory trait code:
+//   if (button_was_pressed(UI_BUTTON_PLAY_BUTTON)) {{ start_game(); }}
+bool button_was_pressed(int index);
+
+// Manually set or clear focus (useful from trait code or cutscenes).
+void button_set_focus(int index);
+void button_clear_focus(void);
+
+// ---- Internal - called by canvas orchestrator ----
+void button_init(void);
+void button_clear(void);
+void button_scene_init(SceneId scene_id);
+void button_update(float dt);   // Call every frame; handles DPad + analog input
+void button_render(void);       // Call inside canvas_render after images, before labels
+
+#else
+
+static inline UIButton* canvas_get_button(int i) {{ (void)i; return NULL; }}
+static inline bool      button_was_pressed(int i) {{ (void)i; return false; }}
+static inline void      button_set_focus(int i) {{ (void)i; }}
+static inline void      button_clear_focus(void) {{}}
+static inline void      button_init(void) {{}}
+static inline void      button_clear(void) {{}}
+static inline void      button_scene_init(SceneId s) {{ (void)s; }}
+static inline void      button_update(float dt) {{ (void)dt; }}
+static inline void      button_render(void) {{}}
+
+#endif // UI_BUTTON_COUNT > 0
+
+#ifdef __cplusplus
+}}
+#endif

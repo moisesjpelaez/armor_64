@@ -1,0 +1,192 @@
+/* N64 Exporter - UI Image implementation
+ * Auto-generated from Koui canvas data. Do not edit directly.
+ * Template: image.c.j2
+ */
+#include "image.h"
+#include <libdragon.h>
+#include <string.h>
+
+#if UI_IMAGE_COUNT > 0
+
+// ============================================================================
+// Static pools
+// ============================================================================
+
+static UIImage  g_image_pool[UI_MAX_IMAGES];
+static uint8_t  g_image_pool_used    = 0;
+
+static UIImage *g_image_render_list[UI_MAX_IMAGES];
+static uint8_t  g_image_render_count = 0;
+
+static UIImage *g_canvas_images[UI_IMAGE_COUNT];
+static int      g_canvas_image_count = 0;
+
+// ============================================================================
+// Compile-time definition struct
+// ============================================================================
+
+typedef struct {{
+    const char *sprite_name;
+    int16_t pos_x, pos_y;
+    int16_t width, height;
+    uint8_t anchor;
+    bool    scale;
+    bool    visible;
+    sprite_t *sprite;   // Filled at runtime (sprite_load)
+    uint8_t align_h;
+    int16_t align_width;
+}} UIImageDef;
+
+// ============================================================================
+// Anchor helpers (N64 fixed 320x240)
+// ============================================================================
+
+static int16_t image_anchor_x(int16_t pos_x, int16_t width, uint8_t anchor) {{
+    switch (anchor) {{
+        case 1: case 4: case 7: return (320 / 2) - (width / 2) + pos_x;  // CENTER
+        case 2: case 5: case 8: return 320 - width + pos_x;               // RIGHT
+        default:                return pos_x;
+    }}
+}}
+
+static int16_t image_anchor_y(int16_t pos_y, int16_t height, uint8_t anchor) {{
+    switch (anchor) {{
+        case 3: case 4: case 5: return (240 / 2) - (height / 2) + pos_y;  // MIDDLE
+        case 6: case 7: case 8: return 240 - height + pos_y;               // BOTTOM
+        default:                return pos_y;
+    }}
+}}
+
+// ============================================================================
+// Per-canvas static image definition arrays
+// ============================================================================
+
+{canvas_image_arrays}
+
+// ============================================================================
+// Internal load helper
+// ============================================================================
+
+static void load_images(UIImageDef *defs, int count) {{
+    for (int i = 0; i < count; i++) {{
+        UIImageDef *def = &defs[i];
+        if (!def->sprite) {{
+            char path[64];
+            snprintf(path, sizeof(path), "rom:/%s.sprite", def->sprite_name);
+            def->sprite = sprite_load(path);
+        }}
+        UIImage *image = ui_image_create(def->sprite);
+        if (!image) continue;
+        image->pos_x      = image_anchor_x(def->pos_x, def->width, def->anchor);
+        image->pos_y      = image_anchor_y(def->pos_y, def->height, def->anchor);
+        image->width      = def->width;
+        image->height     = def->height;
+        image->scale      = def->scale;
+        image->visible    = def->visible;
+        image->align_h    = def->align_h;
+        image->align_width = def->align_width;
+        ui_image_add(image);
+        if (g_canvas_image_count < UI_IMAGE_COUNT)
+            g_canvas_images[g_canvas_image_count++] = image;
+    }}
+}}
+
+// ============================================================================
+// Scene init switch
+// ============================================================================
+
+void image_scene_init(SceneId scene_id) {{
+    switch (scene_id) {{
+{image_scene_init_cases}
+        default: break;
+    }}
+}}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+void image_clear(void) {{
+    // Sprites stay loaded for reuse across scene init calls
+    g_image_pool_used     = 0;
+    g_image_render_count  = 0;
+    g_canvas_image_count  = 0;
+    memset(g_image_pool,        0, sizeof(g_image_pool));
+    memset(g_image_render_list, 0, sizeof(g_image_render_list));
+    memset(g_canvas_images,     0, sizeof(g_canvas_images));
+}}
+
+UIImage* ui_image_create(sprite_t *sprite) {{
+    if (g_image_pool_used >= UI_MAX_IMAGES) return NULL;
+    UIImage *image     = &g_image_pool[g_image_pool_used++];
+    image->sprite      = sprite;
+    image->pos_x       = 0;
+    image->pos_y       = 0;
+    image->width       = sprite ? sprite->width  : 32;
+    image->height      = sprite ? sprite->height : 32;
+    image->scale       = false;
+    image->visible     = true;
+    return image;
+}}
+
+void ui_image_add(UIImage *image) {{
+    if (!image || g_image_render_count >= UI_MAX_IMAGES) return;
+    for (uint8_t i = 0; i < g_image_render_count; i++)
+        if (g_image_render_list[i] == image) return;
+    g_image_render_list[g_image_render_count++] = image;
+}}
+
+void ui_image_remove(UIImage *image) {{
+    if (!image) return;
+    for (uint8_t i = 0; i < g_image_render_count; i++) {{
+        if (g_image_render_list[i] == image) {{
+            g_image_render_list[i] = g_image_render_list[--g_image_render_count];
+            break;
+        }}
+    }}
+}}
+
+void ui_image_set_position(UIImage *image, int16_t x, int16_t y) {{
+    if (image) {{ image->pos_x = x; image->pos_y = y; }}
+}}
+
+void ui_image_set_size(UIImage *image, int16_t width, int16_t height) {{
+    if (image) {{ image->width = width; image->height = height; }}
+}}
+
+UIImage* canvas_get_image(int index) {{
+    if (index >= 0 && index < g_canvas_image_count)
+        return g_canvas_images[index];
+    return NULL;
+}}
+
+void image_render(void) {{
+    if (g_image_render_count == 0) return;
+
+    rdpq_set_mode_standard();
+    rdpq_mode_filter(FILTER_BILINEAR);
+    rdpq_mode_combiner(RDPQ_COMBINER_TEX);
+    rdpq_mode_blender(RDPQ_BLENDER_MULTIPLY);
+
+    for (uint8_t i = 0; i < g_image_render_count; i++) {{
+        UIImage *image = g_image_render_list[i];
+        if (!image || !image->visible || !image->sprite) continue;
+
+        int16_t render_x = image->pos_x;
+        if (image->align_h == 1 && image->align_width > 0)
+            render_x = image->pos_x + (image->align_width - image->width) / 2;
+        else if (image->align_h == 2 && image->align_width > 0)
+            render_x = image->pos_x + image->align_width - image->width;
+
+        if (image->scale) {{
+            float sx = (float)image->width  / (float)image->sprite->width;
+            float sy = (float)image->height / (float)image->sprite->height;
+            rdpq_sprite_blit(image->sprite, render_x, image->pos_y,
+                &(rdpq_blitparms_t){{ .scale_x = sx, .scale_y = sy }});
+        }} else {{
+            rdpq_sprite_blit(image->sprite, render_x, image->pos_y, NULL);
+        }}
+    }}
+}}
+
+#endif // UI_IMAGE_COUNT > 0

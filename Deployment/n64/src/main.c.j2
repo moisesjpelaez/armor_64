@@ -111,6 +111,7 @@ int main(void)
         renderer_begin_frame(&viewport, scene);
         renderer_draw_scene(&viewport, scene);
 #if ENGINE_ENABLE_UI
+        canvas_update(dt);
         canvas_render();
 #endif
         scene_on_render2d(current_scene);

@@ -1,0 +1,87 @@
+/* N64 Exporter - UI Label declarations
+ * Auto-generated from Koui canvas data. Do not edit directly.
+ * Template: label.h.j2
+ */
+#pragma once
+
+#include <stdint.h>
+#include <stdbool.h>
+#include "../data/scenes.h"
+
+#ifdef __cplusplus
+extern "C" {{
+#endif
+
+// Canvas render dimensions (N64 fixed resolution)
+#define CANVAS_WIDTH  {canvas_width}
+#define CANVAS_HEIGHT {canvas_height}
+
+// Anchor enum (matches Koui Editor)
+typedef enum {{
+    UI_ANCHOR_TOP_LEFT     = 0,
+    UI_ANCHOR_TOP_CENTER   = 1,
+    UI_ANCHOR_TOP_RIGHT    = 2,
+    UI_ANCHOR_MIDDLE_LEFT  = 3,
+    UI_ANCHOR_MIDDLE_CENTER = 4,
+    UI_ANCHOR_MIDDLE_RIGHT = 5,
+    UI_ANCHOR_BOTTOM_LEFT  = 6,
+    UI_ANCHOR_BOTTOM_CENTER = 7,
+    UI_ANCHOR_BOTTOM_RIGHT = 8,
+}} UIAnchor;
+
+// Label key defines (generated from Koui Editor canvas JSON)
+{label_defines}
+
+#define UI_LABEL_COUNT      {label_count}
+#define UI_MAX_LABELS       {max_labels}
+#define UI_LABEL_TEXT_SIZE  {max_label_text_size}
+
+// Runtime label element (always defined for type compatibility)
+typedef struct {{
+    int16_t pos_x, pos_y;
+    int16_t baseline_offset;           // Vertical offset to text baseline
+    char    text[UI_LABEL_TEXT_SIZE];  // Owned text buffer (no heap allocation)
+    uint8_t font_id;                   // rdpq font ID (from fonts_get_rdpq_id)
+    uint8_t style_id;                  // rdpq font style ID for text color
+    bool    visible;
+    bool    shadow;
+    int8_t  shadow_dx, shadow_dy;
+    uint8_t shadow_style_id;
+    uint8_t align_h;                   // 0=left, 1=center, 2=right
+    int16_t align_width;               // Container width for alignment (0=none)
+}} UILabel;
+
+#if UI_LABEL_COUNT > 0
+
+// Label management
+UILabel* ui_label_create(const char *text);
+void     ui_label_add(UILabel *label);
+void     ui_label_remove(UILabel *label);
+void     ui_label_set_position(UILabel *label, int16_t x, int16_t y);
+void     ui_label_set_text(UILabel *label, const char *text);
+UILabel* canvas_get_label(int index);
+
+// Internal - called by canvas orchestrator
+void label_init(void);
+void label_clear(void);
+void label_scene_init(SceneId scene_id);
+void label_render(void);
+
+#else
+
+static inline UILabel* ui_label_create(const char *t) {{ (void)t; return NULL; }}
+static inline void     ui_label_add(UILabel *l) {{ (void)l; }}
+static inline void     ui_label_remove(UILabel *l) {{ (void)l; }}
+static inline void     ui_label_set_position(UILabel *l, int16_t x, int16_t y) {{ (void)l; (void)x; (void)y; }}
+static inline void     ui_label_set_text(UILabel *l, const char *t) {{ (void)l; (void)t; }}
+static inline UILabel* canvas_get_label(int i) {{ (void)i; return NULL; }}
+static inline void     label_init(void) {{}}
+static inline void     label_clear(void) {{}}
+static inline void     label_scene_init(SceneId s) {{ (void)s; }}
+static inline void     label_render(void) {{}}
+
+#endif // UI_LABEL_COUNT > 0
+
+#ifdef __cplusplus
+}}
+#endif
