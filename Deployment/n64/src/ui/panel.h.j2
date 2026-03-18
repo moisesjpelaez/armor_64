@@ -1,0 +1,52 @@
+/* N64 Exporter - UI Panel declarations
+ * Auto-generated from Koui canvas data. Do not edit directly.
+ * Template: panel.h.j2
+ */
+#pragma once
+
+#include <stdint.h>
+#include <stdbool.h>
+#include "../data/scenes.h"
+
+#ifdef __cplusplus
+extern "C" {{
+#endif
+
+// Panel key defines (generated from Koui Editor canvas JSON)
+{panel_defines}
+
+#define UI_PANEL_COUNT  {panel_count}
+#define UI_MAX_PANELS   {max_panels}
+
+// Runtime panel element — simple filled rectangle with border
+typedef struct {{
+    int16_t pos_x, pos_y;
+    int16_t width, height;
+    uint8_t bg_r, bg_g, bg_b, bg_a;
+    uint8_t border_r, border_g, border_b, border_a;
+    int8_t  border_size;
+    bool    visible;
+    bool    initial_visible;
+}} UIPanel;
+
+#if UI_PANEL_COUNT > 0
+
+UIPanel* canvas_get_panel(int index);
+
+// Internal - called by canvas orchestrator
+void panel_clear(void);
+void panel_scene_init(SceneId scene_id);
+void panel_render(void);
+
+#else
+
+static inline UIPanel* canvas_get_panel(int i) {{ (void)i; return NULL; }}
+static inline void panel_clear(void) {{}}
+static inline void panel_scene_init(SceneId s) {{ (void)s; }}
+static inline void panel_render(void) {{}}
+
+#endif // UI_PANEL_COUNT > 0
+
+#ifdef __cplusplus
+}}
+#endif

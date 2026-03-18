@@ -8,6 +8,7 @@
 #include "label.h"   // UILabel, UIAnchor, CANVAS_WIDTH/HEIGHT
 #include "image.h"   // UIImage
 #include "button.h"  // UIButton, button input/render
+#include "panel.h"   // UIPanel, simple filled rectangle
 
 #ifdef __cplusplus
 extern "C" {{
@@ -26,7 +27,7 @@ extern "C" {{
 
 #define UI_SCENE_COUNT {ui_scene_count}
 
-#if UI_LABEL_COUNT > 0 || UI_IMAGE_COUNT > 0 || UI_GROUP_COUNT > 0 || UI_BUTTON_COUNT > 0
+#if UI_LABEL_COUNT > 0 || UI_IMAGE_COUNT > 0 || UI_GROUP_COUNT > 0 || UI_BUTTON_COUNT > 0 || UI_PANEL_COUNT > 0
 
 #if UI_GROUP_COUNT > 0
 #define UI_MAX_GROUPS         {max_groups}
@@ -37,9 +38,11 @@ typedef struct {{
     uint8_t child_image_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t child_label_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t child_button_indices[UI_MAX_GROUP_CHILDREN];
+    uint8_t child_panel_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t num_child_images;
     uint8_t num_child_labels;
     uint8_t num_child_buttons;
+    uint8_t num_child_panels;
     bool visible;
 }} UIGroup;
 #endif // UI_GROUP_COUNT > 0
@@ -88,7 +91,7 @@ static inline void canvas_render(void) {{}}
 static inline void canvas_element_set_visible(int i, bool v) {{ (void)i; (void)v; }}
 static inline void canvas_set_ui_scene(int s) {{ (void)s; }}
 
-#endif // UI_LABEL_COUNT > 0 || UI_IMAGE_COUNT > 0 || UI_GROUP_COUNT > 0 || UI_BUTTON_COUNT > 0
+#endif // UI_LABEL_COUNT > 0 || UI_IMAGE_COUNT > 0 || UI_GROUP_COUNT > 0 || UI_BUTTON_COUNT > 0 || UI_PANEL_COUNT > 0
 
 #ifdef __cplusplus
 }}

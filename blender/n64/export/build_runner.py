@@ -66,6 +66,7 @@ def write_makefile(exporter):
     src/ui/label.c \\
     src/ui/image.c \\
     src/ui/button.c \\
+    src/ui/panel.c \\
     src/ui/canvas.c'''
     else:
         ui_sources = '# No UI'

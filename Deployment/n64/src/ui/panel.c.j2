@@ -1,0 +1,147 @@
+/* N64 Exporter - UI Panel implementation
+ * Auto-generated from Koui canvas data. Do not edit directly.
+ * Template: panel.c.j2
+ */
+#include "panel.h"
+#include <libdragon.h>
+#include <string.h>
+
+#if UI_PANEL_COUNT > 0
+
+// ============================================================================
+// Static pools
+// ============================================================================
+
+static UIPanel  g_panel_pool[UI_MAX_PANELS];
+static uint8_t  g_panel_pool_used    = 0;
+
+static UIPanel *g_canvas_panels[UI_PANEL_COUNT];
+static int      g_canvas_panel_count = 0;
+
+// ============================================================================
+// Compile-time definition struct
+// ============================================================================
+
+typedef struct {{
+    int16_t pos_x, pos_y;
+    int16_t width, height;
+    uint8_t anchor;
+    uint8_t bg_r, bg_g, bg_b, bg_a;
+    uint8_t border_r, border_g, border_b, border_a;
+    int8_t  border_size;
+    bool    visible;
+}} UIPanelDef;
+
+// ============================================================================
+// Anchor helpers (N64 fixed 320x240)
+// ============================================================================
+
+static int16_t panel_anchor_x(int16_t pos_x, int16_t width, uint8_t anchor) {{
+    switch (anchor) {{
+        case 1: case 4: case 7: return (320 / 2) - (width / 2) + pos_x;
+        case 2: case 5: case 8: return 320 - width + pos_x;
+        default:                return pos_x;
+    }}
+}}
+
+static int16_t panel_anchor_y(int16_t pos_y, int16_t height, uint8_t anchor) {{
+    switch (anchor) {{
+        case 3: case 4: case 5: return (240 / 2) - (height / 2) + pos_y;
+        case 6: case 7: case 8: return 240 - height + pos_y;
+        default:                return pos_y;
+    }}
+}}
+
+// ============================================================================
+// Per-canvas static panel definition arrays
+// ============================================================================
+
+{canvas_panel_arrays}
+
+// ============================================================================
+// Internal load helper
+// ============================================================================
+
+static void load_panels(const UIPanelDef *defs, int count) {{
+    for (int i = 0; i < count; i++) {{
+        const UIPanelDef *def = &defs[i];
+        if (g_panel_pool_used >= UI_MAX_PANELS) break;
+        UIPanel *panel = &g_panel_pool[g_panel_pool_used++];
+        panel->pos_x       = panel_anchor_x(def->pos_x, def->width, def->anchor);
+        panel->pos_y       = panel_anchor_y(def->pos_y, def->height, def->anchor);
+        panel->width       = def->width;
+        panel->height      = def->height;
+        panel->bg_r        = def->bg_r;
+        panel->bg_g        = def->bg_g;
+        panel->bg_b        = def->bg_b;
+        panel->bg_a        = def->bg_a;
+        panel->border_r    = def->border_r;
+        panel->border_g    = def->border_g;
+        panel->border_b    = def->border_b;
+        panel->border_a    = def->border_a;
+        panel->border_size = def->border_size;
+        panel->visible     = def->visible;
+        panel->initial_visible = def->visible;
+        if (g_canvas_panel_count < UI_PANEL_COUNT)
+            g_canvas_panels[g_canvas_panel_count++] = panel;
+    }}
+}}
+
+// ============================================================================
+// Scene init switch
+// ============================================================================
+
+void panel_scene_init(SceneId scene_id) {{
+    switch (scene_id) {{
+{panel_scene_init_cases}
+        default: break;
+    }}
+}}
+
+// ============================================================================
+// Public API
+// ============================================================================
+
+void panel_clear(void) {{
+    g_panel_pool_used    = 0;
+    g_canvas_panel_count = 0;
+    memset(g_panel_pool,    0, sizeof(g_panel_pool));
+    memset(g_canvas_panels, 0, sizeof(g_canvas_panels));
+}}
+
+UIPanel* canvas_get_panel(int index) {{
+    if (index >= 0 && index < g_canvas_panel_count)
+        return g_canvas_panels[index];
+    return NULL;
+}}
+
+void panel_render(void) {{
+    if (g_canvas_panel_count == 0) return;
+
+    rdpq_set_mode_standard();
+    rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
+
+    for (int i = 0; i < g_canvas_panel_count; i++) {{
+        UIPanel *panel = g_canvas_panels[i];
+        if (!panel || !panel->visible) continue;
+
+        int16_t x0 = panel->pos_x, y0 = panel->pos_y;
+        int16_t x1 = x0 + panel->width, y1 = y0 + panel->height;
+
+        // Fill background
+        rdpq_set_prim_color(RGBA32(panel->bg_r, panel->bg_g, panel->bg_b, panel->bg_a));
+        rdpq_fill_rectangle(x0, y0, x1, y1);
+
+        // Draw border as 4 edge rectangles
+        if (panel->border_size > 0) {{
+            int16_t bs = panel->border_size;
+            rdpq_set_prim_color(RGBA32(panel->border_r, panel->border_g, panel->border_b, panel->border_a));
+            rdpq_fill_rectangle(x0,      y0,      x1,      y0 + bs);  // top
+            rdpq_fill_rectangle(x0,      y1 - bs, x1,      y1);       // bottom
+            rdpq_fill_rectangle(x0,      y0 + bs, x0 + bs, y1 - bs);  // left
+            rdpq_fill_rectangle(x1 - bs, y0 + bs, x1,      y1 - bs);  // right
+        }}
+    }}
+}}
+
+#endif // UI_PANEL_COUNT > 0

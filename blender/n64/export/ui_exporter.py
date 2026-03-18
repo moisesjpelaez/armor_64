@@ -83,6 +83,7 @@ def detect_ui_canvas(exporter):
             labels = []
             images = []
             buttons = []
+            panels = []
             groups = []       # Groups with their child indices
             elements = []     # Unified elements array (maps Haxe index to image/group)
 
@@ -97,6 +98,7 @@ def detect_ui_canvas(exporter):
                 label_start = len(labels)
                 image_start = len(images)
                 button_start = len(buttons)
+                panel_start = len(panels)
 
                 # Build element lookup by key and parent-child relationships
                 elem_by_key = {e['key']: e for e in scene_elements}
@@ -119,7 +121,7 @@ def detect_ui_canvas(exporter):
                         exporter, elem, elem_by_key, children_by_parent,
                         canvas_width, canvas_height,
                         0, 0,  # parent_abs_x, parent_abs_y
-                        labels, images, buttons, groups, elements
+                        labels, images, buttons, panels, groups, elements
                     )
 
                 # Record this Koui scene's element ranges
@@ -132,24 +134,27 @@ def detect_ui_canvas(exporter):
                     'image_count': len(images) - image_start,
                     'first_button': button_start,
                     'button_count': len(buttons) - button_start,
+                    'first_panel': panel_start,
+                    'panel_count': len(panels) - panel_start,
                 })
 
             # Resolve button focus graph indices after all buttons collected
             resolve_button_focus(buttons)
 
-            if labels or images or buttons or groups:
+            if labels or images or buttons or panels or groups:
                 exporter.ui_canvas_data[canvas_name] = {
                     'width': canvas_width,
                     'height': canvas_height,
                     'labels': labels,
                     'images': images,
                     'buttons': buttons,
+                    'panels': panels,
                     'groups': groups,
                     'elements': elements,
                     'ui_scenes': ui_scenes,
                 }
                 exporter.has_ui = True
-                log.info(f'Found UI canvas: {canvas_name} with {len(labels)} label(s), {len(images)} image(s), {len(buttons)} button(s), {len(groups)} group(s), {len(elements)} element(s)')
+                log.info(f'Found UI canvas: {canvas_name} with {len(labels)} label(s), {len(images)} image(s), {len(buttons)} button(s), {len(panels)} panel(s), {len(groups)} group(s), {len(elements)} element(s)')
 
         except Exception as e:
             log.warn(f'Failed to parse Koui canvas {json_path}: {e}')
@@ -236,7 +241,7 @@ def _calc_element_alignment(anchor, elem_width, container_width, final_x, json_a
 
 def _create_group_with_children(exporter, elem, children, final_x, final_y,
                                  elem_by_key, children_by_parent,
-                                 labels, images, buttons, groups, elements,
+                                 labels, images, buttons, panels, groups, elements,
                                  parent_path: str = ""):
     """Create a group element and process its children, tracking indices."""
     group_index = len(groups)
@@ -249,6 +254,7 @@ def _create_group_with_children(exporter, elem, children, final_x, final_y,
         'child_image_indices': [],
         'child_label_indices': [],
         'child_button_indices': [],
+        'child_panel_indices': [],
     }
 
     # Add to elements array as a group
@@ -262,11 +268,12 @@ def _create_group_with_children(exporter, elem, children, final_x, final_y,
         img_start = len(images)
         lbl_start = len(labels)
         btn_start = len(buttons)
+        pnl_start = len(panels)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
             container_width, container_height,
             final_x, final_y,
-            labels, images, buttons, groups, elements,
+            labels, images, buttons, panels, groups, elements,
             is_root=False,
             parent_path=full_path
         )
@@ -276,13 +283,15 @@ def _create_group_with_children(exporter, elem, children, final_x, final_y,
             group_data['child_label_indices'].append(i)
         for i in range(btn_start, len(buttons)):
             group_data['child_button_indices'].append(i)
+        for i in range(pnl_start, len(panels)):
+            group_data['child_panel_indices'].append(i)
 
     groups.append(group_data)
 
 
 def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y,
                             elem_by_key, children_by_parent,
-                            labels, images, buttons, groups, elements, is_root,
+                            labels, images, buttons, panels, groups, elements, is_root,
                             parent_path: str = ""):
     """Handle RowLayout and ColLayout - process children in cells."""
     if not children:
@@ -299,6 +308,7 @@ def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y
         'child_image_indices': [],
         'child_label_indices': [],
         'child_button_indices': [],
+        'child_panel_indices': [],
     }
 
     if is_root:
@@ -324,11 +334,12 @@ def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y
         img_start = len(images)
         lbl_start = len(labels)
         btn_start = len(buttons)
+        pnl_start = len(panels)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
             cell_width, cell_height,
             final_x + cell_x, final_y + cell_y,
-            labels, images, buttons, groups, elements,
+            labels, images, buttons, panels, groups, elements,
             is_root=False,
             parent_path=full_path
         )
@@ -338,13 +349,15 @@ def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y
             group_data['child_label_indices'].append(i)
         for i in range(btn_start, len(buttons)):
             group_data['child_button_indices'].append(i)
+        for i in range(pnl_start, len(panels)):
+            group_data['child_panel_indices'].append(i)
 
     groups.append(group_data)
 
 
 def _handle_grid_layout(exporter, elem, children, final_x, final_y,
                          elem_by_key, children_by_parent,
-                         labels, images, buttons, groups, elements, is_root,
+                         labels, images, buttons, panels, groups, elements, is_root,
                          parent_path: str = ""):
     """Handle GridLayout - place children in grid cells."""
     if not children:
@@ -361,6 +374,7 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
         'child_image_indices': [],
         'child_label_indices': [],
         'child_button_indices': [],
+        'child_panel_indices': [],
     }
 
     if is_root:
@@ -385,11 +399,12 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
         img_start = len(images)
         lbl_start = len(labels)
         btn_start = len(buttons)
+        pnl_start = len(panels)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
             cell_width, cell_height,
             final_x + cell_x, final_y + cell_y,
-            labels, images, buttons, groups, elements,
+            labels, images, buttons, panels, groups, elements,
             is_root=False,
             parent_path=full_path
         )
@@ -399,6 +414,8 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
             group_data['child_label_indices'].append(i)
         for i in range(btn_start, len(buttons)):
             group_data['child_button_indices'].append(i)
+        for i in range(pnl_start, len(panels)):
+            group_data['child_panel_indices'].append(i)
 
     groups.append(group_data)
 
@@ -544,6 +561,44 @@ def _handle_button(exporter, elem, final_x, final_y, buttons, container_width, p
     buttons.append(button_data)
 
 
+def _handle_panel(exporter, elem, final_x, final_y, panels, parent_path: str = ""):
+    """Handle Panel element — extract position, colors, and border from theme."""
+    tid = elem.get('tID', '_panel')
+    anchor = elem.get('anchor', ANCHOR_TOP_LEFT)
+
+    # Defaults matching Koui _panel theme
+    bg_color = '#2b2e38ff'
+    border_color = '#000000bb'
+    border_size = 2
+
+    if exporter.theme_parser:
+        tp = exporter.theme_parser
+        bg_hex = tp.get_bg_color(tid, 'default', '#2b2e38')
+        border_hex = tp.get_border_color(tid, 'default', '#000000bb')
+        bg_color = bg_hex if len(bg_hex) > 7 else bg_hex + 'ff'
+        border_color = border_hex if len(border_hex) > 7 else border_hex + 'ff'
+        border_size = tp.get_border_size(tid, 2)
+
+    bg = KouiThemeParser.parse_hex_color(bg_color)
+    border = KouiThemeParser.parse_hex_color(border_color)
+
+    full_path = _build_full_path(parent_path, elem['key'])
+
+    panel_data = {
+        'key': full_path,
+        'pos_x': final_x,
+        'pos_y': final_y,
+        'width': elem['width'],
+        'height': elem['height'],
+        'anchor': anchor,
+        'visible': elem.get('visible', True),
+        'bg_r': bg[0], 'bg_g': bg[1], 'bg_b': bg[2], 'bg_a': bg[3],
+        'border_r': border[0], 'border_g': border[1], 'border_b': border[2], 'border_a': border[3],
+        'border_size': border_size,
+    }
+    panels.append(panel_data)
+
+
 def resolve_button_focus(buttons):
     """Resolve focus graph string keys to integer indices after all buttons are collected."""
     key_to_index = {btn['key']: i for i, btn in enumerate(buttons)}
@@ -615,7 +670,7 @@ def _handle_image(exporter, elem, final_x, final_y, images, elements, is_root,
 def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
                      container_width, container_height,
                      parent_abs_x, parent_abs_y,
-                     labels, images, buttons, groups, elements,
+                     labels, images, buttons, panels, groups, elements,
                      is_root=True,
                      parent_path: str = ""):
     """Recursively flatten an element, computing absolute positions.
@@ -649,14 +704,14 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
     if elem_type in ('RowLayout', 'ColLayout'):
         _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y,
                                 elem_by_key, children_by_parent,
-                                labels, images, buttons, groups, elements, is_root,
+                                labels, images, buttons, panels, groups, elements, is_root,
                                 parent_path=parent_path)
         return
 
     if elem_type == 'GridLayout':
         _handle_grid_layout(exporter, elem, children, final_x, final_y,
                              elem_by_key, children_by_parent,
-                             labels, images, buttons, groups, elements, is_root,
+                             labels, images, buttons, panels, groups, elements, is_root,
                              parent_path=parent_path)
         return
 
@@ -664,7 +719,7 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
         if has_children:
             _create_group_with_children(exporter, elem, children, final_x, final_y,
                                          elem_by_key, children_by_parent,
-                                         labels, images, buttons, groups, elements,
+                                         labels, images, buttons, panels, groups, elements,
                                          parent_path=parent_path)
         return
 
@@ -681,11 +736,15 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
         _handle_button(exporter, elem, final_x, final_y, buttons, container_width, parent_path=parent_path)
         return
 
+    if elem_type == 'Panel':
+        _handle_panel(exporter, elem, final_x, final_y, panels, parent_path=parent_path)
+        return
+
     # Generic container with children - create a group
     if has_children and is_root:
         _create_group_with_children(exporter, elem, children, final_x, final_y,
                                      elem_by_key, children_by_parent,
-                                     labels, images, buttons, groups, elements,
+                                     labels, images, buttons, panels, groups, elements,
                                      parent_path=parent_path)
         return
 
@@ -697,7 +756,7 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
                 exporter, child, elem_by_key, children_by_parent,
                 elem['width'], elem['height'],
                 final_x, final_y,
-                labels, images, buttons, groups, elements,
+                labels, images, buttons, panels, groups, elements,
                 is_root=False,
                 parent_path=current_path
             )
@@ -744,6 +803,8 @@ def write_canvas(exporter):
     write_image_c(exporter)
     write_button_h(exporter)
     write_button_c(exporter)
+    write_panel_h(exporter)
+    write_panel_c(exporter)
     write_canvas_h(exporter)
     write_canvas_c(exporter)
     copy_canvas_images(exporter)
@@ -1079,6 +1140,89 @@ def write_button_c(exporter):
         f.write(output)
 
 
+def write_panel_h(exporter):
+    """Generate panel.h from panel.h.j2 template."""
+    tmpl_path = os.path.join(arm.utils.get_n64_deployment_path(), 'src', 'ui', 'panel.h.j2')
+    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'panel.h')
+    with open(tmpl_path, 'r', encoding='utf-8') as f:
+        tmpl = f.read()
+
+    panel_defines_lines = []
+    total_panel_count = 0
+    seen = {}
+    for canvas_name, canvas in exporter.ui_canvas_data.items():
+        panels = canvas.get('panels', [])
+        if not panels:
+            continue
+        panel_defines_lines.append(f'// Canvas: {canvas_name}')
+        for idx, panel in enumerate(panels):
+            safe = arm.utils.safesrc(panel['key']).upper()
+            if safe not in seen:
+                panel_defines_lines.append(f'#define UI_PANEL_{safe} {idx}')
+                seen[safe] = idx
+        panel_defines_lines.append('')
+        total_panel_count = max(total_panel_count, len(panels))
+
+    output = tmpl.format(
+        panel_defines='\n'.join(panel_defines_lines) if panel_defines_lines else '// No panels',
+        panel_count=total_panel_count,
+        max_panels=max(1, total_panel_count + 2),
+    )
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write(output)
+
+
+def write_panel_c(exporter):
+    """Generate panel.c from panel.c.j2 template."""
+    tmpl_path = os.path.join(arm.utils.get_n64_deployment_path(), 'src', 'ui', 'panel.c.j2')
+    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'panel.c')
+    with open(tmpl_path, 'r', encoding='utf-8') as f:
+        tmpl = f.read()
+
+    canvas_panel_arrays = []
+    panel_scene_init_cases = []
+
+    for canvas_name, canvas in exporter.ui_canvas_data.items():
+        panels = canvas.get('panels', [])
+        if not panels:
+            continue
+        safe_canvas = arm.utils.safesrc(canvas_name).lower()
+        count_def = f'{safe_canvas.upper()}_PANEL_COUNT'
+        canvas_panel_arrays.append(f'// Canvas: {canvas_name} panels')
+        canvas_panel_arrays.append(f'#define {count_def} {len(panels)}')
+        canvas_panel_arrays.append(f'static const UIPanelDef g_{safe_canvas}_panel_defs[{count_def}] = {{')
+        for panel in panels:
+            visible = 'true' if panel.get('visible', True) else 'false'
+            canvas_panel_arrays.append(
+                f'    {{ {panel["pos_x"]}, {panel["pos_y"]}, {panel["width"]}, {panel["height"]}, '
+                f'{panel["anchor"]}, '
+                f'{panel["bg_r"]}, {panel["bg_g"]}, {panel["bg_b"]}, {panel["bg_a"]}, '
+                f'{panel["border_r"]}, {panel["border_g"]}, {panel["border_b"]}, {panel["border_a"]}, '
+                f'{panel["border_size"]}, {visible} }},'
+            )
+        canvas_panel_arrays.append('};')
+        canvas_panel_arrays.append('')
+
+    for scene_name, data in exporter.scene_data.items():
+        canvas_name = data.get('canvas')
+        if not canvas_name or canvas_name not in exporter.ui_canvas_data:
+            continue
+        if not exporter.ui_canvas_data[canvas_name].get('panels'):
+            continue
+        safe_scene = arm.utils.safesrc(scene_name).upper()
+        safe_canvas = arm.utils.safesrc(canvas_name).lower()
+        panel_scene_init_cases.append(f'        case SCENE_{safe_scene}:')
+        panel_scene_init_cases.append(f'            load_panels(g_{safe_canvas}_panel_defs, {safe_canvas.upper()}_PANEL_COUNT);')
+        panel_scene_init_cases.append('            break;')
+
+    output = tmpl.format(
+        canvas_panel_arrays='\n'.join(canvas_panel_arrays) if canvas_panel_arrays else '// No panels defined',
+        panel_scene_init_cases='\n'.join(panel_scene_init_cases),
+    )
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write(output)
+
+
 def write_canvas_h(exporter):
     """Generate canvas.h from template (group/element content only)."""
     tmpl_path = os.path.join(arm.utils.get_n64_deployment_path(), 'src', 'ui', 'canvas.h.j2')
@@ -1117,7 +1261,8 @@ def write_canvas_h(exporter):
             child_count = max(
                 len(group.get('child_image_indices', [])),
                 len(group.get('child_label_indices', [])),
-                len(group.get('child_button_indices', []))
+                len(group.get('child_button_indices', [])),
+                len(group.get('child_panel_indices', []))
             )
             max_group_children = max(max_group_children, child_count)
 
@@ -1170,15 +1315,18 @@ def write_canvas_c(exporter):
             img_indices = group.get('child_image_indices', [])
             lbl_indices = group.get('child_label_indices', [])
             btn_indices = group.get('child_button_indices', [])
-            max_ch = max(8, len(img_indices), len(lbl_indices), len(btn_indices))
+            pnl_indices = group.get('child_panel_indices', [])
+            max_ch = max(8, len(img_indices), len(lbl_indices), len(btn_indices), len(pnl_indices))
             img_padded = list(img_indices[:max_ch]) + [0] * (max_ch - min(len(img_indices), max_ch))
             lbl_padded = list(lbl_indices[:max_ch]) + [0] * (max_ch - min(len(lbl_indices), max_ch))
             btn_padded = list(btn_indices[:max_ch]) + [0] * (max_ch - min(len(btn_indices), max_ch))
+            pnl_padded = list(pnl_indices[:max_ch]) + [0] * (max_ch - min(len(pnl_indices), max_ch))
             img_str = ', '.join(str(i) for i in img_padded)
             lbl_str = ', '.join(str(i) for i in lbl_padded)
             btn_str = ', '.join(str(i) for i in btn_padded)
+            pnl_str = ', '.join(str(i) for i in pnl_padded)
             visible = 'true' if group.get('visible', True) else 'false'
-            canvas_group_arrays.append(f'    {{ {{ {img_str} }}, {{ {lbl_str} }}, {{ {btn_str} }}, {len(img_indices)}, {len(lbl_indices)}, {len(btn_indices)}, {visible} }},')
+            canvas_group_arrays.append(f'    {{ {{ {img_str} }}, {{ {lbl_str} }}, {{ {btn_str} }}, {{ {pnl_str} }}, {len(img_indices)}, {len(lbl_indices)}, {len(btn_indices)}, {len(pnl_indices)}, {visible} }},')
         canvas_group_arrays.append('};')
         canvas_group_arrays.append('')
 
@@ -1237,6 +1385,7 @@ def write_canvas_c(exporter):
                 f'    {{ {scene["first_label"]}, {scene["label_count"]}, '
                 f'{scene["first_image"]}, {scene["image_count"]}, '
                 f'{scene["first_button"]}, {scene["button_count"]}, '
+                f'{scene["first_panel"]}, {scene["panel_count"]}, '
                 f'{active} }},  // {scene["key"]}'
             )
         canvas_ui_scene_arrays.append('};')
