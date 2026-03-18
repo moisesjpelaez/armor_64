@@ -92,7 +92,8 @@ typedef IRNode = {
 typedef MemberIR = {
     haxeType: String,
     ctype: String,
-    defaultValue: IRNode
+    defaultValue: IRNode,
+    ?setter: String  // Setter method name (e.g., "set_paused") for FProp fields
 }
 
 typedef ButtonEventMeta = {

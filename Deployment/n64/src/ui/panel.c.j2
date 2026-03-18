@@ -3,6 +3,8 @@
  * Template: panel.c.j2
  */
 #include "panel.h"
+#include "label.h"
+#include "ui_anchor.h"
 #include <libdragon.h>
 #include <string.h>
 
@@ -32,25 +34,7 @@ typedef struct {{
     bool    visible;
 }} UIPanelDef;
 
-// ============================================================================
-// Anchor helpers (N64 fixed 320x240)
-// ============================================================================
-
-static int16_t panel_anchor_x(int16_t pos_x, int16_t width, uint8_t anchor) {{
-    switch (anchor) {{
-        case 1: case 4: case 7: return (320 / 2) - (width / 2) + pos_x;
-        case 2: case 5: case 8: return 320 - width + pos_x;
-        default:                return pos_x;
-    }}
-}}
-
-static int16_t panel_anchor_y(int16_t pos_y, int16_t height, uint8_t anchor) {{
-    switch (anchor) {{
-        case 3: case 4: case 5: return (240 / 2) - (height / 2) + pos_y;
-        case 6: case 7: case 8: return 240 - height + pos_y;
-        default:                return pos_y;
-    }}
-}}
+// Anchor helpers provided by ui_anchor.h (shared across label/image/panel)
 
 // ============================================================================
 // Per-canvas static panel definition arrays
@@ -67,8 +51,8 @@ static void load_panels(const UIPanelDef *defs, int count) {{
         const UIPanelDef *def = &defs[i];
         if (g_panel_pool_used >= UI_MAX_PANELS) break;
         UIPanel *panel = &g_panel_pool[g_panel_pool_used++];
-        panel->pos_x       = panel_anchor_x(def->pos_x, def->width, def->anchor);
-        panel->pos_y       = panel_anchor_y(def->pos_y, def->height, def->anchor);
+        panel->pos_x       = ui_anchor_x(def->pos_x, def->width, def->anchor, CANVAS_WIDTH);
+        panel->pos_y       = ui_anchor_y(def->pos_y, def->height, def->anchor, CANVAS_HEIGHT);
         panel->width       = def->width;
         panel->height      = def->height;
         panel->bg_r        = def->bg_r;

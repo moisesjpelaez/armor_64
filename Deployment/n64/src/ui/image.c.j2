@@ -3,6 +3,8 @@
  * Template: image.c.j2
  */
 #include "image.h"
+#include "label.h"
+#include "ui_anchor.h"
 #include <libdragon.h>
 #include <string.h>
 
@@ -37,25 +39,7 @@ typedef struct {{
     int16_t align_width;
 }} UIImageDef;
 
-// ============================================================================
-// Anchor helpers (N64 fixed 320x240)
-// ============================================================================
-
-static int16_t image_anchor_x(int16_t pos_x, int16_t width, uint8_t anchor) {{
-    switch (anchor) {{
-        case 1: case 4: case 7: return (320 / 2) - (width / 2) + pos_x;  // CENTER
-        case 2: case 5: case 8: return 320 - width + pos_x;               // RIGHT
-        default:                return pos_x;
-    }}
-}}
-
-static int16_t image_anchor_y(int16_t pos_y, int16_t height, uint8_t anchor) {{
-    switch (anchor) {{
-        case 3: case 4: case 5: return (240 / 2) - (height / 2) + pos_y;  // MIDDLE
-        case 6: case 7: case 8: return 240 - height + pos_y;               // BOTTOM
-        default:                return pos_y;
-    }}
-}}
+// Anchor helpers provided by ui_anchor.h (shared across label/image/panel)
 
 // ============================================================================
 // Per-canvas static image definition arrays
@@ -77,8 +61,8 @@ static void load_images(UIImageDef *defs, int count) {{
         }}
         UIImage *image = ui_image_create(def->sprite);
         if (!image) continue;
-        image->pos_x      = image_anchor_x(def->pos_x, def->width, def->anchor);
-        image->pos_y      = image_anchor_y(def->pos_y, def->height, def->anchor);
+        image->pos_x      = ui_anchor_x(def->pos_x, def->width, def->anchor, CANVAS_WIDTH);
+        image->pos_y      = ui_anchor_y(def->pos_y, def->height, def->anchor, CANVAS_HEIGHT);
         image->width      = def->width;
         image->height     = def->height;
         image->scale      = def->scale;

@@ -35,7 +35,10 @@ class ButtonCallConverter implements ICallConverter {
 
     function convertButtonCall(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         // Map ButtonExt methods to N64 callback events
-        // onHover maps to on_focus on N64 (no mouse → gamepad focus ≈ hover)
+        // N64 has no mouse, so onHover and onFocus both map to on_focus (gamepad focus ≈ hover).
+        // If both are registered on the same button, the second overwrites the first since
+        // the C struct has a single on_focus slot. This is intentional — user code typically
+        // registers both with the same body (e.g. buttonSelected) for Krom+N64 compatibility.
         var eventType:String = null;
         switch (method) {
             case "onHover":   eventType = "on_focus";

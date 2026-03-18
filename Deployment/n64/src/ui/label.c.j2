@@ -3,6 +3,7 @@
  * Template: label.c.j2
  */
 #include "label.h"
+#include "ui_anchor.h"
 #include "fonts.h"
 #include <libdragon.h>
 #include <string.h>
@@ -44,31 +45,7 @@ typedef struct {{
     int16_t align_width;
 }} UILabelDef;
 
-// ============================================================================
-// Anchor helpers (Python pre-resolves positions to TOP_LEFT; kept for safety)
-// ============================================================================
-
-static int16_t label_anchor_x(int16_t pos_x, int16_t width, uint8_t anchor) {{
-    switch (anchor) {{
-        case UI_ANCHOR_TOP_CENTER: case UI_ANCHOR_MIDDLE_CENTER: case UI_ANCHOR_BOTTOM_CENTER:
-            return (CANVAS_WIDTH / 2) - (width / 2) + pos_x;
-        case UI_ANCHOR_TOP_RIGHT: case UI_ANCHOR_MIDDLE_RIGHT: case UI_ANCHOR_BOTTOM_RIGHT:
-            return CANVAS_WIDTH - width + pos_x;
-        default:
-            return pos_x;
-    }}
-}}
-
-static int16_t label_anchor_y(int16_t pos_y, int16_t height, uint8_t anchor) {{
-    switch (anchor) {{
-        case UI_ANCHOR_MIDDLE_LEFT: case UI_ANCHOR_MIDDLE_CENTER: case UI_ANCHOR_MIDDLE_RIGHT:
-            return (CANVAS_HEIGHT / 2) - (height / 2) + pos_y;
-        case UI_ANCHOR_BOTTOM_LEFT: case UI_ANCHOR_BOTTOM_CENTER: case UI_ANCHOR_BOTTOM_RIGHT:
-            return CANVAS_HEIGHT - height + pos_y;
-        default:
-            return pos_y;
-    }}
-}}
+// Anchor helpers provided by ui_anchor.h (shared across label/image/panel)
 
 // ============================================================================
 // Per-canvas static label definition arrays
@@ -85,8 +62,8 @@ static void load_labels(const UILabelDef *defs, int count) {{
         const UILabelDef *def = &defs[i];
         UILabel *label = ui_label_create(def->text);
         if (!label) continue;
-        label->pos_x           = label_anchor_x(def->pos_x, def->width, def->anchor);
-        label->pos_y           = label_anchor_y(def->pos_y, def->height, def->anchor);
+        label->pos_x           = ui_anchor_x(def->pos_x, def->width, def->anchor, CANVAS_WIDTH);
+        label->pos_y           = ui_anchor_y(def->pos_y, def->height, def->anchor, CANVAS_HEIGHT);
         label->baseline_offset = def->baseline_offset;
         label->style_id        = def->style_id;
         label->font_id         = fonts_get_rdpq_id(def->font_id);

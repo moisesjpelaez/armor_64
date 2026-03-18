@@ -6,6 +6,9 @@
 #include "engine.h"
 #include "data/models.h"
 #include "iron/system/input.h"
+
+// iron.App state mapped from Haxe
+bool app_pause_updates = false;
 #if ENGINE_ENABLE_PHYSICS
 #include "oimo/physics.h"
 #endif

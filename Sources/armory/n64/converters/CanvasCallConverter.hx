@@ -27,70 +27,40 @@ class CanvasCallConverter implements ICallConverter {
         return convertCanvasCall(method, args, rawParams, ctx);
     }
 
+    function resolveElementIR(elementType:String, elemKey:String, ctx:IExtractorContext):IRNode {
+        if (elemKey == null) return null;
+
+        ctx.getMeta().uses_ui = true;
+
+        if (elementType == "Button") {
+            return { type: "canvas_get_button", props: { key: elemKey } };
+        }
+        if (elementType == "Label") {
+            return { type: "canvas_get_label", props: { key: elemKey } };
+        }
+        if (elementType == "AnchorPane" || elementType == "RowLayout" ||
+            elementType == "ColLayout" || elementType == "GridLayout") {
+            return { type: "canvas_get_group", props: { key: elemKey } };
+        }
+        return null;
+    }
+
     function convertCanvasCall(method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         if (method == "getElementAs" && rawParams.length >= 2) {
             // canvas.getElementAs(Label, "score_label")
             // canvas.getElementAs(AnchorPane, "level_container")
             var elementType = ExprUtils.extractIdentName(rawParams[0]);
             var elemKey = ExprUtils.extractString(rawParams[1]);
-
-            if (elementType == "Label" && elemKey != null) {
-                ctx.getMeta().uses_ui = true;
-                return {
-                    type: "canvas_get_label",
-                    props: { key: elemKey }
-                };
-            }
-            // Layout containers: AnchorPane, RowLayout, ColLayout, GridLayout
-            if ((elementType == "AnchorPane" || elementType == "RowLayout" ||
-                 elementType == "ColLayout" || elementType == "GridLayout") && elemKey != null) {
-                ctx.getMeta().uses_ui = true;
-                return {
-                    type: "canvas_get_group",
-                    props: { key: elemKey }
-                };
-            }
-            // Button type
-            if (elementType == "Button" && elemKey != null) {
-                ctx.getMeta().uses_ui = true;
-                return {
-                    type: "canvas_get_button",
-                    props: { key: elemKey }
-                };
-            }
+            var result = resolveElementIR(elementType, elemKey, ctx);
+            if (result != null) return result;
         }
         else if (method == "getElementFromSceneAs" && rawParams.length >= 3) {
             // canvas.getElementFromSceneAs(Button, "MainMenu", "menu_buttons/play_button")
+            // sceneName (rawParams[1]) is implicit in the element path from the canvas JSON
             var elementType = ExprUtils.extractIdentName(rawParams[0]);
-            var sceneName = ExprUtils.extractString(rawParams[1]);
             var elemPath = ExprUtils.extractString(rawParams[2]);
-
-            if (elementType == "Button" && elemPath != null) {
-                ctx.getMeta().uses_ui = true;
-                // Key is the full path within the scene (matches ui_exporter button keys)
-                var fullKey = (sceneName != null && sceneName.length > 0)
-                    ? elemPath  // Path already includes parent hierarchy from canvas
-                    : elemPath;
-                return {
-                    type: "canvas_get_button",
-                    props: { key: fullKey }
-                };
-            }
-            if (elementType == "Label" && elemPath != null) {
-                ctx.getMeta().uses_ui = true;
-                return {
-                    type: "canvas_get_label",
-                    props: { key: elemPath }
-                };
-            }
-            if ((elementType == "AnchorPane" || elementType == "RowLayout" ||
-                 elementType == "ColLayout" || elementType == "GridLayout") && elemPath != null) {
-                ctx.getMeta().uses_ui = true;
-                return {
-                    type: "canvas_get_group",
-                    props: { key: elemPath }
-                };
-            }
+            var result = resolveElementIR(elementType, elemPath, ctx);
+            if (result != null) return result;
         }
         else if (method == "setScene" && rawParams.length >= 1) {
             // canvas.setScene("Info") -> canvas_set_scene("Info")

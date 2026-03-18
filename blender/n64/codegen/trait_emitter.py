@@ -16,6 +16,7 @@ Virtual Method Support:
 """
 
 import logging
+import re
 from typing import Dict, List, Optional, Set
 
 log = logging.getLogger(__name__)
@@ -156,21 +157,28 @@ class TraitEmitter:
             parent_chain = "_parent." * depth
             return f"(({self.data_type}*)data)->{parent_chain}{member_name}"
 
-    def _get_member_ctype(self, member_name: str) -> str:
-        """Get the C type of a member from member_map.
+    def _get_member_info(self, member_name: str, key: str) -> str:
+        """Get a field from member_map for a given member.
 
-        Used to determine if field access needs -> (pointer) or . (struct).
+        Args:
+            member_name: The member variable name.
+            key: The member_map dict key to retrieve ('ctype' or 'type').
         """
         member_info = self.member_map.get(member_name, {})
-        return member_info.get("ctype", "")
+        return member_info.get(key, "")
+
+    def _get_member_ctype(self, member_name: str) -> str:
+        """Get the C type of a member from member_map."""
+        return self._get_member_info(member_name, "ctype")
 
     def _get_member_haxe_type(self, member_name: str) -> str:
-        """Get the Haxe type of a member from member_map.
+        """Get the Haxe type of a member from member_map."""
+        return self._get_member_info(member_name, "type")
 
-        Used to distinguish button indices (uint8_t) from other uint8_t members.
-        """
-        member_info = self.member_map.get(member_name, {})
-        return member_info.get("type", "")
+    @staticmethod
+    def _camel_to_snake(name: str) -> str:
+        """Convert camelCase to snake_case (e.g. focusUp -> focus_up)."""
+        return re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', name).lower()
 
     def emit(self, node: Optional[Dict]) -> str:
         """Emit C code for an IR node."""
@@ -649,9 +657,11 @@ class TraitEmitter:
                     if member_ctype and member_ctype.endswith("*"):
                         return f"{obj}->{field}"
                     # Button members (uint8_t index) — field access goes through canvas_get_button()
+                    # Haxe uses camelCase (focusUp), C struct uses snake_case (focus_up)
                     member_haxe_type = self._get_member_haxe_type(member_name)
                     if member_haxe_type == "Button":
-                        return f"canvas_get_button({obj})->{field}"
+                        c_field = self._camel_to_snake(field)
+                        return f"canvas_get_button({obj})->{c_field}"
 
                 # Handle local pointer variables (e.g., sound handle from array_get_ptr)
                 if obj_type == "ident" and obj_value in self.local_pointer_vars:

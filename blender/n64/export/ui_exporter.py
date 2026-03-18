@@ -156,6 +156,14 @@ def detect_ui_canvas(exporter):
                 exporter.has_ui = True
                 log.info(f'Found UI canvas: {canvas_name} with {len(labels)} label(s), {len(images)} image(s), {len(buttons)} button(s), {len(panels)} panel(s), {len(groups)} group(s), {len(elements)} element(s)')
 
+                # Validate element counts fit in uint8_t indices used by C templates
+                for type_name, count in [('labels', len(labels)), ('images', len(images)),
+                                         ('buttons', len(buttons)), ('panels', len(panels)),
+                                         ('groups', len(groups))]:
+                    if count > 255:
+                        log.warn(f'UI canvas "{canvas_name}" has {count} {type_name}, '
+                                 f'exceeding uint8_t index limit (255)')
+
         except Exception as e:
             log.warn(f'Failed to parse Koui canvas {json_path}: {e}')
 
@@ -239,6 +247,24 @@ def _calc_element_alignment(anchor, elem_width, container_width, final_x, json_a
         return final_x, 0, 0
 
 
+def _snapshot_child_counts(labels, images, buttons, panels):
+    """Snapshot current list lengths before processing a child element."""
+    return len(images), len(labels), len(buttons), len(panels)
+
+
+def _append_child_indices(group_data, labels, images, buttons, panels, snapshot):
+    """Append indices for elements added since snapshot to the group's child lists."""
+    img_start, lbl_start, btn_start, pnl_start = snapshot
+    for i in range(img_start, len(images)):
+        group_data['child_image_indices'].append(i)
+    for i in range(lbl_start, len(labels)):
+        group_data['child_label_indices'].append(i)
+    for i in range(btn_start, len(buttons)):
+        group_data['child_button_indices'].append(i)
+    for i in range(pnl_start, len(panels)):
+        group_data['child_panel_indices'].append(i)
+
+
 def _create_group_with_children(exporter, elem, children, final_x, final_y,
                                  elem_by_key, children_by_parent,
                                  labels, images, buttons, panels, groups, elements,
@@ -265,10 +291,7 @@ def _create_group_with_children(exporter, elem, children, final_x, final_y,
 
     # Process children - track their indices for the group
     for child in children:
-        img_start = len(images)
-        lbl_start = len(labels)
-        btn_start = len(buttons)
-        pnl_start = len(panels)
+        snap = _snapshot_child_counts(labels, images, buttons, panels)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
             container_width, container_height,
@@ -277,14 +300,7 @@ def _create_group_with_children(exporter, elem, children, final_x, final_y,
             is_root=False,
             parent_path=full_path
         )
-        for i in range(img_start, len(images)):
-            group_data['child_image_indices'].append(i)
-        for i in range(lbl_start, len(labels)):
-            group_data['child_label_indices'].append(i)
-        for i in range(btn_start, len(buttons)):
-            group_data['child_button_indices'].append(i)
-        for i in range(pnl_start, len(panels)):
-            group_data['child_panel_indices'].append(i)
+        _append_child_indices(group_data, labels, images, buttons, panels, snap)
 
     groups.append(group_data)
 
@@ -331,10 +347,7 @@ def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y
         else:
             cell_x, cell_y = cell_width * idx, 0
 
-        img_start = len(images)
-        lbl_start = len(labels)
-        btn_start = len(buttons)
-        pnl_start = len(panels)
+        snap = _snapshot_child_counts(labels, images, buttons, panels)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
             cell_width, cell_height,
@@ -343,14 +356,7 @@ def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y
             is_root=False,
             parent_path=full_path
         )
-        for i in range(img_start, len(images)):
-            group_data['child_image_indices'].append(i)
-        for i in range(lbl_start, len(labels)):
-            group_data['child_label_indices'].append(i)
-        for i in range(btn_start, len(buttons)):
-            group_data['child_button_indices'].append(i)
-        for i in range(pnl_start, len(panels)):
-            group_data['child_panel_indices'].append(i)
+        _append_child_indices(group_data, labels, images, buttons, panels, snap)
 
     groups.append(group_data)
 
@@ -396,10 +402,7 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
         cell_x = cell_width * col
         cell_y = cell_height * row
 
-        img_start = len(images)
-        lbl_start = len(labels)
-        btn_start = len(buttons)
-        pnl_start = len(panels)
+        snap = _snapshot_child_counts(labels, images, buttons, panels)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
             cell_width, cell_height,
@@ -408,14 +411,7 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
             is_root=False,
             parent_path=full_path
         )
-        for i in range(img_start, len(images)):
-            group_data['child_image_indices'].append(i)
-        for i in range(lbl_start, len(labels)):
-            group_data['child_label_indices'].append(i)
-        for i in range(btn_start, len(buttons)):
-            group_data['child_button_indices'].append(i)
-        for i in range(pnl_start, len(panels)):
-            group_data['child_panel_indices'].append(i)
+        _append_child_indices(group_data, labels, images, buttons, panels, snap)
 
     groups.append(group_data)
 
@@ -796,6 +792,10 @@ def write_canvas(exporter):
     """Generate all UI C source files from templates."""
     if not exporter.ui_canvas_data:
         return
+
+    # Copy shared header used by label, image, and panel
+    from arm.n64 import utils as n64_utils
+    n64_utils.copy_src('ui_anchor.h', 'src/ui')
 
     write_label_h(exporter)
     write_label_c(exporter)

@@ -142,12 +142,16 @@ class N64TraitMacro {
             var membersArr:Array<Dynamic> = [];
             for (memberName in ir.members.keys()) {
                 var m = ir.members.get(memberName);
-                membersArr.push({
+                var memberObj:Dynamic = {
                     name: memberName,
                     type: m.haxeType,
                     ctype: m.ctype,
                     default_value: N64MacroBase.serializeIRNode(m.defaultValue)
-                });
+                };
+                if (m.setter != null) {
+                    memberObj.setter = m.setter;
+                }
+                membersArr.push(memberObj);
             }
 
             // Convert events
@@ -230,6 +234,8 @@ class TraitExtractor implements IExtractorContext {
     public var meta(default, null):TraitMeta;
     var localVarTypes:Map<String, String>;  // Track local variable types
     var memberTypes:Map<String, String>;    // Track member types for signal detection
+    var setterMembers:Map<String, String>;  // Members with setters: memberName -> setterMethodName
+    var currentSetterTarget:String;            // When inside a setter body, the member name being set (to avoid recursion)
     public var cName(default, null):String;  // C-safe name for this trait
 
     // Lifecycle method names that are handled specially (not as callable methods)
@@ -265,6 +271,8 @@ class TraitExtractor implements IExtractorContext {
         this.events = new Map();
         this.localVarTypes = new Map();
         this.memberTypes = new Map();
+        this.setterMembers = new Map();
+        this.currentSetterTarget = null;
         this.meta = {
             uses_input: false,
             uses_transform: false,
@@ -356,6 +364,44 @@ class TraitExtractor implements IExtractorContext {
                     } else {
                         var member = extractMember(field.name, t, e);
                         if (member != null) {
+                            members.set(field.name, member);
+                            memberNames.push(field.name);
+                        }
+                    }
+                case FProp(get, set, t, e):
+                    // Haxe property with getter/setter (e.g., @:isVar var paused(default, set): Bool)
+                    // These have a backing field that we need to track as a member
+                    var haxeType = t != null ? N64MacroBase.complexTypeToString(t) : "Dynamic";
+                    memberTypes.set(field.name, haxeType);
+
+                    if (haxeType == "Signal") {
+                        var maxSubs = 16;
+                        if (field.meta != null) {
+                            for (m in field.meta) {
+                                if (m.name == ":n64MaxSubs" || m.name == "n64MaxSubs") {
+                                    if (m.params != null && m.params.length > 0) {
+                                        switch (m.params[0].expr) {
+                                            case EConst(CInt(v)): maxSubs = Std.parseInt(v);
+                                            default:
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        meta.signals.push({
+                            name: field.name,
+                            arg_types: [],
+                            max_subs: maxSubs
+                        });
+                    } else {
+                        var member = extractMember(field.name, t, e);
+                        if (member != null) {
+                            // Track setter if this property has one (set != "null" and set != "never")
+                            if (set == "set") {
+                                var setterName = "set_" + field.name;
+                                member.setter = setterName;
+                                setterMembers.set(field.name, setterName);
+                            }
                             members.set(field.name, member);
                             memberNames.push(field.name);
                         }
@@ -580,6 +626,15 @@ class TraitExtractor implements IExtractorContext {
             }
 
             // Convert method body to IR
+            // If this is a setter method (set_X), mark it so assignments to X inside
+            // the body do direct writes instead of recursively calling the setter
+            var prevSetterTarget = currentSetterTarget;
+            if (methodName.length > 4 && methodName.substr(0, 4) == "set_") {
+                var memberName = methodName.substr(4);
+                if (setterMembers.exists(memberName)) {
+                    currentSetterTarget = memberName;
+                }
+            }
             var bodyNodes:Array<IRNode> = [];
             switch (method.expr.expr) {
                 case EBlock(exprs):
@@ -595,6 +650,7 @@ class TraitExtractor implements IExtractorContext {
                         bodyNodes.push(node);
                     }
             }
+            currentSetterTarget = prevSetterTarget;
 
             // Generate C function name: arm_<traitname>_<methodname>
             var methodCName = "arm_" + cName.substring(4) + "_" + methodName.toLowerCase();  // cName already starts with "arm_"
@@ -1127,7 +1183,24 @@ class TraitExtractor implements IExtractorContext {
                             }
                         };
                     } else {
-                        { type: "assign", children: [exprToIR(e1), exprToIR(e2)] };
+                        // Check if assigning to a member with a setter -> emit setter call
+                        // Skip if we're inside that setter's own body (to avoid infinite recursion)
+                        var targetIR = exprToIR(e1);
+                        if (targetIR != null && targetIR.type == "member"
+                            && setterMembers.exists(targetIR.value)
+                            && targetIR.value != currentSetterTarget) {
+                            var setterName = setterMembers.get(targetIR.value);
+                            var methodCName = cName + "_" + setterName;
+                            {
+                                type: "trait_method_call",
+                                cName: methodCName,
+                                method: setterName,
+                                trait: className,
+                                args: [exprToIR(e2)]
+                            };
+                        } else {
+                            { type: "assign", children: [targetIR, exprToIR(e2)] };
+                        }
                     }
                 } else if (op == OpAdd) {
                     // Check if this is string concatenation
@@ -1427,6 +1500,25 @@ class TraitExtractor implements IExtractorContext {
     }
 
     function convertFieldAccess(obj:Expr, field:String):IRNode {
+        // Handle this.member -> member access for trait members
+        // Must be checked early so trait members route through data struct, not ArmObject
+        switch (obj.expr) {
+            case EConst(CIdent("this")):
+                if (memberNames.indexOf(field) >= 0) {
+                    return { type: "member", value: field };
+                }
+            default:
+        }
+
+        // Handle iron.App static field access -> C global
+        switch (obj.expr) {
+            case EConst(CIdent("App")):
+                if (field == "pauseUpdates") {
+                    return { type: "c_literal", c_code: "app_pause_updates" };
+                }
+            default:
+        }
+
         // Check if accessing a field on a skipped class (like Gamepad.buttons)
         switch (obj.expr) {
             case EConst(CIdent(className)):
@@ -1817,7 +1909,8 @@ class TraitExtractor implements IExtractorContext {
 
                 // Unsupported APIs - explicitly skip (before converters to prevent optimistic matching)
                 switch (obj.expr) {
-                    case EConst(CIdent("Audio")), EConst(CIdent("Tween")), EConst(CIdent("Network")), EConst(CIdent("Koui")), EConst(CIdent("System")):
+                    case EConst(CIdent("Audio")), EConst(CIdent("Tween")), EConst(CIdent("Network")), EConst(CIdent("Koui")), EConst(CIdent("System")),
+                         EConst(CIdent("SceneManager")):
                         return { type: "skip" };
                     default:
                 }

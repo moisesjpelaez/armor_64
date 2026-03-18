@@ -71,18 +71,20 @@ int main(void)
 
         ArmScene *scene = scene_get(current_scene);
 
-        fixed_time += dt;
-        while (fixed_time >= FIXED_TIMESTEP) {{
+        if (!app_pause_updates) {{
+            fixed_time += dt;
+            while (fixed_time >= FIXED_TIMESTEP) {{
 #if ENGINE_ENABLE_PHYSICS
-            physics_step(FIXED_TIMESTEP);
-            scene_sync_physics(current_scene);
+                physics_step(FIXED_TIMESTEP);
+                scene_sync_physics(current_scene);
 #endif
-            scene_on_fixed_update(current_scene, FIXED_TIMESTEP);
-            fixed_time -= FIXED_TIMESTEP;
-        }}
+                scene_on_fixed_update(current_scene, FIXED_TIMESTEP);
+                fixed_time -= FIXED_TIMESTEP;
+            }}
 
-        scene_on_update(current_scene, dt);
-        scene_on_late_update(current_scene, dt);
+            scene_on_update(current_scene, dt);
+            scene_on_late_update(current_scene, dt);
+        }}
 
         SceneId pending = scene_get_pending();
         if (pending < SCENE_COUNT) {{

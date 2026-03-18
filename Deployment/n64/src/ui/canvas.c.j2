@@ -74,6 +74,7 @@ typedef struct {{
 
 static const UISceneRange *g_ui_scenes = NULL;
 static int g_ui_scene_count = 0;
+static int g_current_ui_scene = -1;
 #endif
 
 // ============================================================================
@@ -178,6 +179,7 @@ void canvas_scene_init(SceneId scene_id) {{
 
 #if UI_SCENE_COUNT > 0
     // Apply initial Koui scene visibility: show only the active scene's elements
+    g_current_ui_scene = -1;  // Reset before first scene switch
     if (g_ui_scene_count > 0) {{
         for (int i = 0; i < g_ui_scene_count; i++) {{
             if (g_ui_scenes[i].active) {{
@@ -212,6 +214,7 @@ void canvas_clear(void) {{
 #if UI_SCENE_COUNT > 0
     g_ui_scenes = NULL;
     g_ui_scene_count = 0;
+    g_current_ui_scene = -1;
 #endif
 }}
 
@@ -303,6 +306,23 @@ void canvas_element_set_visible(int index, bool visible) {{ (void)index; (void)v
 void canvas_set_ui_scene(int scene_idx) {{
     if (scene_idx < 0 || scene_idx >= g_ui_scene_count) return;
 
+    // 0. Save current visibility of the outgoing scene so runtime changes persist
+    if (g_current_ui_scene >= 0 && g_current_ui_scene < g_ui_scene_count) {{
+        const UISceneRange *prev = &g_ui_scenes[g_current_ui_scene];
+        for (int i = prev->first_label; i < prev->first_label + prev->label_count; i++) {{
+            UILabel *lbl = canvas_get_label(i); if (lbl) lbl->initial_visible = lbl->visible;
+        }}
+        for (int i = prev->first_image; i < prev->first_image + prev->image_count; i++) {{
+            UIImage *img = canvas_get_image(i); if (img) img->initial_visible = img->visible;
+        }}
+        for (int i = prev->first_button; i < prev->first_button + prev->button_count; i++) {{
+            UIButton *btn = canvas_get_button(i); if (btn) btn->initial_visible = btn->visible;
+        }}
+        for (int i = prev->first_panel; i < prev->first_panel + prev->panel_count; i++) {{
+            UIPanel *pnl = canvas_get_panel(i); if (pnl) pnl->initial_visible = pnl->visible;
+        }}
+    }}
+
     // 1. Hide ALL labels, images, and buttons
     for (int i = 0; i < UI_LABEL_COUNT; i++) {{
         UILabel *lbl = canvas_get_label(i);
@@ -349,6 +369,8 @@ void canvas_set_ui_scene(int scene_idx) {{
             break;
         }}
     }}
+
+    g_current_ui_scene = scene_idx;
 }}
 #endif // UI_SCENE_COUNT > 0
 
