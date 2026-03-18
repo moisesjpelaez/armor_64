@@ -115,13 +115,17 @@ def detect_ui_canvas(exporter):
                         root_elements.append(elem)
 
                 # Process root elements recursively, flattening layouts
-                # but tracking groups and unified elements array
+                # but tracking groups and unified elements array.
+                # Use scene_key as the root parent_path so that element keys
+                # are scene-scoped (e.g. "Paused/buttons/menu_button" vs
+                # "Win/buttons/menu_button").
                 for elem in root_elements:
                     _flatten_element(
                         exporter, elem, elem_by_key, children_by_parent,
                         canvas_width, canvas_height,
                         0, 0,  # parent_abs_x, parent_abs_y
-                        labels, images, buttons, panels, groups, elements
+                        labels, images, buttons, panels, groups, elements,
+                        parent_path=scene_key
                     )
 
                 # Record this Koui scene's element ranges
@@ -139,7 +143,7 @@ def detect_ui_canvas(exporter):
                 })
 
             # Resolve button focus graph indices after all buttons collected
-            resolve_button_focus(buttons)
+            resolve_button_focus(buttons, ui_scenes)
 
             if labels or images or buttons or panels or groups:
                 exporter.ui_canvas_data[canvas_name] = {
@@ -595,26 +599,44 @@ def _handle_panel(exporter, elem, final_x, final_y, panels, parent_path: str = "
     panels.append(panel_data)
 
 
-def resolve_button_focus(buttons):
-    """Resolve focus graph string keys to integer indices after all buttons are collected."""
-    key_to_index = {btn['key']: i for i, btn in enumerate(buttons)}
-    # Koui JSON stores focusDown/Up as the bare element key (e.g. "info_button"), but
-    # buttons inside a layout are stored with full paths (e.g. "menu_buttons/info_button").
-    # Build a fallback lookup by last path segment so both forms resolve correctly.
-    last_seg_to_index = {}
+def resolve_button_focus(buttons, ui_scenes):
+    """Resolve focus graph string keys to integer indices after all buttons are collected.
+
+    Focus keys in the Koui JSON are bare element names (e.g. "menu_button") that
+    are always relative to the same scene.  We use the ui_scenes list to scope
+    the lookup so that a button in the Win scene resolves "menu_button" to the
+    Win scene's menu_button, not the Paused scene's.
+    """
+    # Build per-scene lookup tables keyed by bare element name.
+    # Each entry maps  bare_name -> global button index  but only within
+    # the range [first_button .. first_button+button_count).
+    scene_bare_maps = []
+    for sc in ui_scenes:
+        bare_map = {}
+        start = sc['first_button']
+        count = sc['button_count']
+        for i in range(start, start + count):
+            # The key is scene-prefixed (e.g. "Paused/buttons/menu_button");
+            # strip the scene prefix and parent path to get the bare name.
+            bare = buttons[i]['key'].split('/')[-1]
+            bare_map[bare] = i
+        scene_bare_maps.append((start, start + count, bare_map))
+
+    def _find_scene_for_button(btn_idx):
+        """Return the bare_map for the scene that owns this button index."""
+        for start, end, bare_map in scene_bare_maps:
+            if start <= btn_idx < end:
+                return bare_map
+        return {}
+
     for i, btn in enumerate(buttons):
-        seg = btn['key'].split('/')[-1]
-        if seg not in last_seg_to_index:
-            last_seg_to_index[seg] = i
-    for btn in buttons:
+        scene_map = _find_scene_for_button(i)
         for direction in ('up', 'down', 'left', 'right'):
             target_key = btn.get(f'focus_{direction}_key')
             if target_key is None:
                 btn[f'focus_{direction}'] = -1
             else:
-                idx = key_to_index.get(target_key)
-                if idx is None:
-                    idx = last_seg_to_index.get(target_key, -1)
+                idx = scene_map.get(target_key, -1)
                 btn[f'focus_{direction}'] = idx
 
 
@@ -876,6 +898,13 @@ def write_label_h(exporter):
             if safe not in seen:
                 label_defines_lines.append(f'#define UI_LABEL_{safe} {idx}')
                 seen[safe] = idx
+            # Also emit a bare-path alias (without scene prefix) when unambiguous.
+            parts = label['key'].split('/', 1)
+            if len(parts) == 2:
+                bare_safe = arm.utils.safesrc(parts[1]).upper()
+                if bare_safe != safe and bare_safe not in seen:
+                    label_defines_lines.append(f'#define UI_LABEL_{bare_safe} {idx}')
+                    seen[bare_safe] = idx
         label_defines_lines.append('')
         total_label_count = max(total_label_count, len(labels))
 
@@ -970,6 +999,13 @@ def write_image_h(exporter):
             if safe not in seen:
                 image_defines_lines.append(f'#define UI_IMAGE_{safe} {idx}')
                 seen[safe] = idx
+            # Also emit a bare-path alias (without scene prefix) when unambiguous.
+            parts = image['key'].split('/', 1)
+            if len(parts) == 2:
+                bare_safe = arm.utils.safesrc(parts[1]).upper()
+                if bare_safe != safe and bare_safe not in seen:
+                    image_defines_lines.append(f'#define UI_IMAGE_{bare_safe} {idx}')
+                    seen[bare_safe] = idx
         image_defines_lines.append('')
         total_image_count = max(total_image_count, len(images))
 
@@ -1052,6 +1088,14 @@ def write_button_h(exporter):
             if safe not in seen:
                 button_defines_lines.append(f'#define UI_BUTTON_{safe} {idx}')
                 seen[safe] = idx
+            # Also emit a bare-path alias (without scene prefix) when unambiguous.
+            # Key format is "Scene/path/key"; strip the first segment to get "path/key".
+            parts = btn['key'].split('/', 1)
+            if len(parts) == 2:
+                bare_safe = arm.utils.safesrc(parts[1]).upper()
+                if bare_safe != safe and bare_safe not in seen:
+                    button_defines_lines.append(f'#define UI_BUTTON_{bare_safe} {idx}')
+                    seen[bare_safe] = idx
         button_defines_lines.append('')
         total_button_count = max(total_button_count, len(buttons))
 
@@ -1160,6 +1204,13 @@ def write_panel_h(exporter):
             if safe not in seen:
                 panel_defines_lines.append(f'#define UI_PANEL_{safe} {idx}')
                 seen[safe] = idx
+            # Also emit a bare-path alias (without scene prefix) when unambiguous.
+            parts = panel['key'].split('/', 1)
+            if len(parts) == 2:
+                bare_safe = arm.utils.safesrc(parts[1]).upper()
+                if bare_safe != safe and bare_safe not in seen:
+                    panel_defines_lines.append(f'#define UI_PANEL_{bare_safe} {idx}')
+                    seen[bare_safe] = idx
         panel_defines_lines.append('')
         total_panel_count = max(total_panel_count, len(panels))
 
@@ -1246,6 +1297,14 @@ def write_canvas_h(exporter):
                 if safe_key not in seen_group_keys:
                     group_defines_lines.append(f'#define {define_name} {group_idx}')
                     seen_group_keys[safe_key] = group_idx
+                # Also emit a bare-path alias (without scene prefix) when unambiguous.
+                parts = group['key'].split('/', 1)
+                if len(parts) == 2:
+                    bare_safe = arm.utils.safesrc(parts[1]).upper()
+                    bare_define = f'UI_GROUP_{bare_safe}'
+                    if bare_safe != safe_key and bare_safe not in seen_group_keys:
+                        group_defines_lines.append(f'#define {bare_define} {group_idx}')
+                        seen_group_keys[bare_safe] = group_idx
             group_defines_lines.append('')
         total_group_count = max(total_group_count, len(groups))
 

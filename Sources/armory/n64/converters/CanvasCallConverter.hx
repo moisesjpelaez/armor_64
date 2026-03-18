@@ -55,11 +55,14 @@ class CanvasCallConverter implements ICallConverter {
             if (result != null) return result;
         }
         else if (method == "getElementFromSceneAs" && rawParams.length >= 3) {
-            // canvas.getElementFromSceneAs(Button, "MainMenu", "menu_buttons/play_button")
-            // sceneName (rawParams[1]) is implicit in the element path from the canvas JSON
+            // canvas.getElementFromSceneAs(Button, "Paused", "buttons/menu_button")
+            // Prefix with scene name so keys are scene-scoped (matching ui_exporter):
+            //   "Paused" + "buttons/menu_button" -> "Paused/buttons/menu_button"
             var elementType = ExprUtils.extractIdentName(rawParams[0]);
+            var sceneName = ExprUtils.extractString(rawParams[1]);
             var elemPath = ExprUtils.extractString(rawParams[2]);
-            var result = resolveElementIR(elementType, elemPath, ctx);
+            var fullKey = sceneName != null ? sceneName + "/" + elemPath : elemPath;
+            var result = resolveElementIR(elementType, fullKey, ctx);
             if (result != null) return result;
         }
         else if (method == "setScene" && rawParams.length >= 1) {
