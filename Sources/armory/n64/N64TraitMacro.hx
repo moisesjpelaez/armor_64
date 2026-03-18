@@ -33,6 +33,7 @@ import armory.n64.converters.Graphics2CallConverter;
 import armory.n64.converters.MapCallConverter;
 import armory.n64.converters.ArrayCallConverter;
 import armory.n64.converters.StringCallConverter;
+import armory.n64.converters.ButtonCallConverter;
 
 using haxe.macro.ExprTools;
 using haxe.macro.TypeTools;
@@ -315,6 +316,7 @@ class TraitExtractor implements IExtractorContext {
             new MapCallConverter(),
             new ArrayCallConverter(),
             new StringCallConverter(),
+            new ButtonCallConverter(),
         ];
 
         // NOTE: We do NOT load inherited member types here to avoid triggering
@@ -1813,16 +1815,16 @@ class TraitExtractor implements IExtractorContext {
                     default:
                 }
 
+                // Unsupported APIs - explicitly skip (before converters to prevent optimistic matching)
+                switch (obj.expr) {
+                    case EConst(CIdent("Audio")), EConst(CIdent("Tween")), EConst(CIdent("Network")), EConst(CIdent("Koui")), EConst(CIdent("System")):
+                        return { type: "skip" };
+                    default:
+                }
+
                 for (conv in converters) {
                     var result = conv.tryConvert(obj, method, args, params, this);
                     if (result != null) return result;
-                }
-
-                // Unsupported APIs - explicitly skip
-                switch (obj.expr) {
-                    case EConst(CIdent("Audio")), EConst(CIdent("Tween")), EConst(CIdent("Network")), EConst(CIdent("Koui")):
-                        return { type: "skip" };
-                    default:
                 }
 
                 // Fallback: generic call with object (for unknown method calls)

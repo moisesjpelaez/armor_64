@@ -91,6 +91,7 @@ static void load_labels(const UILabelDef *defs, int count) {{
         label->style_id        = def->style_id;
         label->font_id         = fonts_get_rdpq_id(def->font_id);
         label->visible         = def->visible;
+        label->initial_visible = def->visible;
         label->shadow          = def->shadow;
         label->shadow_dx       = def->shadow_dx;
         label->shadow_dy       = def->shadow_dy;

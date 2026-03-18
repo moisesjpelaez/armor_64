@@ -135,6 +135,7 @@ class TraitCodeGenerator:
         self._tween_callbacks = []  # Collected tween callbacks from all events
         self._inherited_callbacks = []  # Collected callback wrappers for inherited method calls
         self._signal_inline_callbacks = []  # Collected inline signal callbacks
+        self._button_callbacks = []  # Collected button_register_callback nodes
 
     def _compute_virtual_methods(self) -> set:
         """Compute the set of method names that need vtable dispatch.
@@ -162,6 +163,7 @@ class TraitCodeGenerator:
             mname = m.get("name", "")
             member_map[mname] = {
                 "ctype": m.get("ctype", "float"),
+                "type": m.get("type", ""),
                 "owner": self.name,
                 "depth": 0
             }
@@ -178,6 +180,7 @@ class TraitCodeGenerator:
                 if mname not in member_map:
                     member_map[mname] = {
                         "ctype": m.get("ctype", "float"),
+                        "type": m.get("type", ""),
                         "owner": current_parent,
                         "depth": depth
                     }
@@ -780,6 +783,75 @@ class TraitCodeGenerator:
             if cb_name and cb_name not in seen_callbacks:
                 seen_callbacks.add(cb_name)
                 cb_code = self._generate_signal_inline_callback(cb)
+                if cb_code:
+                    lines.append(cb_code)
+                    lines.append("")
+
+        return "\n".join(lines)
+
+    def _find_button_callbacks(self, nodes: list) -> list:
+        """Recursively find all button_register_callback nodes in IR nodes."""
+        return self._find_nodes_by_type(nodes, "button_register_callback")
+
+    def _collect_button_callbacks(self):
+        """Scan all events AND methods for button callback registrations."""
+        self._collect_callbacks_from_all_bodies(
+            self._button_callbacks,
+            self._find_button_callbacks
+        )
+
+    def _generate_button_callback(self, callback_info: dict) -> str:
+        """Generate a static C callback function for a button event.
+
+        ButtonCallback signature: void (*)(int button_index, void* user_data)
+        user_data is the trait data pointer.
+        """
+        props = callback_info.get("props", {})
+        cb_name = props.get("callback_name", "")
+        body_nodes = callback_info.get("body", [])
+
+        if not cb_name:
+            return ""
+
+        lines = []
+        lines.append(f"static void {cb_name}(int button_index, void* user_data) {{")
+        lines.append(f"    (void)button_index;")
+        lines.append(f"    {self.c_name}Data* data = ({self.c_name}Data*)user_data;")
+
+        # Get object pointer from data struct, traversing inheritance chain
+        obj_access = self._get_object_access_path()
+        lines.append(f"    void* obj = (void*){obj_access};")
+        lines.append(f"    (void)obj;")
+
+        for node in body_nodes:
+            code = self.emitter.emit(node)
+            if code:
+                for line in code.split('\n'):
+                    if line.strip():
+                        if not line.rstrip().endswith((';', '{', '}')):
+                            lines.append(f"    {line};")
+                        else:
+                            lines.append(f"    {line}")
+
+        lines.append("}")
+        return "\n".join(lines)
+
+    def generate_button_callbacks(self) -> str:
+        """Generate all button callback static functions for this trait."""
+        self._collect_button_callbacks()
+
+        if not self._button_callbacks:
+            return ""
+
+        lines = []
+        seen_callbacks = set()
+
+        for cb in self._button_callbacks:
+            props = cb.get("props", {})
+            cb_name = props.get("callback_name", "")
+            if cb_name and cb_name not in seen_callbacks:
+                seen_callbacks.add(cb_name)
+                cb_code = self._generate_button_callback(cb)
                 if cb_code:
                     lines.append(cb_code)
                     lines.append("")
@@ -1419,6 +1491,12 @@ def _prepare_traits_template_data(traits: dict, type_overrides: dict = None) -> 
         if signal_inline_cb_code:
             tween_callbacks.append(f"// Inline signal callbacks for {trait_name}")
             tween_callbacks.append(signal_inline_cb_code)
+
+        # Generate button callbacks (must come before implementations)
+        button_cb_code = gen.generate_button_callbacks()
+        if button_cb_code:
+            tween_callbacks.append(f"// Button callbacks for {trait_name}")
+            tween_callbacks.append(button_cb_code)
 
         # Implementation data: methods first (they may be called by events), then events
         method_impls = gen.generate_method_implementations()

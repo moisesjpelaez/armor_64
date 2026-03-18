@@ -50,6 +50,58 @@ class CanvasCallConverter implements ICallConverter {
                     props: { key: elemKey }
                 };
             }
+            // Button type
+            if (elementType == "Button" && elemKey != null) {
+                ctx.getMeta().uses_ui = true;
+                return {
+                    type: "canvas_get_button",
+                    props: { key: elemKey }
+                };
+            }
+        }
+        else if (method == "getElementFromSceneAs" && rawParams.length >= 3) {
+            // canvas.getElementFromSceneAs(Button, "MainMenu", "menu_buttons/play_button")
+            var elementType = ExprUtils.extractIdentName(rawParams[0]);
+            var sceneName = ExprUtils.extractString(rawParams[1]);
+            var elemPath = ExprUtils.extractString(rawParams[2]);
+
+            if (elementType == "Button" && elemPath != null) {
+                ctx.getMeta().uses_ui = true;
+                // Key is the full path within the scene (matches ui_exporter button keys)
+                var fullKey = (sceneName != null && sceneName.length > 0)
+                    ? elemPath  // Path already includes parent hierarchy from canvas
+                    : elemPath;
+                return {
+                    type: "canvas_get_button",
+                    props: { key: fullKey }
+                };
+            }
+            if (elementType == "Label" && elemPath != null) {
+                ctx.getMeta().uses_ui = true;
+                return {
+                    type: "canvas_get_label",
+                    props: { key: elemPath }
+                };
+            }
+            if ((elementType == "AnchorPane" || elementType == "RowLayout" ||
+                 elementType == "ColLayout" || elementType == "GridLayout") && elemPath != null) {
+                ctx.getMeta().uses_ui = true;
+                return {
+                    type: "canvas_get_group",
+                    props: { key: elemPath }
+                };
+            }
+        }
+        else if (method == "setScene" && rawParams.length >= 1) {
+            // canvas.setScene("Info") -> canvas_set_scene("Info")
+            var sceneName = ExprUtils.extractString(rawParams[0]);
+            if (sceneName != null) {
+                ctx.getMeta().uses_ui = true;
+                return {
+                    type: "canvas_set_scene",
+                    props: { scene: sceneName }
+                };
+            }
         }
         else if (method == "notifyOnReady" && rawParams.length >= 1) {
             // canvas.notifyOnReady(function() { ... }) or canvas.notifyOnReady(methodName)

@@ -83,6 +83,7 @@ static void load_images(UIImageDef *defs, int count) {{
         image->height     = def->height;
         image->scale      = def->scale;
         image->visible    = def->visible;
+        image->initial_visible = def->visible;
         image->align_h    = def->align_h;
         image->align_width = def->align_width;
         ui_image_add(image);

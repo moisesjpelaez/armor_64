@@ -107,9 +107,15 @@ static void load_buttons(const UIButtonDef *defs, int count) {{
         btn->focus_left           = def->focus_left;
         btn->focus_right          = def->focus_right;
         btn->visible              = def->visible;
+        btn->initial_visible      = def->visible;
         btn->focused              = false;
+        btn->disabled             = false;
         btn->isPressed            = false;
         btn->_activated           = false;
+
+        btn->on_pressed       = NULL;  btn->on_pressed_data  = NULL;
+        btn->on_released      = NULL;  btn->on_released_data = NULL;
+        btn->on_focus         = NULL;  btn->on_focus_data    = NULL;
 
         if (def->text) {{
             strncpy(btn->text, def->text, UI_BUTTON_TEXT_SIZE - 1);
@@ -136,7 +142,7 @@ void button_scene_init(SceneId scene_id) {{
 
     // N64: auto-focus first visible button on scene load
     for (int i = 0; i < g_button_count; i++) {{
-        if (g_buttons[i].visible) {{
+        if (g_buttons[i].visible && !g_buttons[i].disabled) {{
             g_focused_index          = i;
             g_buttons[i].focused     = true;
             break;
@@ -154,6 +160,7 @@ void button_scene_init(SceneId scene_id) {{
 static void set_focus(int index) {{
     if (index < 0 || index >= g_button_count) return;
     if (!g_buttons[index].visible) return;
+    if (g_buttons[index].disabled) return;
     if (g_focused_index == index) return;  // Koui: if (elemFocused == element) return
 
     // FocusLoose on old element
@@ -165,12 +172,16 @@ static void set_focus(int index) {{
     // FocusGet on new element
     g_focused_index           = index;
     g_buttons[index].focused  = true;
+
+    // Invoke on_focus callback (Koui: FocusGet)
+    if (g_buttons[index].on_focus)
+        g_buttons[index].on_focus(index, g_buttons[index].on_focus_data);
 }}
 
 // Koui: EventHandler.focusFirstElement — grab first visible focusable element
 static void focus_first_element(void) {{
     for (int i = 0; i < g_button_count; i++) {{
-        if (g_buttons[i].visible) {{
+        if (g_buttons[i].visible && !g_buttons[i].disabled) {{
             set_focus(i);
             return;
         }}
@@ -191,14 +202,20 @@ void button_update(float dt) {{
     // === A button: press/release handling ===
     // Koui: _onGamepadButton(A, ButtonDown) → synthetic ClickStart → isPressed = true
     // Koui: _onGamepadButton(A, ButtonUp)   → synthetic ClickEnd   → isPressed = false
-    if (g_focused_index >= 0) {{
+    if (g_focused_index >= 0 && !g_buttons[g_focused_index].disabled) {{
         UIButton *focused = &g_buttons[g_focused_index];
         if (input_started(N64_BTN_A)) {{
             focused->isPressed = true;
+            // Invoke on_pressed callback (Koui: ClickStart)
+            if (focused->on_pressed)
+                focused->on_pressed(g_focused_index, focused->on_pressed_data);
         }}
         if (input_released(N64_BTN_A) && focused->isPressed) {{
             focused->isPressed = false;
             focused->_activated = true;
+            // Invoke on_released callback (Koui: ClickEnd)
+            if (focused->on_released)
+                focused->on_released(g_focused_index, focused->on_released_data);
         }}
     }}
 
@@ -361,6 +378,34 @@ void button_clear_focus(void) {{
         g_buttons[g_focused_index].isPressed = false;
     }}
     g_focused_index = -1;
+}}
+
+void button_on_pressed(int index, ButtonCallback cb, void* user_data) {{
+    if (index < 0 || index >= g_button_count) return;
+    g_buttons[index].on_pressed      = cb;
+    g_buttons[index].on_pressed_data = user_data;
+}}
+
+void button_on_released(int index, ButtonCallback cb, void* user_data) {{
+    if (index < 0 || index >= g_button_count) return;
+    g_buttons[index].on_released      = cb;
+    g_buttons[index].on_released_data = user_data;
+}}
+
+void button_on_focus(int index, ButtonCallback cb, void* user_data) {{
+    if (index < 0 || index >= g_button_count) return;
+    g_buttons[index].on_focus      = cb;
+    g_buttons[index].on_focus_data = user_data;
+}}
+
+void button_set_text(int index, const char *text) {{
+    if (index < 0 || index >= g_button_count) return;
+    if (text) {{
+        strncpy(g_buttons[index].text, text, UI_BUTTON_TEXT_SIZE - 1);
+        g_buttons[index].text[UI_BUTTON_TEXT_SIZE - 1] = '\0';
+    }} else {{
+        g_buttons[index].text[0] = '\0';
+    }}
 }}
 
 void button_init(void) {{

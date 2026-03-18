@@ -19,6 +19,11 @@ extern "C" {{
 #define UI_MAX_BUTTONS     {max_buttons}
 #define UI_BUTTON_TEXT_SIZE 32
 
+// Callback type for button events.
+// button_index: pool index of the button that fired the event.
+// user_data:    opaque pointer passed at registration time.
+typedef void (*ButtonCallback)(int button_index, void* user_data);
+
 // Runtime button element.
 // Colors stored as RGBA components — no libdragon dependency in this header.
 typedef struct {{
@@ -52,8 +57,18 @@ typedef struct {{
     // Runtime state (mirrors Koui Button fields)
     bool focused;    // Koui: isFocused — set by focus graph navigation
     bool visible;
+    bool initial_visible;
+    bool disabled;   // Koui: disabled — ignores focus navigation + input when true
     bool isPressed;  // Koui: isPressed — true while A held, cleared on release or focus loss
     bool _activated; // One-frame flag: true the frame A is released on a pressed button
+
+    // Per-button callbacks (set via registration API; NULL = unused)
+    ButtonCallback on_pressed;       // Fires on A-down while focused  (Koui: ClickStart)
+    void*          on_pressed_data;
+    ButtonCallback on_released;      // Fires on A-release while focused (Koui: ClickEnd)
+    void*          on_released_data;
+    ButtonCallback on_focus;         // Fires when button gains focus   (Koui: FocusGet)
+    void*          on_focus_data;
 }} UIButton;
 
 #if UI_BUTTON_COUNT > 0
@@ -72,6 +87,14 @@ bool button_was_pressed(int index);
 void button_set_focus(int index);
 void button_clear_focus(void);
 
+// Register per-button callbacks (one slot per event type per button).
+void button_on_pressed(int index, ButtonCallback cb, void* user_data);
+void button_on_released(int index, ButtonCallback cb, void* user_data);
+void button_on_focus(int index, ButtonCallback cb, void* user_data);
+
+// Update button text at runtime (e.g. localization, dynamic content).
+void button_set_text(int index, const char *text);
+
 // ---- Internal - called by canvas orchestrator ----
 void button_init(void);
 void button_clear(void);
@@ -85,6 +108,10 @@ static inline UIButton* canvas_get_button(int i) {{ (void)i; return NULL; }}
 static inline bool      button_was_pressed(int i) {{ (void)i; return false; }}
 static inline void      button_set_focus(int i) {{ (void)i; }}
 static inline void      button_clear_focus(void) {{}}
+static inline void      button_on_pressed(int i, ButtonCallback cb, void* ud) {{ (void)i; (void)cb; (void)ud; }}
+static inline void      button_on_released(int i, ButtonCallback cb, void* ud) {{ (void)i; (void)cb; (void)ud; }}
+static inline void      button_on_focus(int i, ButtonCallback cb, void* ud) {{ (void)i; (void)cb; (void)ud; }}
+static inline void      button_set_text(int i, const char *t) {{ (void)i; (void)t; }}
 static inline void      button_init(void) {{}}
 static inline void      button_clear(void) {{}}
 static inline void      button_scene_init(SceneId s) {{ (void)s; }}

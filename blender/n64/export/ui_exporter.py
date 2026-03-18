@@ -86,8 +86,17 @@ def detect_ui_canvas(exporter):
             groups = []       # Groups with their child indices
             elements = []     # Unified elements array (maps Haxe index to image/group)
 
+            ui_scenes = []  # Track per-Koui-scene element ranges
+
             for scene in canvas_data.get('scenes', []):
+                scene_key = scene.get('key', '')
+                scene_active = scene.get('active', True)
                 scene_elements = scene.get('elements', [])
+
+                # Track range start indices before processing this scene
+                label_start = len(labels)
+                image_start = len(images)
+                button_start = len(buttons)
 
                 # Build element lookup by key and parent-child relationships
                 elem_by_key = {e['key']: e for e in scene_elements}
@@ -113,6 +122,18 @@ def detect_ui_canvas(exporter):
                         labels, images, buttons, groups, elements
                     )
 
+                # Record this Koui scene's element ranges
+                ui_scenes.append({
+                    'key': scene_key,
+                    'active': scene_active,
+                    'first_label': label_start,
+                    'label_count': len(labels) - label_start,
+                    'first_image': image_start,
+                    'image_count': len(images) - image_start,
+                    'first_button': button_start,
+                    'button_count': len(buttons) - button_start,
+                })
+
             # Resolve button focus graph indices after all buttons collected
             resolve_button_focus(buttons)
 
@@ -124,7 +145,8 @@ def detect_ui_canvas(exporter):
                     'images': images,
                     'buttons': buttons,
                     'groups': groups,
-                    'elements': elements
+                    'elements': elements,
+                    'ui_scenes': ui_scenes,
                 }
                 exporter.has_ui = True
                 log.info(f'Found UI canvas: {canvas_name} with {len(labels)} label(s), {len(images)} image(s), {len(buttons)} button(s), {len(groups)} group(s), {len(elements)} element(s)')
@@ -226,6 +248,7 @@ def _create_group_with_children(exporter, elem, children, final_x, final_y,
         'visible': elem.get('visible', True),
         'child_image_indices': [],
         'child_label_indices': [],
+        'child_button_indices': [],
     }
 
     # Add to elements array as a group
@@ -238,6 +261,7 @@ def _create_group_with_children(exporter, elem, children, final_x, final_y,
     for child in children:
         img_start = len(images)
         lbl_start = len(labels)
+        btn_start = len(buttons)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
             container_width, container_height,
@@ -250,6 +274,8 @@ def _create_group_with_children(exporter, elem, children, final_x, final_y,
             group_data['child_image_indices'].append(i)
         for i in range(lbl_start, len(labels)):
             group_data['child_label_indices'].append(i)
+        for i in range(btn_start, len(buttons)):
+            group_data['child_button_indices'].append(i)
 
     groups.append(group_data)
 
@@ -272,6 +298,7 @@ def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y
         'visible': elem.get('visible', True),
         'child_image_indices': [],
         'child_label_indices': [],
+        'child_button_indices': [],
     }
 
     if is_root:
@@ -296,6 +323,7 @@ def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y
 
         img_start = len(images)
         lbl_start = len(labels)
+        btn_start = len(buttons)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
             cell_width, cell_height,
@@ -308,6 +336,8 @@ def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y
             group_data['child_image_indices'].append(i)
         for i in range(lbl_start, len(labels)):
             group_data['child_label_indices'].append(i)
+        for i in range(btn_start, len(buttons)):
+            group_data['child_button_indices'].append(i)
 
     groups.append(group_data)
 
@@ -330,6 +360,7 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
         'visible': elem.get('visible', True),
         'child_image_indices': [],
         'child_label_indices': [],
+        'child_button_indices': [],
     }
 
     if is_root:
@@ -353,6 +384,7 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
 
         img_start = len(images)
         lbl_start = len(labels)
+        btn_start = len(buttons)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
             cell_width, cell_height,
@@ -365,6 +397,8 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
             group_data['child_image_indices'].append(i)
         for i in range(lbl_start, len(labels)):
             group_data['child_label_indices'].append(i)
+        for i in range(btn_start, len(buttons)):
+            group_data['child_button_indices'].append(i)
 
     groups.append(group_data)
 
@@ -1082,9 +1116,23 @@ def write_canvas_h(exporter):
         for group in canvas.get('groups', []):
             child_count = max(
                 len(group.get('child_image_indices', [])),
-                len(group.get('child_label_indices', []))
+                len(group.get('child_label_indices', [])),
+                len(group.get('child_button_indices', []))
             )
             max_group_children = max(max_group_children, child_count)
+
+    # Build UI scene defines (Koui scenes within a canvas)
+    ui_scene_defines_lines = []
+    max_ui_scene_count = 0
+    for canvas_name, canvas in exporter.ui_canvas_data.items():
+        ui_scenes = canvas.get('ui_scenes', [])
+        if ui_scenes:
+            ui_scene_defines_lines.append(f'// Canvas: {canvas_name} UI scenes')
+            for scene_idx, scene in enumerate(ui_scenes):
+                safe_key = arm.utils.safesrc(scene['key']).upper()
+                ui_scene_defines_lines.append(f'#define UI_SCENE_{safe_key} {scene_idx}')
+            ui_scene_defines_lines.append('')
+            max_ui_scene_count = max(max_ui_scene_count, len(ui_scenes))
 
     output = tmpl_content.format(
         group_defines='\n'.join(group_defines_lines) if group_defines_lines else '// No groups',
@@ -1092,6 +1140,8 @@ def write_canvas_h(exporter):
         element_count=total_element_count,
         max_groups=max_groups,
         max_group_children=max_group_children,
+        ui_scene_defines='\n'.join(ui_scene_defines_lines) if ui_scene_defines_lines else '// No UI scenes',
+        ui_scene_count=max_ui_scene_count,
     )
 
     with open(out_path, 'w', encoding='utf-8') as f:
@@ -1119,13 +1169,16 @@ def write_canvas_c(exporter):
         for group in groups:
             img_indices = group.get('child_image_indices', [])
             lbl_indices = group.get('child_label_indices', [])
-            max_ch = max(8, len(img_indices), len(lbl_indices))
+            btn_indices = group.get('child_button_indices', [])
+            max_ch = max(8, len(img_indices), len(lbl_indices), len(btn_indices))
             img_padded = list(img_indices[:max_ch]) + [0] * (max_ch - min(len(img_indices), max_ch))
             lbl_padded = list(lbl_indices[:max_ch]) + [0] * (max_ch - min(len(lbl_indices), max_ch))
+            btn_padded = list(btn_indices[:max_ch]) + [0] * (max_ch - min(len(btn_indices), max_ch))
             img_str = ', '.join(str(i) for i in img_padded)
             lbl_str = ', '.join(str(i) for i in lbl_padded)
+            btn_str = ', '.join(str(i) for i in btn_padded)
             visible = 'true' if group.get('visible', True) else 'false'
-            canvas_group_arrays.append(f'    {{ {{ {img_str} }}, {{ {lbl_str} }}, {len(img_indices)}, {len(lbl_indices)}, {visible} }},')
+            canvas_group_arrays.append(f'    {{ {{ {img_str} }}, {{ {lbl_str} }}, {{ {btn_str} }}, {len(img_indices)}, {len(lbl_indices)}, {len(btn_indices)}, {visible} }},')
         canvas_group_arrays.append('};')
         canvas_group_arrays.append('')
 
@@ -1154,7 +1207,8 @@ def write_canvas_c(exporter):
         canvas = exporter.ui_canvas_data[canvas_name]
         group_count = len(canvas.get('groups', []))
         element_count = len(canvas.get('elements', []))
-        if group_count == 0 and element_count == 0:
+        ui_scene_count = len(canvas.get('ui_scenes', []))
+        if group_count == 0 and element_count == 0 and ui_scene_count == 0:
             continue
         safe_scene = arm.utils.safesrc(scene_name).upper()
         safe_canvas = arm.utils.safesrc(canvas_name).lower()
@@ -1163,6 +1217,30 @@ def write_canvas_c(exporter):
             scene_switch_cases.append(f'            load_groups(g_{safe_canvas}_group_defs, {safe_canvas.upper()}_GROUP_COUNT);')
         if element_count > 0:
             scene_switch_cases.append(f'            load_elements(g_{safe_canvas}_element_defs, {safe_canvas.upper()}_ELEMENT_COUNT);')
+        if ui_scene_count > 0:
+            scene_switch_cases.append(f'            load_ui_scenes(g_{safe_canvas}_ui_scene_defs, {safe_canvas.upper()}_UI_SCENE_COUNT);')
+        scene_switch_cases.append('            break;')
+
+    # Build per-canvas UI scene range arrays
+    canvas_ui_scene_arrays = []
+    for canvas_name, canvas in exporter.ui_canvas_data.items():
+        ui_scenes = canvas.get('ui_scenes', [])
+        if not ui_scenes:
+            continue
+        safe_canvas = arm.utils.safesrc(canvas_name).lower()
+        canvas_ui_scene_arrays.append(f'// Canvas: {canvas_name} UI scenes')
+        canvas_ui_scene_arrays.append(f'#define {safe_canvas.upper()}_UI_SCENE_COUNT {len(ui_scenes)}')
+        canvas_ui_scene_arrays.append(f'static const UISceneRange g_{safe_canvas}_ui_scene_defs[{safe_canvas.upper()}_UI_SCENE_COUNT] = {{')
+        for scene in ui_scenes:
+            active = 'true' if scene.get('active', True) else 'false'
+            canvas_ui_scene_arrays.append(
+                f'    {{ {scene["first_label"]}, {scene["label_count"]}, '
+                f'{scene["first_image"]}, {scene["image_count"]}, '
+                f'{scene["first_button"]}, {scene["button_count"]}, '
+                f'{active} }},  // {scene["key"]}'
+            )
+        canvas_ui_scene_arrays.append('};')
+        canvas_ui_scene_arrays.append('')
         scene_switch_cases.append('            break;')
 
     # Build font style registration code
@@ -1200,6 +1278,7 @@ def write_canvas_c(exporter):
     output = tmpl_content.format(
         canvas_group_arrays='\n'.join(canvas_group_arrays) if canvas_group_arrays else '// No groups defined',
         canvas_element_arrays='\n'.join(canvas_element_arrays) if canvas_element_arrays else '// No elements defined',
+        canvas_ui_scene_arrays='\n'.join(canvas_ui_scene_arrays) if canvas_ui_scene_arrays else '// No UI scenes defined',
         group_element_scene_init_cases='\n'.join(scene_switch_cases),
         font_style_registration='\n'.join(style_registration_lines) if style_registration_lines else '    // No custom styles defined'
     )

@@ -21,18 +21,25 @@ extern "C" {{
 // Total element count (top-level images + groups; matches Haxe elements[] array)
 #define UI_ELEMENT_COUNT {element_count}
 
+// UI scene defines (Koui SceneManager scenes within a canvas)
+{ui_scene_defines}
+
+#define UI_SCENE_COUNT {ui_scene_count}
+
 #if UI_LABEL_COUNT > 0 || UI_IMAGE_COUNT > 0 || UI_GROUP_COUNT > 0 || UI_BUTTON_COUNT > 0
 
 #if UI_GROUP_COUNT > 0
 #define UI_MAX_GROUPS         {max_groups}
 #define UI_MAX_GROUP_CHILDREN {max_group_children}
 
-// Group element — container with shared visibility for child images/labels
+// Group element — container with shared visibility for child images/labels/buttons
 typedef struct {{
     uint8_t child_image_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t child_label_indices[UI_MAX_GROUP_CHILDREN];
+    uint8_t child_button_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t num_child_images;
     uint8_t num_child_labels;
+    uint8_t num_child_buttons;
     bool visible;
 }} UIGroup;
 #endif // UI_GROUP_COUNT > 0
@@ -56,6 +63,13 @@ void canvas_clear(void);                    // Reset all pools
 void canvas_update(float dt);               // Call every frame (delegates to button_update)
 void canvas_render(void);                   // Call after 3D render, before display_show
 
+// UI scene switching (Koui SceneManager)
+#if UI_SCENE_COUNT > 0
+void canvas_set_ui_scene(int scene_idx);    // Switch active Koui UI scene
+#else
+static inline void canvas_set_ui_scene(int s) {{ (void)s; }}
+#endif
+
 #if UI_GROUP_COUNT > 0
 UIGroup* canvas_get_group(int index);
 void ui_group_set_visible(UIGroup *group, bool visible);
@@ -72,6 +86,7 @@ static inline void canvas_clear(void) {{}}
 static inline void canvas_update(float dt) {{ (void)dt; }}
 static inline void canvas_render(void) {{}}
 static inline void canvas_element_set_visible(int i, bool v) {{ (void)i; (void)v; }}
+static inline void canvas_set_ui_scene(int s) {{ (void)s; }}
 
 #endif // UI_LABEL_COUNT > 0 || UI_IMAGE_COUNT > 0 || UI_GROUP_COUNT > 0 || UI_BUTTON_COUNT > 0
 

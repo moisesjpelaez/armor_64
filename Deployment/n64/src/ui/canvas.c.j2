@@ -41,8 +41,10 @@ static bool g_initialized = false;
 typedef struct {{
     uint8_t child_image_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t child_label_indices[UI_MAX_GROUP_CHILDREN];
+    uint8_t child_button_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t num_child_images;
     uint8_t num_child_labels;
+    uint8_t num_child_buttons;
     bool visible;
 }} UIGroupDef;
 #endif
@@ -54,13 +56,31 @@ typedef struct {{
 }} UIElementDef;
 #endif
 
+// UI scene range — tracks element ranges for each Koui scene within a canvas
+#if UI_SCENE_COUNT > 0
+typedef struct {{
+    uint8_t first_label;
+    uint8_t label_count;
+    uint8_t first_image;
+    uint8_t image_count;
+    uint8_t first_button;
+    uint8_t button_count;
+    bool    active;          // Initial active state from canvas JSON
+}} UISceneRange;
+
+static const UISceneRange *g_ui_scenes = NULL;
+static int g_ui_scene_count = 0;
+#endif
+
 // ============================================================================
-// Per-canvas group and element data arrays
+// Per-canvas group, element, and UI scene data arrays
 // ============================================================================
 
 {canvas_group_arrays}
 
 {canvas_element_arrays}
+
+{canvas_ui_scene_arrays}
 
 #if UI_GROUP_COUNT > 0
 // Internal: load groups from static definition array
@@ -72,8 +92,11 @@ static void load_groups(const UIGroupDef *defs, int count) {{
             group->child_image_indices[j] = def->child_image_indices[j];
         for (uint8_t j = 0; j < def->num_child_labels && j < UI_MAX_GROUP_CHILDREN; j++)
             group->child_label_indices[j] = def->child_label_indices[j];
-        group->num_child_images = def->num_child_images;
-        group->num_child_labels = def->num_child_labels;
+        for (uint8_t j = 0; j < def->num_child_buttons && j < UI_MAX_GROUP_CHILDREN; j++)
+            group->child_button_indices[j] = def->child_button_indices[j];
+        group->num_child_images  = def->num_child_images;
+        group->num_child_labels  = def->num_child_labels;
+        group->num_child_buttons = def->num_child_buttons;
         group->visible = def->visible;
         if (g_canvas_group_count < UI_GROUP_COUNT)
             g_canvas_groups[g_canvas_group_count++] = group;
@@ -91,6 +114,13 @@ static void load_elements(const UIElementDef *defs, int count) {{
         g_canvas_elements[i].index = defs[i].index;
         g_canvas_element_count++;
     }}
+}}
+#endif
+
+#if UI_SCENE_COUNT > 0
+static void load_ui_scenes(const UISceneRange *defs, int count) {{
+    g_ui_scenes = defs;
+    g_ui_scene_count = count;
 }}
 #endif
 
@@ -131,6 +161,23 @@ void canvas_scene_init(SceneId scene_id) {{
 #if UI_GROUP_COUNT > 0
     apply_initial_group_visibility();
 #endif
+
+    // Snapshot post-group visibility into initial_visible for scene switching
+    for (int i = 0; i < UI_LABEL_COUNT; i++) {{ UILabel *l = canvas_get_label(i); if (l) l->initial_visible = l->visible; }}
+    for (int i = 0; i < UI_IMAGE_COUNT; i++) {{ UIImage *im = canvas_get_image(i); if (im) im->initial_visible = im->visible; }}
+    for (int i = 0; i < UI_BUTTON_COUNT; i++) {{ UIButton *b = canvas_get_button(i); if (b) b->initial_visible = b->visible; }}
+
+#if UI_SCENE_COUNT > 0
+    // Apply initial Koui scene visibility: show only the active scene's elements
+    if (g_ui_scene_count > 0) {{
+        for (int i = 0; i < g_ui_scene_count; i++) {{
+            if (g_ui_scenes[i].active) {{
+                canvas_set_ui_scene(i);
+                break;
+            }}
+        }}
+    }}
+#endif
 }}
 
 // ============================================================================
@@ -151,6 +198,10 @@ void canvas_clear(void) {{
 #if UI_ELEMENT_COUNT > 0
     g_canvas_element_count = 0;
     memset(g_canvas_elements, 0, sizeof(g_canvas_elements));
+#endif
+#if UI_SCENE_COUNT > 0
+    g_ui_scenes = NULL;
+    g_ui_scene_count = 0;
 #endif
 }}
 
@@ -183,6 +234,10 @@ static void group_set_visible(UIGroup *group, bool visible) {{
     for (uint8_t i = 0; i < group->num_child_labels; i++) {{
         UILabel *lbl = canvas_get_label(group->child_label_indices[i]);
         if (lbl) lbl->visible = visible;
+    }}
+    for (uint8_t i = 0; i < group->num_child_buttons; i++) {{
+        UIButton *btn = canvas_get_button(group->child_button_indices[i]);
+        if (btn) btn->visible = visible;
     }}
 }}
 
@@ -225,6 +280,55 @@ void canvas_element_set_visible(int index, bool visible) {{
 #else
 void canvas_element_set_visible(int index, bool visible) {{ (void)index; (void)visible; }}
 #endif // UI_ELEMENT_COUNT > 0
+
+// ============================================================================
+// UI scene switching (Koui SceneManager)
+// ============================================================================
+
+#if UI_SCENE_COUNT > 0
+void canvas_set_ui_scene(int scene_idx) {{
+    if (scene_idx < 0 || scene_idx >= g_ui_scene_count) return;
+
+    // 1. Hide ALL labels, images, and buttons
+    for (int i = 0; i < UI_LABEL_COUNT; i++) {{
+        UILabel *lbl = canvas_get_label(i);
+        if (lbl) lbl->visible = false;
+    }}
+    for (int i = 0; i < UI_IMAGE_COUNT; i++) {{
+        UIImage *img = canvas_get_image(i);
+        if (img) img->visible = false;
+    }}
+    for (int i = 0; i < UI_BUTTON_COUNT; i++) {{
+        UIButton *btn = canvas_get_button(i);
+        if (btn) btn->visible = false;
+    }}
+    button_clear_focus();
+
+    // 2. Show elements belonging to the target scene
+    const UISceneRange *r = &g_ui_scenes[scene_idx];
+    for (int i = r->first_label; i < r->first_label + r->label_count; i++) {{
+        UILabel *lbl = canvas_get_label(i);
+        if (lbl) lbl->visible = lbl->initial_visible;
+    }}
+    for (int i = r->first_image; i < r->first_image + r->image_count; i++) {{
+        UIImage *img = canvas_get_image(i);
+        if (img) img->visible = img->initial_visible;
+    }}
+    for (int i = r->first_button; i < r->first_button + r->button_count; i++) {{
+        UIButton *btn = canvas_get_button(i);
+        if (btn) btn->visible = btn->initial_visible;
+    }}
+
+    // 3. Auto-focus first visible + enabled button in the new scene
+    for (int i = r->first_button; i < r->first_button + r->button_count; i++) {{
+        UIButton *btn = canvas_get_button(i);
+        if (btn && btn->visible && !btn->disabled) {{
+            button_set_focus(i);
+            break;
+        }}
+    }}
+}}
+#endif // UI_SCENE_COUNT > 0
 
 // ============================================================================
 // canvas_render — sync pipeline then dispatch to each subsystem

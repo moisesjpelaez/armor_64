@@ -46,6 +46,7 @@ class TypeMap {
 
         // UI types
         "Label" => "UILabel*",
+        "Button" => "uint8_t",  // Button index into static pool (UI_BUTTON_* defines)
         "KouiCanvas" => "void*",  // Canvas is metadata-only, not stored at runtime
         "AnchorPane" => "UIGroup*",
         "RowLayout" => "UIGroup*",

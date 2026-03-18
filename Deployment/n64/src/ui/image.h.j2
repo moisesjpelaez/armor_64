@@ -29,6 +29,7 @@ typedef struct {{
     sprite_t *sprite;     // Pointer to loaded sprite (NULL until scene init)
     bool     scale;       // Scale sprite to width/height
     bool     visible;
+    bool     initial_visible;
     uint8_t  align_h;     // 0=left, 1=center, 2=right
     int16_t  align_width; // Container width for alignment (0=none)
 }} UIImage;
