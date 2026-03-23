@@ -1762,6 +1762,10 @@ class TraitEmitter:
         safe_name = arm.utils.safesrc(scene_name).upper()
         return f'canvas_set_ui_scene(UI_SCENE_{safe_name})'
 
+    def emit_canvas_clear_scenes(self, node: Dict) -> str:
+        """SceneManager.clearScenes() -> canvas_clear()"""
+        return "canvas_clear();"
+
     def emit_label_set_text(self, node: Dict) -> str:
         """label.text = value -> ui_label_set_text(label, value)"""
         props = node.get("props", {})

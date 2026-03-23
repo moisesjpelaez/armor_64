@@ -1909,8 +1909,10 @@ class TraitExtractor implements IExtractorContext {
 
                 // Unsupported APIs - explicitly skip (before converters to prevent optimistic matching)
                 switch (obj.expr) {
-                    case EConst(CIdent("Audio")), EConst(CIdent("Tween")), EConst(CIdent("Network")), EConst(CIdent("Koui")), EConst(CIdent("System")),
-                         EConst(CIdent("SceneManager")):
+                    case EConst(CIdent("Audio")), EConst(CIdent("Tween")), EConst(CIdent("Network")), EConst(CIdent("Koui")), EConst(CIdent("System")):
+                        return { type: "skip" };
+                    case EConst(CIdent("SceneManager")):
+                        if (method == "clearScenes") return { type: "canvas_clear_scenes" };
                         return { type: "skip" };
                     default:
                 }
