@@ -127,7 +127,7 @@ static void load_buttons(const UIButtonDef *defs, int count) {{
 }}
 
 // ============================================================================
-// Scene init — auto-focus first visible button (N64-specific)
+// Scene init — reset focus state for new scene
 // ============================================================================
 
 void button_scene_init(SceneId scene_id) {{
@@ -139,15 +139,6 @@ void button_scene_init(SceneId scene_id) {{
     g_focused_index = -1;
     g_stick_prev_x  = 0.0f;
     g_stick_prev_y  = 0.0f;
-
-    // N64: auto-focus first visible button on scene load
-    for (int i = 0; i < g_button_count; i++) {{
-        if (g_buttons[i].visible && !g_buttons[i].disabled) {{
-            g_focused_index          = i;
-            g_buttons[i].focused     = true;
-            break;
-        }}
-    }}
 }}
 
 // ============================================================================

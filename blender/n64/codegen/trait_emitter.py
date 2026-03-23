@@ -1741,6 +1741,16 @@ class TraitEmitter:
 
         return f"{reg_fn}({button_expr}, {cb_name}, data);"
 
+    def emit_button_grab_focus(self, node: Dict) -> str:
+        """button.grabFocus() -> button_set_focus(UI_BUTTON_XXX)"""
+        obj_node = node.get("object")
+        if not obj_node:
+            return ""
+        button_expr = self.emit(obj_node)
+        if not button_expr:
+            return ""
+        return f"button_set_focus({button_expr});"
+
     def emit_canvas_set_scene(self, node: Dict) -> str:
         """canvas.setScene("SceneName") -> canvas_set_ui_scene(UI_SCENE_XXX)
 

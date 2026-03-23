@@ -361,15 +361,6 @@ void canvas_set_ui_scene(int scene_idx) {{
         if (pnl) pnl->visible = pnl->initial_visible;
     }}
 
-    // 3. Auto-focus first visible + enabled button in the new scene
-    for (int i = r->first_button; i < r->first_button + r->button_count; i++) {{
-        UIButton *btn = canvas_get_button(i);
-        if (btn && btn->visible && !btn->disabled) {{
-            button_set_focus(i);
-            break;
-        }}
-    }}
-
     g_current_ui_scene = scene_idx;
 }}
 #endif // UI_SCENE_COUNT > 0

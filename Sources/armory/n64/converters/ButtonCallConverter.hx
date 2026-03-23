@@ -39,6 +39,15 @@ class ButtonCallConverter implements ICallConverter {
         // If both are registered on the same button, the second overwrites the first since
         // the C struct has a single on_focus slot. This is intentional — user code typically
         // registers both with the same body (e.g. buttonSelected) for Krom+N64 compatibility.
+        // grabFocus() is a simple call, not a callback registration
+        if (method == "grabFocus") {
+            var objIR = ctx.exprToIR(obj);
+            return {
+                type: "button_grab_focus",
+                object: objIR
+            };
+        }
+
         var eventType:String = null;
         switch (method) {
             case "onHover":   eventType = "on_focus";
