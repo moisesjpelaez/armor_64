@@ -55,6 +55,8 @@ typedef struct {{
     uint8_t hover_border_r, hover_border_g, hover_border_b, hover_border_a;
     uint8_t click_bg_r, click_bg_g, click_bg_b, click_bg_a;
     uint8_t click_border_r, click_border_g, click_border_b, click_border_a;
+    uint8_t disabled_bg_r, disabled_bg_g, disabled_bg_b, disabled_bg_a;
+    uint8_t disabled_border_r, disabled_border_g, disabled_border_b, disabled_border_a;
     int8_t  border_size;
     const char *text;
     uint8_t font_id;           // Logical ID → fonts_get_rdpq_id()
@@ -96,6 +98,11 @@ static void load_buttons(const UIButtonDef *defs, int count) {{
         btn->click_bg_b = def->click_bg_b; btn->click_bg_a = def->click_bg_a;
         btn->click_border_r = def->click_border_r; btn->click_border_g = def->click_border_g;
         btn->click_border_b = def->click_border_b; btn->click_border_a = def->click_border_a;
+
+        btn->disabled_bg_r = def->disabled_bg_r; btn->disabled_bg_g = def->disabled_bg_g;
+        btn->disabled_bg_b = def->disabled_bg_b; btn->disabled_bg_a = def->disabled_bg_a;
+        btn->disabled_border_r = def->disabled_border_r; btn->disabled_border_g = def->disabled_border_g;
+        btn->disabled_border_b = def->disabled_border_b; btn->disabled_border_a = def->disabled_border_a;
 
         btn->border_size          = def->border_size;
         btn->font_rdpq_id         = fonts_get_rdpq_id(def->font_id);
@@ -282,6 +289,7 @@ void button_render(void) {{
     // Pass 1: all backgrounds and borders (solid color fills)
     rdpq_set_mode_standard();
     rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
+    rdpq_mode_blender(RDPQ_BLENDER_MULTIPLY);
     for (int i = 0; i < g_button_count; i++) {{
         UIButton *btn = &g_buttons[i];
         if (!btn->visible) continue;
@@ -289,7 +297,12 @@ void button_render(void) {{
         uint8_t bg_r, bg_g, bg_b, bg_a;
         uint8_t bdr_r, bdr_g, bdr_b, bdr_a;
 
-        if (btn->isPressed) {{
+        if (btn->disabled) {{
+            bg_r = btn->disabled_bg_r; bg_g = btn->disabled_bg_g;
+            bg_b = btn->disabled_bg_b; bg_a = btn->disabled_bg_a;
+            bdr_r = btn->disabled_border_r; bdr_g = btn->disabled_border_g;
+            bdr_b = btn->disabled_border_b; bdr_a = btn->disabled_border_a;
+        }} else if (btn->isPressed) {{
             bg_r = btn->click_bg_r; bg_g = btn->click_bg_g;
             bg_b = btn->click_bg_b; bg_a = btn->click_bg_a;
             bdr_r = btn->click_border_r; bdr_g = btn->click_border_g;

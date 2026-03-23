@@ -41,6 +41,10 @@ typedef struct {{
     uint8_t click_bg_r, click_bg_g, click_bg_b, click_bg_a;
     uint8_t click_border_r, click_border_g, click_border_b, click_border_a;
 
+    // Disabled state  (Koui: disabled → opacity-dimmed from theme)
+    uint8_t disabled_bg_r, disabled_bg_g, disabled_bg_b, disabled_bg_a;
+    uint8_t disabled_border_r, disabled_border_g, disabled_border_b, disabled_border_a;
+
     // Border thickness in pixels
     int8_t border_size;
 

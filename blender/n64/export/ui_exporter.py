@@ -218,6 +218,12 @@ def _build_full_path(parent_path: str, key: str) -> str:
     return key
 
 
+def _apply_opacity(color_tuple, opacity):
+    """Pre-multiply opacity (0.0\u20131.0) into the alpha channel of an RGBA tuple."""
+    r, g, b, a = color_tuple
+    return (r, g, b, int(a * max(0.0, min(1.0, opacity))))
+
+
 def _calc_element_alignment(anchor, elem_width, container_width, final_x, json_align_h=0):
     """Compute alignment info for any element based on its anchor.
 
@@ -503,7 +509,10 @@ def _handle_button(exporter, elem, final_x, final_y, buttons, container_width, p
     border_hover = KouiThemeParser.parse_hex_color('#ef6413')
     bg_click = KouiThemeParser.parse_hex_color('#343746')
     border_click = KouiThemeParser.parse_hex_color('#ffffff')
+    bg_disabled = bg_default
+    border_disabled = border_default
     border_size = 2
+    opacity_disabled = 0.6  # Koui default: _root!disabled -> opacity: 0.6
 
     if exporter.theme_parser:
         tp = exporter.theme_parser
@@ -518,7 +527,25 @@ def _handle_button(exporter, elem, final_x, final_y, buttons, container_width, p
         border_hover = KouiThemeParser.parse_hex_color(tp.get_border_color(tid, 'hover', '#ef6413'))
         bg_click = KouiThemeParser.parse_hex_color(tp.get_bg_color(tid, 'click', '#343746'))
         border_click = KouiThemeParser.parse_hex_color(tp.get_border_color(tid, 'click', '#ffffff'))
+        bg_disabled = KouiThemeParser.parse_hex_color(tp.get_bg_color(tid, 'disabled', '#262833'))
+        border_disabled = KouiThemeParser.parse_hex_color(tp.get_border_color(tid, 'disabled', '#1f2028'))
         border_size = tp.get_border_size(tid, 2)
+
+        # Per-state opacity from theme (pre-multiplied into alpha at export time)
+        op = tp.get_opacity(tid, 'default', 1.0)
+        bg_default = _apply_opacity(bg_default, op)
+        border_default = _apply_opacity(border_default, op)
+        op = tp.get_opacity(tid, 'hover', 1.0)
+        bg_hover = _apply_opacity(bg_hover, op)
+        border_hover = _apply_opacity(border_hover, op)
+        op = tp.get_opacity(tid, 'click', 1.0)
+        bg_click = _apply_opacity(bg_click, op)
+        border_click = _apply_opacity(border_click, op)
+        opacity_disabled = tp.get_opacity(tid, 'disabled', 1.0)
+
+    # Always apply disabled opacity (theme value or default 0.6)
+    bg_disabled = _apply_opacity(bg_disabled, opacity_disabled)
+    border_disabled = _apply_opacity(border_disabled, opacity_disabled)
 
     exporter.font_sizes.add(font_size)
     text_style_id = _get_or_create_color_style(exporter, text_color)
@@ -547,6 +574,8 @@ def _handle_button(exporter, elem, final_x, final_y, buttons, container_width, p
         'border_hover': border_hover,
         'bg_click': bg_click,
         'border_click': border_click,
+        'bg_disabled': bg_disabled,
+        'border_disabled': border_disabled,
         'border_size': border_size,
         # Focus graph: resolved to indices by resolve_button_focus(), -1 = no link
         'focus_up_key':    elem.get('focusUp'),
@@ -1128,19 +1157,14 @@ def write_button_c(exporter):
         canvas_button_arrays.append(f'#define {count_def} {len(buttons)}')
         canvas_button_arrays.append(f'static const UIButtonDef g_{safe_canvas}_button_defs[{count_def}] = {{')
         for btn in buttons:
-            def _hex_to_rgba(h):
-                h = h.lstrip('#')
-                if len(h) == 6:
-                    h += 'ff'
-                r, g, b, a = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), int(h[6:8], 16)
-                return r, g, b, a
-
-            bg = _hex_to_rgba(btn.get('bg_color', '#262833'))
-            bd = _hex_to_rgba(btn.get('border_color', '#1f2028'))
-            hbg = _hex_to_rgba(btn.get('hover_bg_color', '#2b2b33'))
-            hbd = _hex_to_rgba(btn.get('hover_border_color', '#ef6413'))
-            cbg = _hex_to_rgba(btn.get('click_bg_color', '#343746'))
-            cbd = _hex_to_rgba(btn.get('click_border_color', '#ffffff'))
+            bg = btn.get('bg_default', (38, 40, 51, 255))
+            bd = btn.get('border_default', (31, 32, 40, 255))
+            hbg = btn.get('bg_hover', (43, 43, 51, 255))
+            hbd = btn.get('border_hover', (239, 100, 19, 255))
+            cbg = btn.get('bg_click', (52, 55, 70, 255))
+            cbd = btn.get('border_click', (255, 255, 255, 255))
+            dbg = btn.get('bg_disabled', (38, 40, 51, 153))
+            dbd = btn.get('border_disabled', (31, 32, 40, 153))
 
             text_esc = btn.get('text', '').replace('\\', '\\\\').replace('"', '\\"')
             visible = 'true' if btn.get('visible', True) else 'false'
@@ -1156,6 +1180,8 @@ def write_button_c(exporter):
                 f'{hbd[0]}, {hbd[1]}, {hbd[2]}, {hbd[3]}, '
                 f'{cbg[0]}, {cbg[1]}, {cbg[2]}, {cbg[3]}, '
                 f'{cbd[0]}, {cbd[1]}, {cbd[2]}, {cbd[3]}, '
+                f'{dbg[0]}, {dbg[1]}, {dbg[2]}, {dbg[3]}, '
+                f'{dbd[0]}, {dbd[1]}, {dbd[2]}, {dbd[3]}, '
                 f'{btn.get("border_size", 2)}, '
                 f'"{text_esc}", {btn.get("font_id", 0)}, {btn.get("font_baseline_offset", 20)}, '
                 f'{btn.get("text_style_id", 0)}, {btn.get("hover_text_style_id", 0)}, '

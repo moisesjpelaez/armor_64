@@ -291,6 +291,17 @@ class KouiThemeParser:
         except (ValueError, TypeError):
             return default
 
+    def get_opacity(self, tID: str, state: str = 'default', default: float = 1.0) -> float:
+        """Return opacity for *tID* in *state* (0.0\u20131.0)."""
+        if state == 'default':
+            style = self.resolved.get(tID, {})
+        else:
+            style = self._get_effective_style(tID, state)
+        try:
+            return float(style.get('opacity', default))
+        except (ValueError, TypeError):
+            return default
+
 
     def parse_hex_color(hex_color: str) -> tuple:
         """Parse Koui hex color (#RRGGBB or #RRGGBBAA) to (r, g, b, a) tuple (0-255)."""
