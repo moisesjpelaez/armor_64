@@ -8,7 +8,7 @@ Supported features:
   - cameras
   - directional lights
   - transitions (using `Scene.setActive`)
-  - parent/child hierarchy (wip)
+  - parent/child hierarchy
 - Objects with Traits:
   - `Transform.translate`
   - `Transform.rotate`
@@ -23,11 +23,13 @@ Supported features:
 - UI ([Koui Editor](https://github.com/moisesjpelaez/koui_editor)):
   - labels (font family, text color and font size)
   - image panels
+  - panels
+  - buttons
 - Audio ([Aura](https://github.com/MoritzBrueckner/aura))
 - Render2D (`kha.graphics2.Graphics`):
   - fillRect
   - color
-- Animation actions (wip)
+- Animation actions (testing)
 
 ## Pre-requisites
 - Windows 11
