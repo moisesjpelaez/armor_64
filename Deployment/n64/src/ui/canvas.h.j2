@@ -39,10 +39,12 @@ typedef struct {{
     uint8_t child_label_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t child_button_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t child_panel_indices[UI_MAX_GROUP_CHILDREN];
+    uint8_t child_group_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t num_child_images;
     uint8_t num_child_labels;
     uint8_t num_child_buttons;
     uint8_t num_child_panels;
+    uint8_t num_child_groups;
     bool visible;
 }} UIGroup;
 #endif // UI_GROUP_COUNT > 0

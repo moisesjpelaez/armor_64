@@ -257,27 +257,40 @@ def _calc_element_alignment(anchor, elem_width, container_width, final_x, json_a
         return final_x, 0, 0
 
 
-def _snapshot_child_counts(labels, images, buttons, panels):
+def _snapshot_child_counts(labels, images, buttons, panels, groups=None):
     """Snapshot current list lengths before processing a child element."""
-    return len(images), len(labels), len(buttons), len(panels)
+    return len(images), len(labels), len(buttons), len(panels), len(groups) if groups is not None else 0
 
 
-def _append_child_indices(group_data, labels, images, buttons, panels, snapshot):
-    """Append indices for elements added since snapshot to the group's child lists."""
-    img_start, lbl_start, btn_start, pnl_start = snapshot
-    for i in range(img_start, len(images)):
-        group_data['child_image_indices'].append(i)
-    for i in range(lbl_start, len(labels)):
-        group_data['child_label_indices'].append(i)
-    for i in range(btn_start, len(buttons)):
-        group_data['child_button_indices'].append(i)
-    for i in range(pnl_start, len(panels)):
-        group_data['child_panel_indices'].append(i)
+def _append_child_indices(group_data, labels, images, buttons, panels, groups, snapshot):
+    """Append indices for elements added since snapshot to the group's child lists.
+
+    If the child created sub-groups, those primitives belong to the sub-group,
+    so we only add the sub-group index to child_group_indices instead.
+    """
+    img_start, lbl_start, btn_start, pnl_start, grp_start = snapshot
+    new_groups = len(groups) - grp_start if groups is not None else 0
+
+    if new_groups > 0:
+        # Child created sub-group(s); the first new one is the direct child group.
+        # Primitives belong to the sub-group, not to us.
+        group_data['child_group_indices'].append(grp_start)
+    else:
+        # Direct primitive child — add to our child lists
+        for i in range(img_start, len(images)):
+            group_data['child_image_indices'].append(i)
+        for i in range(lbl_start, len(labels)):
+            group_data['child_label_indices'].append(i)
+        for i in range(btn_start, len(buttons)):
+            group_data['child_button_indices'].append(i)
+        for i in range(pnl_start, len(panels)):
+            group_data['child_panel_indices'].append(i)
 
 
 def _create_group_with_children(exporter, elem, children, final_x, final_y,
                                  elem_by_key, children_by_parent,
                                  labels, images, buttons, panels, groups, elements,
+                                 is_root=False,
                                  parent_path: str = ""):
     """Create a group element and process its children, tracking indices."""
     group_index = len(groups)
@@ -291,17 +304,22 @@ def _create_group_with_children(exporter, elem, children, final_x, final_y,
         'child_label_indices': [],
         'child_button_indices': [],
         'child_panel_indices': [],
+        'child_group_indices': [],
     }
 
-    # Add to elements array as a group
-    elements.append({'type': 'group', 'index': group_index})
+    # Reserve group slot immediately so child groups get correct indices
+    groups.append(group_data)
+
+    # Only root elements are added to the unified elements array
+    if is_root:
+        elements.append({'type': 'group', 'index': group_index})
 
     container_width = elem['width']
     container_height = elem['height']
 
     # Process children - track their indices for the group
     for child in children:
-        snap = _snapshot_child_counts(labels, images, buttons, panels)
+        snap = _snapshot_child_counts(labels, images, buttons, panels, groups)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
             container_width, container_height,
@@ -310,9 +328,7 @@ def _create_group_with_children(exporter, elem, children, final_x, final_y,
             is_root=False,
             parent_path=full_path
         )
-        _append_child_indices(group_data, labels, images, buttons, panels, snap)
-
-    groups.append(group_data)
+        _append_child_indices(group_data, labels, images, buttons, panels, groups, snap)
 
 
 def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y,
@@ -335,7 +351,11 @@ def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y
         'child_label_indices': [],
         'child_button_indices': [],
         'child_panel_indices': [],
+        'child_group_indices': [],
     }
+
+    # Reserve group slot immediately so child groups get correct indices
+    groups.append(group_data)
 
     if is_root:
         elements.append({'type': 'group', 'index': group_index})
@@ -357,7 +377,7 @@ def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y
         else:
             cell_x, cell_y = cell_width * idx, 0
 
-        snap = _snapshot_child_counts(labels, images, buttons, panels)
+        snap = _snapshot_child_counts(labels, images, buttons, panels, groups)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
             cell_width, cell_height,
@@ -366,9 +386,7 @@ def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y
             is_root=False,
             parent_path=full_path
         )
-        _append_child_indices(group_data, labels, images, buttons, panels, snap)
-
-    groups.append(group_data)
+        _append_child_indices(group_data, labels, images, buttons, panels, groups, snap)
 
 
 def _handle_grid_layout(exporter, elem, children, final_x, final_y,
@@ -391,7 +409,11 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
         'child_label_indices': [],
         'child_button_indices': [],
         'child_panel_indices': [],
+        'child_group_indices': [],
     }
+
+    # Reserve group slot immediately so child groups get correct indices
+    groups.append(group_data)
 
     if is_root:
         elements.append({'type': 'group', 'index': group_index})
@@ -412,7 +434,7 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
         cell_x = cell_width * col
         cell_y = cell_height * row
 
-        snap = _snapshot_child_counts(labels, images, buttons, panels)
+        snap = _snapshot_child_counts(labels, images, buttons, panels, groups)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
             cell_width, cell_height,
@@ -421,9 +443,7 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
             is_root=False,
             parent_path=full_path
         )
-        _append_child_indices(group_data, labels, images, buttons, panels, snap)
-
-    groups.append(group_data)
+        _append_child_indices(group_data, labels, images, buttons, panels, groups, snap)
 
 
 def _handle_label(exporter, elem, final_x, final_y, labels, container_width, parent_path: str = ""):
@@ -767,6 +787,7 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
             _create_group_with_children(exporter, elem, children, final_x, final_y,
                                          elem_by_key, children_by_parent,
                                          labels, images, buttons, panels, groups, elements,
+                                         is_root=is_root,
                                          parent_path=parent_path)
         return
 
@@ -792,6 +813,7 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
         _create_group_with_children(exporter, elem, children, final_x, final_y,
                                      elem_by_key, children_by_parent,
                                      labels, images, buttons, panels, groups, elements,
+                                     is_root=True,
                                      parent_path=parent_path)
         return
 
@@ -1347,7 +1369,8 @@ def write_canvas_h(exporter):
                 len(group.get('child_image_indices', [])),
                 len(group.get('child_label_indices', [])),
                 len(group.get('child_button_indices', [])),
-                len(group.get('child_panel_indices', []))
+                len(group.get('child_panel_indices', [])),
+                len(group.get('child_group_indices', []))
             )
             max_group_children = max(max_group_children, child_count)
 
@@ -1401,17 +1424,20 @@ def write_canvas_c(exporter):
             lbl_indices = group.get('child_label_indices', [])
             btn_indices = group.get('child_button_indices', [])
             pnl_indices = group.get('child_panel_indices', [])
-            max_ch = max(8, len(img_indices), len(lbl_indices), len(btn_indices), len(pnl_indices))
+            grp_indices = group.get('child_group_indices', [])
+            max_ch = max(8, len(img_indices), len(lbl_indices), len(btn_indices), len(pnl_indices), len(grp_indices))
             img_padded = list(img_indices[:max_ch]) + [0] * (max_ch - min(len(img_indices), max_ch))
             lbl_padded = list(lbl_indices[:max_ch]) + [0] * (max_ch - min(len(lbl_indices), max_ch))
             btn_padded = list(btn_indices[:max_ch]) + [0] * (max_ch - min(len(btn_indices), max_ch))
             pnl_padded = list(pnl_indices[:max_ch]) + [0] * (max_ch - min(len(pnl_indices), max_ch))
+            grp_padded = list(grp_indices[:max_ch]) + [0] * (max_ch - min(len(grp_indices), max_ch))
             img_str = ', '.join(str(i) for i in img_padded)
             lbl_str = ', '.join(str(i) for i in lbl_padded)
             btn_str = ', '.join(str(i) for i in btn_padded)
             pnl_str = ', '.join(str(i) for i in pnl_padded)
+            grp_str = ', '.join(str(i) for i in grp_padded)
             visible = 'true' if group.get('visible', True) else 'false'
-            canvas_group_arrays.append(f'    {{ {{ {img_str} }}, {{ {lbl_str} }}, {{ {btn_str} }}, {{ {pnl_str} }}, {len(img_indices)}, {len(lbl_indices)}, {len(btn_indices)}, {len(pnl_indices)}, {visible} }},')
+            canvas_group_arrays.append(f'    {{ {{ {img_str} }}, {{ {lbl_str} }}, {{ {btn_str} }}, {{ {pnl_str} }}, {{ {grp_str} }}, {len(img_indices)}, {len(lbl_indices)}, {len(btn_indices)}, {len(pnl_indices)}, {len(grp_indices)}, {visible} }},')
         canvas_group_arrays.append('};')
         canvas_group_arrays.append('')
 

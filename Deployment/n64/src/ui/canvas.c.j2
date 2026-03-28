@@ -43,10 +43,12 @@ typedef struct {{
     uint8_t child_label_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t child_button_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t child_panel_indices[UI_MAX_GROUP_CHILDREN];
+    uint8_t child_group_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t num_child_images;
     uint8_t num_child_labels;
     uint8_t num_child_buttons;
     uint8_t num_child_panels;
+    uint8_t num_child_groups;
     bool visible;
 }} UIGroupDef;
 #endif
@@ -101,10 +103,13 @@ static void load_groups(const UIGroupDef *defs, int count) {{
             group->child_button_indices[j] = def->child_button_indices[j];
         for (uint8_t j = 0; j < def->num_child_panels && j < UI_MAX_GROUP_CHILDREN; j++)
             group->child_panel_indices[j] = def->child_panel_indices[j];
+        for (uint8_t j = 0; j < def->num_child_groups && j < UI_MAX_GROUP_CHILDREN; j++)
+            group->child_group_indices[j] = def->child_group_indices[j];
         group->num_child_images  = def->num_child_images;
         group->num_child_labels  = def->num_child_labels;
         group->num_child_buttons = def->num_child_buttons;
         group->num_child_panels  = def->num_child_panels;
+        group->num_child_groups  = def->num_child_groups;
         group->visible = def->visible;
         if (g_canvas_group_count < UI_GROUP_COUNT)
             g_canvas_groups[g_canvas_group_count++] = group;
@@ -112,6 +117,8 @@ static void load_groups(const UIGroupDef *defs, int count) {{
 }}
 
 static void group_set_visible(UIGroup *group, bool visible);
+static void group_propagate(UIGroup *group, bool parent_effective);
+static void canvas_recompute_visibility(void);
 static void apply_initial_group_visibility(void);
 #endif
 
@@ -237,36 +244,53 @@ UIGroup* canvas_get_group(int index) {{
     return NULL;
 }}
 
-static void group_set_visible(UIGroup *group, bool visible) {{
+static void group_propagate(UIGroup *group, bool parent_effective) {{
     if (!group) return;
-    group->visible = visible;
+    bool eff = group->visible && parent_effective;
     for (uint8_t i = 0; i < group->num_child_images; i++) {{
         UIImage *img = canvas_get_image(group->child_image_indices[i]);
-        if (img) img->visible = visible;
+        if (img) img->visible = eff;
     }}
     for (uint8_t i = 0; i < group->num_child_labels; i++) {{
         UILabel *lbl = canvas_get_label(group->child_label_indices[i]);
-        if (lbl) lbl->visible = visible;
+        if (lbl) lbl->visible = eff;
     }}
     for (uint8_t i = 0; i < group->num_child_buttons; i++) {{
         UIButton *btn = canvas_get_button(group->child_button_indices[i]);
-        if (btn) btn->visible = visible;
+        if (btn) btn->visible = eff;
     }}
     for (uint8_t i = 0; i < group->num_child_panels; i++) {{
         UIPanel *pnl = canvas_get_panel(group->child_panel_indices[i]);
-        if (pnl) pnl->visible = visible;
+        if (pnl) pnl->visible = eff;
     }}
+    for (uint8_t i = 0; i < group->num_child_groups; i++) {{
+        UIGroup *child = canvas_get_group(group->child_group_indices[i]);
+        if (child) group_propagate(child, eff);
+    }}
+}}
+
+static void group_set_visible(UIGroup *group, bool visible) {{
+    if (!group) return;
+    group->visible = visible;
+    canvas_recompute_visibility();
 }}
 
 void ui_group_set_visible(UIGroup *group, bool visible) {{
     group_set_visible(group, visible);
 }}
 
-static void apply_initial_group_visibility(void) {{
-    for (int i = 0; i < g_canvas_group_count; i++) {{
-        UIGroup *g = g_canvas_groups[i];
-        if (g) group_set_visible(g, g->visible);
+static void canvas_recompute_visibility(void) {{
+    for (int i = 0; i < g_canvas_element_count; i++) {{
+        UIElement *e = &g_canvas_elements[i];
+        if (e->type == UI_ELEM_GROUP) {{
+            UIGroup *g = canvas_get_group(e->index);
+            if (g) group_propagate(g, true);
+        }}
     }}
+}}
+
+static void apply_initial_group_visibility(void) {{
+    canvas_recompute_visibility();
 }}
 #endif // UI_GROUP_COUNT > 0
 
@@ -290,7 +314,10 @@ void canvas_element_set_visible(int index, bool visible) {{
 #if UI_GROUP_COUNT > 0
     }} else if (elem->type == UI_ELEM_GROUP) {{
         UIGroup *grp = canvas_get_group(elem->index);
-        if (grp) group_set_visible(grp, visible);
+        if (grp) {{
+            grp->visible = visible;
+            canvas_recompute_visibility();
+        }}
 #endif
     }}
 }}
