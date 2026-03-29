@@ -5,8 +5,8 @@
  * Replicates Koui Button + EventHandler behavior 1:1:
  *
  *   Focus navigation (EventHandler.onGamepadButton / onGamepadAxis):
- *   - DPad pressed (value==1.0): if no focus → focusFirstElement(); else navigate focus graph
- *   - Analog stick: threshold-crossing detection (previous value crosses ±0.5) + 0.2s cooldown
+ *   - DPad and analog stick directions move focus immediately on press/engage
+ *   - Held directions repeat with an initial delay and a repeat period
  *   - Only DPad/stick directions navigate; A button does NOT navigate
  *   - No auto-focus on scene init — only on first directional input
  *
@@ -30,6 +30,9 @@
 
 #if UI_BUTTON_COUNT > 0
 
+#define UI_NAV_REPEAT_DELAY 0.35f
+#define UI_NAV_REPEAT_PERIOD 0.12f
+
 // ============================================================================
 // Static pool
 // ============================================================================
@@ -41,6 +44,12 @@ static int      g_focused_index = -1;  // -1 = no button focused
 // Analog stick previous values for threshold-crossing detection
 static float g_stick_prev_x = 0.0f;
 static float g_stick_prev_y = 0.0f;
+
+// Direction hold tracking for delayed auto-repeat
+static int   g_dpad_direction = -1;
+static float g_dpad_repeat_timer = 0.0f;
+static int   g_stick_direction = -1;
+static float g_stick_repeat_timer = 0.0f;
 
 // ============================================================================
 // Compile-time definition struct
@@ -146,6 +155,10 @@ void button_scene_init(SceneId scene_id) {{
     g_focused_index = -1;
     g_stick_prev_x  = 0.0f;
     g_stick_prev_y  = 0.0f;
+    g_dpad_direction = -1;
+    g_dpad_repeat_timer = 0.0f;
+    g_stick_direction = -1;
+    g_stick_repeat_timer = 0.0f;
 }}
 
 // ============================================================================
@@ -186,6 +199,21 @@ static void focus_first_element(void) {{
     }}
 }}
 
+static void navigate_direction(int dir) {{
+    if (dir < 0) return;
+
+    if (g_focused_index < 0) {{
+        focus_first_element();
+        return;
+    }}
+
+    UIButton *cur = &g_buttons[g_focused_index];
+    if      (dir == 0 && cur->focus_up    >= 0) set_focus(cur->focus_up);
+    else if (dir == 1 && cur->focus_down  >= 0) set_focus(cur->focus_down);
+    else if (dir == 2 && cur->focus_left  >= 0) set_focus(cur->focus_left);
+    else if (dir == 3 && cur->focus_right >= 0) set_focus(cur->focus_right);
+}}
+
 // ============================================================================
 // Input update — replicates Koui EventHandler.onGamepadButton + onGamepadAxis
 // ============================================================================
@@ -217,66 +245,72 @@ void button_update(float dt) {{
         }}
     }}
 
-    // === DPad navigation (Koui: onGamepadButton value==1.0) ===
-    // Only fires on first frame of press (input_started)
-    int dpad_dir = -1;  // -1 = no direction
-    if (input_started(N64_BTN_DUP))    dpad_dir = 0;  // up
-    if (input_started(N64_BTN_DDOWN))  dpad_dir = 1;  // down
-    if (input_started(N64_BTN_DLEFT))  dpad_dir = 2;  // left
-    if (input_started(N64_BTN_DRIGHT)) dpad_dir = 3;  // right
+    // === DPad navigation with delayed hold repeat ===
+    int dpad_pressed_dir = -1;
+    if (input_started(N64_BTN_DUP))    dpad_pressed_dir = 0;
+    if (input_started(N64_BTN_DDOWN))  dpad_pressed_dir = 1;
+    if (input_started(N64_BTN_DLEFT))  dpad_pressed_dir = 2;
+    if (input_started(N64_BTN_DRIGHT)) dpad_pressed_dir = 3;
 
-    if (dpad_dir >= 0) {{
-        if (g_focused_index < 0) {{
-            // Koui: if (elemFocused == null && isDPad) → focusFirstElement()
-            focus_first_element();
+    int dpad_down_dir = -1;
+    if (input_down(N64_BTN_DUP))    dpad_down_dir = 0;
+    if (input_down(N64_BTN_DDOWN))  dpad_down_dir = 1;
+    if (input_down(N64_BTN_DLEFT))  dpad_down_dir = 2;
+    if (input_down(N64_BTN_DRIGHT)) dpad_down_dir = 3;
+
+    if (dpad_pressed_dir >= 0) {{
+        navigate_direction(dpad_pressed_dir);
+        g_dpad_direction = dpad_pressed_dir;
+        g_dpad_repeat_timer = UI_NAV_REPEAT_DELAY;
+    }}
+    else if (g_dpad_direction >= 0) {{
+        if (dpad_down_dir != g_dpad_direction) {{
+            if (dpad_down_dir >= 0) {{
+                navigate_direction(dpad_down_dir);
+                g_dpad_direction = dpad_down_dir;
+                g_dpad_repeat_timer = UI_NAV_REPEAT_DELAY;
+            }} else {{
+                g_dpad_direction = -1;
+            }}
         }} else {{
-            // Koui: navigate focus graph, then fire ButtonDown on focused
-            UIButton *cur = &g_buttons[g_focused_index];
-            if      (dpad_dir == 0 && cur->focus_up    >= 0) set_focus(cur->focus_up);
-            else if (dpad_dir == 1 && cur->focus_down  >= 0) set_focus(cur->focus_down);
-            else if (dpad_dir == 2 && cur->focus_left  >= 0) set_focus(cur->focus_left);
-            else if (dpad_dir == 3 && cur->focus_right >= 0) set_focus(cur->focus_right);
+            g_dpad_repeat_timer -= dt;
+            if (g_dpad_repeat_timer <= 0.0f) {{
+                navigate_direction(g_dpad_direction);
+                g_dpad_repeat_timer += UI_NAV_REPEAT_PERIOD;
+            }}
         }}
     }}
 
-    // === Analog stick navigation (Koui: onGamepadAxis) ===
-    // Threshold-crossing detection: only trigger when previous was inside ±0.5
-    // and current crosses outside ±0.5, plus 0.2s cooldown
-    static float axis_wait = 0.0f;
+    // === Analog stick navigation with delayed hold repeat ===
     float sx = input_stick_x();
     float sy = input_stick_y();
-    // N64: stick_y positive = up, Koui axis 1: positive = up, negative = down
-
     int axis_dir = -1;
-    if (axis_wait <= 0.0f) {{
-        // Vertical: check threshold crossing (Koui: axis == 1)
-        // Koui: value > 0.5 → DPAD_UP, value < -0.5 → DPAD_DOWN
-        if (sy > 0.5f && g_stick_prev_y <= 0.5f)        axis_dir = 0;  // up
-        else if (sy < -0.5f && g_stick_prev_y >= -0.5f)  axis_dir = 1;  // down
-        // Horizontal: check threshold crossing (Koui: axis == 0)
-        else if (sx < -0.5f && g_stick_prev_x >= -0.5f)  axis_dir = 2;  // left
-        else if (sx > 0.5f && g_stick_prev_x <= 0.5f)    axis_dir = 3;  // right
-    }}
+    if (sy > 0.5f) axis_dir = 0;
+    else if (sy < -0.5f) axis_dir = 1;
+    else if (sx < -0.5f) axis_dir = 2;
+    else if (sx > 0.5f) axis_dir = 3;
 
-    if (axis_dir >= 0) {{
-        if (g_focused_index < 0) {{
-            focus_first_element();
+    if (axis_dir != g_stick_direction) {{
+        if (axis_dir >= 0) {{
+            navigate_direction(axis_dir);
+            g_stick_direction = axis_dir;
+            g_stick_repeat_timer = UI_NAV_REPEAT_DELAY;
         }} else {{
-            UIButton *cur = &g_buttons[g_focused_index];
-            if      (axis_dir == 0 && cur->focus_up    >= 0) set_focus(cur->focus_up);
-            else if (axis_dir == 1 && cur->focus_down  >= 0) set_focus(cur->focus_down);
-            else if (axis_dir == 2 && cur->focus_left  >= 0) set_focus(cur->focus_left);
-            else if (axis_dir == 3 && cur->focus_right >= 0) set_focus(cur->focus_right);
+            g_stick_direction = -1;
         }}
-        axis_wait = 0.2f;
+    }}
+    else if (g_stick_direction >= 0) {{
+        g_stick_repeat_timer -= dt;
+        if (g_stick_repeat_timer <= 0.0f) {{
+            navigate_direction(g_stick_direction);
+            g_stick_repeat_timer += UI_NAV_REPEAT_PERIOD;
+        }}
     }}
 
     // Update previous stick values (Koui: always update previous regardless of deadzone)
     g_stick_prev_x = sx;
     g_stick_prev_y = sy;
 
-    // Decrement cooldown
-    if (axis_wait > 0.0f) axis_wait -= dt;
 }}
 
 // ============================================================================
@@ -425,6 +459,10 @@ void button_clear(void) {{
     g_button_count  = 0;
     g_stick_prev_x  = 0.0f;
     g_stick_prev_y  = 0.0f;
+    g_dpad_direction = -1;
+    g_dpad_repeat_timer = 0.0f;
+    g_stick_direction = -1;
+    g_stick_repeat_timer = 0.0f;
     memset(g_buttons, 0, sizeof(g_buttons));
 }}
 
