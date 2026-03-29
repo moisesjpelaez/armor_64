@@ -41,10 +41,6 @@ static UIButton g_buttons[UI_MAX_BUTTONS];
 static int      g_button_count  = 0;
 static int      g_focused_index = -1;  // -1 = no button focused
 
-// Analog stick previous values for threshold-crossing detection
-static float g_stick_prev_x = 0.0f;
-static float g_stick_prev_y = 0.0f;
-
 // Direction hold tracking for delayed auto-repeat
 static int   g_dpad_direction = -1;
 static float g_dpad_repeat_timer = 0.0f;
@@ -153,8 +149,6 @@ void button_scene_init(SceneId scene_id) {{
     }}
 
     g_focused_index = -1;
-    g_stick_prev_x  = 0.0f;
-    g_stick_prev_y  = 0.0f;
     g_dpad_direction = -1;
     g_dpad_repeat_timer = 0.0f;
     g_stick_direction = -1;
@@ -306,11 +300,6 @@ void button_update(float dt) {{
             g_stick_repeat_timer += UI_NAV_REPEAT_PERIOD;
         }}
     }}
-
-    // Update previous stick values (Koui: always update previous regardless of deadzone)
-    g_stick_prev_x = sx;
-    g_stick_prev_y = sy;
-
 }}
 
 // ============================================================================
@@ -457,8 +446,6 @@ void button_clear(void) {{
     }}
     g_focused_index = -1;
     g_button_count  = 0;
-    g_stick_prev_x  = 0.0f;
-    g_stick_prev_y  = 0.0f;
     g_dpad_direction = -1;
     g_dpad_repeat_timer = 0.0f;
     g_stick_direction = -1;
