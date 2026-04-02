@@ -99,4 +99,7 @@
         return map->count; \
     }
 
+// Default generic string->string map (used for Haxe Map<String, String> and similar)
+ARM_MAP_DECLARE(const char*, ArmStringMap, 16)
+
 #endif // ARM_MAP_H
