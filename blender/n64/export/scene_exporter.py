@@ -148,8 +148,11 @@ def build_scene_data(exporter, scene):
                     mesh_count += 1
                 elif obj.instance_type == 'COLLECTION' and obj.instance_collection is not None:
                     mesh_count += sum(1 for cobj in obj.instance_collection.all_objects if cobj.type == 'MESH')
-            groups[collection.name] = {
-                'original_name': collection.name,
+            # Use original name before Blender's dedup rename (e.g. "Gems.001" → "Gems")
+            # so runtime lookups from Haxe code match the expected group name.
+            original_name = exporter.collection_original_names.get(collection.name, collection.name)
+            groups[original_name] = {
+                'original_name': original_name,
                 'count': mesh_count
             }
 

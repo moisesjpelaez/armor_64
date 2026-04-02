@@ -84,6 +84,11 @@ class N64Exporter:
         self.color_style_map = {}
         self.font_id_map = {}
 
+        # External blend state (for arm_external_blends_path support)
+        self.external_scene_names = []   # Appended scene names (for cleanup)
+        self.external_blend_paths = []   # Source .blend file paths
+        self.collection_original_names = {}  # {renamed: original} for Blender dedup renames
+
     # -------------------------------------------------------------------------
     # Class Methods (Entry Points)
     # -------------------------------------------------------------------------
@@ -118,6 +123,9 @@ class N64Exporter:
         self.trait_info = codegen.get_trait_info()
         if not self.trait_info.get('traits'):
             log.warn("No traits found in n64_traits.json. Make sure arm_target_n64 is defined during build.")
+
+        # Load external blend scenes (append with suffix naming)
+        self._load_external_blends()
 
         # Phase 0: Prepare linked objects (create temp local copies for Fast64)
         self.linked_objects = linked_export.prepare_linked_for_export()
@@ -208,6 +216,11 @@ class N64Exporter:
                 linked_export.cleanup_linked_export()
                 log.info('Cleaned up linked object temp data')
 
+            # Cleanup external blend scenes
+            if self.external_scene_names:
+                self._clear_external_blends()
+                log.info('Cleaned up external blend data')
+
         log.info('N64 export completed.')
 
     def publish(self):
@@ -244,6 +257,113 @@ class N64Exporter:
         ]
         for d in dirs:
             os.makedirs(os.path.join(build_dir, d), exist_ok=True)
+
+    # -------------------------------------------------------------------------
+    # External Blend Loading
+    # -------------------------------------------------------------------------
+
+    def _load_external_blends(self):
+        """Append scenes from external blend files.
+
+        Uses the same arm_external_blends_path World property as Armory's
+        Krom/HTML5 pipeline. Scenes are appended (not linked) so their
+        local objects can be exported via GLTF and have F3D materials
+        converted. Each appended scene is renamed to SceneName_BlendBasename
+        to match Armory's naming convention.
+
+        Linked objects within external scenes (instance collections from
+        other blend files) are preserved as library references and handled
+        by the existing linked_export pipeline — they are NOT duplicated.
+        """
+        wrd = bpy.data.worlds['Arm']
+
+        if not hasattr(wrd, 'arm_external_blends_path'):
+            return
+
+        external_path = getattr(wrd, 'arm_external_blends_path', '')
+        if not external_path or not external_path.strip():
+            return
+
+        abs_path = bpy.path.abspath(external_path.strip())
+        if not os.path.exists(abs_path):
+            log.warn(f'External blends path not found: {abs_path}')
+            return
+
+        existing_scenes = set(s.name for s in bpy.data.scenes)
+
+        for root, dirs, files in os.walk(abs_path):
+            dirs.sort()  # Deterministic directory traversal
+            for filename in sorted(files):
+                if not filename.endswith('.blend'):
+                    continue
+                # Skip backup files
+                if filename.endswith('.blend1') or filename.endswith('.blend2'):
+                    continue
+
+                blend_path = os.path.join(root, filename)
+                blend_basename = filename.replace('.blend', '')
+
+                try:
+                    # Track existing collections before append to detect renames
+                    existing_collections = set(c.name for c in bpy.data.collections)
+
+                    with bpy.data.libraries.load(blend_path, link=False) as (data_from, data_to):
+                        data_to.scenes = list(data_from.scenes)
+
+                    self.external_blend_paths.append(blend_path)
+
+                    # Detect Blender dedup renames (e.g. "Gems" → "Gems.001")
+                    for coll in bpy.data.collections:
+                        if coll.name not in existing_collections:
+                            dot_idx = coll.name.rfind('.')
+                            if dot_idx > 0:
+                                suffix = coll.name[dot_idx + 1:]
+                                base = coll.name[:dot_idx]
+                                if suffix.isdigit() and len(suffix) >= 3 and base in existing_collections:
+                                    self.collection_original_names[coll.name] = base
+
+                    for scn in data_to.scenes:
+                        if scn is None:
+                            continue
+                        # Rename to match Armory convention: SceneName_BlendBasename
+                        suffixed_name = scn.name + '_' + blend_basename
+                        scn.name = suffixed_name
+                        self.external_scene_names.append(scn.name)
+                        existing_scenes.add(scn.name)
+                        log.info(f'Appended external scene: {scn.name} from {filename}')
+
+                except Exception as e:
+                    log.error(f'Failed to load external blend {blend_path}: {e}')
+
+    def _clear_external_blends(self):
+        """Remove appended external blend scenes and clean up orphaned data."""
+        for scene_name in self.external_scene_names:
+            scn = bpy.data.scenes.get(scene_name)
+            if scn:
+                try:
+                    bpy.data.scenes.remove(scn, do_unlink=True)
+                except Exception as e:
+                    log.error(f'Failed to remove external scene {scene_name}: {e}')
+
+        # Remove orphaned library references from appended data
+        for lib in list(bpy.data.libraries):
+            try:
+                if lib.users == 0:
+                    bpy.data.libraries.remove(lib)
+            except Exception:
+                pass
+
+        try:
+            bpy.ops.outliner.orphans_purge(
+                do_local_ids=True,
+                do_linked_ids=True,
+                do_recursive=True
+            )
+        except Exception:
+            pass
+
+        self.external_scene_names = []
+        self.external_blend_paths = []
 
     # -------------------------------------------------------------------------
     # Material Conversion
