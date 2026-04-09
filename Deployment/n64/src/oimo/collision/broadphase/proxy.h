@@ -15,13 +15,15 @@ typedef struct OimoProxy {
     OimoVec3 _aabbMax;
 
     int _id;                    // Unique proxy ID
+    int _isStatic;              // True if parent body is static (for broadphase filtering)
 
-        void* userData;
+    void* userData;
 } OimoProxy;
 
 static inline void oimo_proxy_init(OimoProxy* proxy, void* userData, int id) {
     proxy->userData = userData;
     proxy->_id = id;
+    proxy->_isStatic = 0;
     proxy->_prev = NULL;
     proxy->_next = NULL;
     proxy->_aabbMin = oimo_vec3_zero();

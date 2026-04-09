@@ -77,6 +77,7 @@ class N64Exporter:
         self.max_physics_bodies = 0      # Max across all scenes
         self.max_mesh_colliders = 0      # Max across all scenes
         self.max_contact_bodies = 0      # Max across all scenes
+        self.max_mesh_triangles = 0      # Max triangles in any single mesh collider
 
         # UI state
         self.ui_canvas_data = {}

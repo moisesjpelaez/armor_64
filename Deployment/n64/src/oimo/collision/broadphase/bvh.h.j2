@@ -12,11 +12,9 @@
 extern "C" {
 #endif
 
-// Maximum triangles in a static mesh (N64 memory constraint)
-#define OIMO_BVH_MAX_TRIANGLES 256
-
-// Maximum depth of BVH tree (log2(256) + some margin)
-#define OIMO_BVH_MAX_DEPTH 12
+// BVH limits (computed from scene mesh colliders at export time)
+#define OIMO_BVH_MAX_TRIANGLES {max_bvh_triangles}
+#define OIMO_BVH_MAX_DEPTH {max_bvh_depth}
 
 // Maximum triangles per leaf before splitting
 #define OIMO_BVH_LEAF_THRESHOLD 4

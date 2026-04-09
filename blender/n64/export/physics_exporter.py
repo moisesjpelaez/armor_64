@@ -5,6 +5,7 @@ This module provides functions for copying and configuring the Oimo physics
 engine files for N64 export.
 """
 
+import math
 import os
 
 import arm.utils
@@ -63,10 +64,17 @@ def write_physics(exporter):
         exporter.max_contact_bodies, 'max_contact_bodies', 16, buffer=4, minimum=8
     )
 
+    # Calculate BVH limits from actual mesh data
+    # max_mesh_triangles is the max triangle count in any single mesh collider
+    max_bvh_triangles = max(exporter.max_mesh_triangles, 4)  # Minimum 4
+    max_bvh_depth = max(int(math.ceil(math.log2(max(max_bvh_triangles, 2)))) + 2, 4)
+
     # Log calculated values
     print(f"  Physics limits: bodies={max_physics_bodies} (from {exporter.max_physics_bodies}), "
           f"mesh_colliders={max_mesh_colliders} (from {exporter.max_mesh_colliders}), "
-          f"contact_bodies={max_contact_bodies} (from {exporter.max_contact_bodies})")
+          f"contact_bodies={max_contact_bodies} (from {exporter.max_contact_bodies}), "
+          f"bvh_triangles={max_bvh_triangles} (from {exporter.max_mesh_triangles}), "
+          f"bvh_depth={max_bvh_depth}")
 
     # Render physics.h template (after copy_dir so it doesn't get deleted)
     tmpl_path = os.path.join(arm.utils.get_n64_deployment_path(), 'src', 'oimo', 'physics.h.j2')
@@ -75,7 +83,24 @@ def write_physics(exporter):
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl_content = f.read()
 
-    output = tmpl_content.format(max_mesh_colliders=max_mesh_colliders)
+    output = tmpl_content.format(
+        max_mesh_colliders=max_mesh_colliders
+    )
+
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write(output)
+
+    # Render bvh.h.j2 template (uses .replace() to avoid escaping C braces)
+    tmpl_path = os.path.join(arm.utils.get_n64_deployment_path(), 'src', 'oimo',
+                             'collision', 'broadphase', 'bvh.h.j2')
+    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'oimo',
+                            'collision', 'broadphase', 'bvh.h')
+
+    with open(tmpl_path, 'r', encoding='utf-8') as f:
+        tmpl_content = f.read()
+
+    output = tmpl_content.replace('{max_bvh_triangles}', str(max_bvh_triangles))
+    output = output.replace('{max_bvh_depth}', str(max_bvh_depth))
 
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(output)

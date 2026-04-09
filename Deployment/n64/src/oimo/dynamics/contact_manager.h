@@ -146,6 +146,12 @@ static inline void oimo_contact_manager_create_contacts(OimoContactManager* cm) 
 
         // If not found, create new contact
         if (!found) {
+            OimoDetector* detector = oimo_collision_matrix_get_detector(&cm->_collisionMatrix, s1->_geom->type, s2->_geom->type);
+            // Skip unsupported geometry combos (e.g. mesh-mesh) - no detector available
+            if (detector == NULL) {
+                pp = pp->_next;
+                continue;
+            }
             OimoContact* c = oimo_contact_manager_alloc_contact(cm);
             if (c != NULL) {
                 // Add to contact list
@@ -159,7 +165,6 @@ static inline void oimo_contact_manager_create_contacts(OimoContactManager* cm) 
                 cm->_contactListLast = c;
 
                 c->_latest = true;
-                OimoDetector* detector = oimo_collision_matrix_get_detector(&cm->_collisionMatrix, s1->_geom->type, s2->_geom->type);
                 oimo_contact_attach(c, s1, s2, detector);
                 cm->_numContacts++;
             }

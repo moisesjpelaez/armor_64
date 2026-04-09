@@ -118,6 +118,7 @@ static inline OimoDetector* oimo_collision_matrix_get_detector(
     if (type1 == OIMO_GEOMETRY_STATIC_MESH && type2 == OIMO_GEOMETRY_CAPSULE) {
         return &matrix->mesh_capsule.base;
     }
+    // Static mesh vs static mesh: no detector (should never collide)
     return NULL;
 }
 
@@ -133,6 +134,11 @@ static inline bool oimo_collision_matrix_detect(
 
     int type1 = geom1->type;
     int type2 = geom2->type;
+
+    // Static mesh vs static mesh is never valid - skip immediately
+    if (type1 == OIMO_GEOMETRY_STATIC_MESH && type2 == OIMO_GEOMETRY_STATIC_MESH) {
+        return false;
+    }
 
     // Dispatch based on geometry types
     if (type1 == OIMO_GEOMETRY_SPHERE && type2 == OIMO_GEOMETRY_SPHERE) {

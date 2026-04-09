@@ -15,7 +15,7 @@
 #include <libdragon.h>
 #include <stdint.h>
 #include <t3d/t3d.h>
-#include "../oimo.h"
+#include "../physics.h"
 
 #ifdef __cplusplus
 extern "C" {

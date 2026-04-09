@@ -83,6 +83,9 @@ static inline void oimo_world_init(OimoWorld* world, OimoVec3* gravity) {
 // Add shape to broadphase
 static inline void oimo_world_add_shape(OimoWorld* world, OimoShape* shape) {
     shape->_proxy = oimo_broadphase_create_proxy(world->_broadPhase, shape, &shape->_aabb);
+    if (shape->_proxy != NULL && shape->_rigidBody != NULL) {
+        shape->_proxy->_isStatic = (shape->_rigidBody->_type == OIMO_RIGID_BODY_STATIC) ? 1 : 0;
+    }
     shape->_id = world->_shapeIdCount++;
     world->_numShapes++;
 }

@@ -134,6 +134,10 @@ static inline void oimo_broadphase_collect_pairs_bruteforce(OimoBroadPhase* bp) 
         OimoProxy* p2 = p1->_next;
         while (p2 != NULL) {
             bp->_testCount++;
+            if (p1->_isStatic && p2->_isStatic) {
+                p2 = p2->_next;
+                continue;
+            }
             if (oimo_broadphase_is_overlapping(p1, p2)) {
                 oimo_broadphase_pick_and_push_pair(bp, p1, p2);
             }

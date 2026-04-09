@@ -626,6 +626,9 @@ def _extract_rigid_body(exporter, obj, half_extents):
     elif rb_shape == "mesh":
         rigid_body_data["mesh_data"] = rb_mesh_data
         exporter.mesh_collider_count += 1  # Track mesh collider count
+        # Track max triangle count across all mesh colliders for BVH sizing
+        if rb_mesh_data and rb_mesh_data.get("num_triangles", 0) > exporter.max_mesh_triangles:
+            exporter.max_mesh_triangles = rb_mesh_data["num_triangles"]
     else:
         rigid_body_data["half_extents"] = rb_half_extents
 
