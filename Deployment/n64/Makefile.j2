@@ -9,7 +9,6 @@ GAME_TITLE := {game_title}
 ROM_NAME := {game_title}
 
 N64_CFLAGS += -std=gnu2x
-MKSPRITE_FLAGS += --format RGBA32
 
 src = \
     src/main.c \
@@ -61,6 +60,9 @@ filesystem/%.sprite: assets/%.png
 	@mkdir -p $(dir $@)
 	@echo "    [SPRITE] $@"
 	$(N64_MKSPRITE) $(MKSPRITE_FLAGS) -o filesystem "$<"
+
+# UI sprites use RGBA32 for smooth alpha on logos/images
+{ui_sprite_rules}
 
 # Font rules for each size variant
 {font_rules}

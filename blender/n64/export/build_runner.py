@@ -85,6 +85,9 @@ def write_makefile(exporter):
     # Generate font targets and rules for each size variant
     font_targets, font_rules = ui_exporter.generate_font_makefile_entries(exporter)
 
+    # Generate per-file sprite rules for UI images (RGBA32)
+    ui_sprite_rules = ui_exporter.generate_ui_sprite_rules(exporter)
+
     # Generate audio targets and rules
     audio_targets, audio_rules = audio_exporter.generate_audio_makefile_entries(exporter.exported_audio)
 
@@ -111,6 +114,7 @@ def write_makefile(exporter):
         audio_sources=audio_sources,
         font_targets=font_targets,
         font_rules=font_rules,
+        ui_sprite_rules=ui_sprite_rules,
         audio_targets=audio_targets,
         audio_rules=audio_rules
     )

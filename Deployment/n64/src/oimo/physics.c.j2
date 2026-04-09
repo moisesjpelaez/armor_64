@@ -247,6 +247,12 @@ bool physics_create_box_full(ArmObject* obj, int type, float hx, float hy, float
     BodySetupResult setup;
     if (!setup_body_common(obj, type, params, &setup)) return false;
 
+    // Clamp to minimum thickness to avoid div-by-zero on flat meshes (e.g. planes)
+    const float MIN_HALF_EXTENT = 0.01f;
+    if (hx < MIN_HALF_EXTENT) hx = MIN_HALF_EXTENT;
+    if (hy < MIN_HALF_EXTENT) hy = MIN_HALF_EXTENT;
+    if (hz < MIN_HALF_EXTENT) hz = MIN_HALF_EXTENT;
+
     oimo_box_geometry_init3(&g_geometries[setup.idx].box, hx, hy, hz);
     float density = params->mass / (8.0f * hx * hy * hz);
     setup_shape_common(&g_shapes[setup.idx], &g_geometries[setup.idx].box.base,

@@ -561,19 +561,22 @@ def _extract_rigid_body(exporter, obj, half_extents):
         if rb_mesh_data is None:
             log.warn(f'Object "{obj.name}": failed to extract mesh collision data, using BOX')
             rb_shape = "box"
+            MIN_HALF_EXTENT = 0.01
             rb_half_extents = [
-                half_extents[0] * obj.scale[0],
-                half_extents[2] * obj.scale[2],
-                half_extents[1] * obj.scale[1]
+                max(half_extents[0] * obj.scale[0], MIN_HALF_EXTENT),
+                max(half_extents[2] * obj.scale[2], MIN_HALF_EXTENT),
+                max(half_extents[1] * obj.scale[1], MIN_HALF_EXTENT)
             ]
     else:
         rb_shape = "box"
         rb_radius = None
         rb_half_height = None
+        # Clamp to minimum thickness for flat meshes (e.g. planes)
+        MIN_HALF_EXTENT = 0.01
         rb_half_extents = [
-            half_extents[0] * obj.scale[0],
-            half_extents[2] * obj.scale[2],
-            half_extents[1] * obj.scale[1]
+            max(half_extents[0] * obj.scale[0], MIN_HALF_EXTENT),
+            max(half_extents[2] * obj.scale[2], MIN_HALF_EXTENT),
+            max(half_extents[1] * obj.scale[1], MIN_HALF_EXTENT)
         ]
         if shape not in ('BOX', 'SPHERE', 'CAPSULE'):
             if shape == 'MESH' and rb.type != 'PASSIVE':

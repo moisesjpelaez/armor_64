@@ -1714,3 +1714,24 @@ def generate_font_makefile_entries(exporter):
     font_rules = '\n\n'.join(rules)
 
     return font_targets, font_rules
+
+
+def generate_ui_sprite_rules(exporter):
+    """Generate per-file Makefile rules for UI sprites to use RGBA32 format.
+
+    UI images need RGBA32 for smooth 8-bit alpha on logos and HUD elements.
+    Model textures use mksprite's AUTO format detection (→ RGBA16 for RGBA PNGs).
+
+    Returns:
+        str: Makefile per-file variable assignments, or a comment if no UI images.
+    """
+    if not hasattr(exporter, 'ui_images') or not exporter.ui_images:
+        return '# No UI sprites'
+
+    rules = []
+    for image_name in exporter.ui_images:
+        safe_name = image_name.lower().replace(' ', '_')
+        rules.append(
+            f'filesystem/{safe_name}.sprite: MKSPRITE_FLAGS=--format RGBA32'
+        )
+    return '\n'.join(rules)
