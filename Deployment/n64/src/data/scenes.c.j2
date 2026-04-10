@@ -336,9 +336,7 @@ void scene_clear(SceneId id)
     // Free object resources
     if (s->objects != NULL) {{
         for (uint16_t i = 0; i < s->object_count; i++) {{
-#if ENGINE_ENABLE_PHYSICS
-            if (s->objects[i].rigid_body) physics_remove_body(&s->objects[i]);
-#endif
+            s->objects[i].rigid_body = NULL;
             if (s->objects[i].animation) {{ animation_destroy(s->objects[i].animation); free(s->objects[i].animation); s->objects[i].animation = NULL; }}
             if (s->objects[i].model_mat) {{ free_uncached(s->objects[i].model_mat); s->objects[i].model_mat = NULL; }}
             // Free trait data (malloc'd) before freeing traits array

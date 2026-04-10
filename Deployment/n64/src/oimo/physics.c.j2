@@ -104,14 +104,27 @@ void physics_reset(void) {{
     // Clear contact subscriptions
     physics_contact_clear();
 
-    // Remove all regular bodies currently in use
-    // Bodies in use are those NOT in the free list
-    // For simplicity, remove all bodies from world and rebuild free list
-    for (int i = 0; i < MAX_PHYSICS_BODIES; i++) {{
-        if (g_bodies[i]._shapeList != NULL) {{
-            oimo_world_remove_rigid_body(&g_world, &g_bodies[i]);
+    // Free dynamically allocated mesh geometry data before zeroing pools.
+    // This is the only resource that requires explicit freeing - everything
+    // else (broadphase proxies, contacts, linked lists) lives in static
+    // pools that get wiped by oimo_world_init below.
+    for (int i = 0; i < MAX_MESH_COLLIDERS; i++) {{
+        if (g_mesh_used[i]) {{
+            oimo_static_mesh_geometry_free(&g_mesh_geometries[i]);
         }}
     }}
+
+    // Nuclear reset: zero all body/shape/geometry pools.
+    // This safely clears all stale pointers (_next, _prev, _contactLinkList,
+    // _shapeList, _world, etc.) without walking the world's linked list or
+    // contact graph, which corrupts when bodies have cross-referencing contacts.
+    memset(g_bodies, 0, sizeof(g_bodies));
+    memset(g_shapes, 0, sizeof(g_shapes));
+    memset(g_geometries, 0, sizeof(g_geometries));
+    memset(g_mesh_bodies, 0, sizeof(g_mesh_bodies));
+    memset(g_mesh_shapes, 0, sizeof(g_mesh_shapes));
+    memset(g_mesh_geometries, 0, sizeof(g_mesh_geometries));
+    memset(g_mesh_used, 0, sizeof(g_mesh_used));
 
     // Reinitialize free list - all bodies available
     g_free_count = MAX_PHYSICS_BODIES;
@@ -119,15 +132,7 @@ void physics_reset(void) {{
         g_free_list[i] = (int16_t)(MAX_PHYSICS_BODIES - 1 - i);
     }}
 
-    // Remove mesh bodies and free their geometry
-    for (int i = 0; i < MAX_MESH_COLLIDERS; i++) {{
-        if (g_mesh_used[i]) {{
-            oimo_world_remove_rigid_body(&g_world, &g_mesh_bodies[i]);
-            oimo_static_mesh_geometry_free(&g_mesh_geometries[i]);
-            g_mesh_used[i] = false;
-        }}
-    }}
-
+    // Re-initialize world (wipes linked list, contact manager, broadphase)
     OimoVec3 gravity = g_world._gravity;
     oimo_world_init(&g_world, &gravity);
 }}
@@ -333,8 +338,20 @@ bool physics_create_capsule_ex(ArmObject* obj, int type, float radius, float hal
 void physics_remove_body(ArmObject* obj) {{
     if (!g_initialized || !obj || !obj->rigid_body) return;
 
-    oimo_world_remove_rigid_body(&g_world, obj->rigid_body);
-    free_body(obj->rigid_body);
+    OimoRigidBody* rb = obj->rigid_body;
+
+    // Check if this is a mesh collider body (lives in g_mesh_bodies[])
+    ptrdiff_t mesh_idx = rb - g_mesh_bodies;
+    if (mesh_idx >= 0 && mesh_idx < MAX_MESH_COLLIDERS && &g_mesh_bodies[mesh_idx] == rb) {{
+        // Mesh body: remove from world, free geometry, mark slot as unused
+        oimo_world_remove_rigid_body(&g_world, rb);
+        oimo_static_mesh_geometry_free(&g_mesh_geometries[mesh_idx]);
+        g_mesh_used[mesh_idx] = false;
+    }} else {{
+        // Primitive body (box/sphere/capsule): remove from world and return to free list
+        oimo_world_remove_rigid_body(&g_world, rb);
+        free_body(rb);
+    }}
     obj->rigid_body = NULL;
 }}
 
