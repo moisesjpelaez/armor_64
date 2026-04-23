@@ -54,7 +54,7 @@ Supported features:
 - Clone these into `Subprojects` folder:
   ```
   git clone https://github.com/MoritzBrueckner/aura.git
-  git clone https://gitlab.com/moises.jpelaez/Koui.git -b runtime_theme_parser
+  git clone https://gitlab.com/moises.jpelaez/Koui.git -b koui_editor
   ```
 
 ## Setup
