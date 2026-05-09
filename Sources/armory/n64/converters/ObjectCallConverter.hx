@@ -32,6 +32,9 @@ class ObjectCallConverter implements ICallConverter {
             case "getChildren", "getChild":
                 // Children iteration not yet supported (hierarchy is flat array with parent_index)
                 { type: "skip", warn: method + "() not yet supported on N64 - use parent_index-based iteration" };
+            case "getAnimation":
+                // object.getAnimation() -> object->animation
+                { type: "object_call", c_code: '((ArmObject*)obj)->animation' };
             default:
                 // Unknown object method
                 { type: "skip", warn: "object." + method + "() not supported on N64" };

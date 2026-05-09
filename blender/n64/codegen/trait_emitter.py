@@ -671,10 +671,6 @@ class TraitEmitter:
                         return f"!arm_audio_is_playing({obj})"
                     return f"{obj}->{field}"
 
-                # Animation field on ArmObject parameters/locals: o.animation -> o->animation
-                if field == "animation":
-                    return f"{obj}->animation"
-
                 return f"({obj}).{field}"
 
         return field
@@ -1619,6 +1615,10 @@ class TraitEmitter:
         receiver_name = obj_node.get("value", "")
         if obj_node.get("type") in ("member", "inherited_member"):
             receiver_ctype = self._get_member_ctype(receiver_name)
+
+        # getAnimation() call on ArmObject -> o->animation
+        if method == "getAnimation":
+            return f"((ArmObject*){obj})->animation"
 
         # Animation methods: play(name), pause(), resume()
         if receiver_ctype == "ArmAnimation*":
