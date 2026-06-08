@@ -29,7 +29,7 @@ Supported features:
 - Render2D (`kha.graphics2.Graphics`):
   - fillRect
   - color
-- Animation actions (testing)
+- Animation actions
 
 ## Pre-requisites
 - Windows 11
