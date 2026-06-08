@@ -45,7 +45,7 @@ Supported features:
   ```
   git clone https://github.com/DragonMinded/libdragon.git -b preview
   git clone https://github.com/HailToDodongo/tiny3d.git
-  git clone https://github.com/moisesjpelaez/n64_exporter.git
+  git clone https://github.com/moisesjpelaez/armor_64.git
   git clone https://github.com/moisesjpelaez/koui_editor.git
   git clone https://github.com/armory3d/oimo_module
   git clone https://github.com/armory3d/OimoPhysics
