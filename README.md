@@ -1,7 +1,7 @@
 # N64 Exporter for Armory 3D
 Export games for the Nintendo 64 with [Armory 3D](https://github.com/armory3d/armory) using [fast64](https://github.com/Fast-64/fast64), [libdragon](https://github.com/DragonMinded/libdragon) and [tiny3d](https://github.com/HailToDodongo/tiny3d).
 
-> Note: this project is experimental. Working with Armory 2026.2 and Blender 4.5.
+> Notes: this project is experimental and in development. Working with Armory 2026.2 and Blender 4.5.
 
 Supported features:
 - Scenes:
