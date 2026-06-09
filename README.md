@@ -68,9 +68,6 @@ Supported features:
 - Click `Build Tiny3D` and wait for it to finish
 - Set `Render > Armory Project > Modules > Physics Engine` to Oimo
 
-## Documentation
-https://hackmd.io/@moisesjpelaez/armor_ball
-
 ## License
 This project is licensed under the terms of the zlib License. See the [LICENSE](LICENSE.md) file for details.
 
