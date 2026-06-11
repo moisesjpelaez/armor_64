@@ -34,12 +34,23 @@ void renderer_begin_frame(T3DViewport *viewport, ArmScene *scene) {
 		T3DVec4 world_pos4, world_target4;
 		t3d_mat4_mul_vec3(&world_pos4, cam->parent_world_mat, &cam->local_pos);
 		t3d_mat4_mul_vec3(&world_target4, cam->parent_world_mat, &cam->local_target);
-		cam->transform.loc = (T3DVec3){{world_pos4.v[0], world_pos4.v[1], world_pos4.v[2]}};
-		cam->target = (T3DVec3){{world_target4.v[0], world_target4.v[1], world_target4.v[2]}};
+		// Scale back to 1x space for consistency within the camera struct
+		cam->transform.loc = (T3DVec3){{world_pos4.v[0] * WORLD_SCALE_FACTOR, world_pos4.v[1] * WORLD_SCALE_FACTOR, world_pos4.v[2] * WORLD_SCALE_FACTOR}};
+		cam->target = (T3DVec3){{world_target4.v[0] * WORLD_SCALE_FACTOR, world_target4.v[1] * WORLD_SCALE_FACTOR, world_target4.v[2] * WORLD_SCALE_FACTOR}};
 	}
 
-  	t3d_viewport_set_projection(viewport, T3D_DEG_TO_RAD(cam->fov), cam->near, cam->far);
-  	t3d_viewport_look_at(viewport, (T3DVec3 *)&cam->transform.loc, &cam->target, &(T3DVec3){{0.0f, 1.0f, 0.0f}});
+	T3DVec3 cam_loc_scaled = (T3DVec3){{cam->transform.loc.v[0] * WORLD_SCALE_FACTOR_INV, cam->transform.loc.v[1] * WORLD_SCALE_FACTOR_INV, cam->transform.loc.v[2] * WORLD_SCALE_FACTOR_INV}};
+	T3DVec3 cam_target_scaled = (T3DVec3){{cam->target.v[0] * WORLD_SCALE_FACTOR_INV, cam->target.v[1] * WORLD_SCALE_FACTOR_INV, cam->target.v[2] * WORLD_SCALE_FACTOR_INV}};
+
+  	t3d_viewport_set_projection(viewport, T3D_DEG_TO_RAD(cam->fov), cam->near * WORLD_SCALE_FACTOR_INV, cam->far * WORLD_SCALE_FACTOR_INV);
+  	t3d_viewport_look_at(viewport, &cam_loc_scaled, &cam_target_scaled, &(T3DVec3){{0.0f, 1.0f, 0.0f}});
+
+	// Scale down the projection matrix to compensate for scale-shifted space
+	for (int i = 0; i < 4; i++) {
+		for (int j = 0; j < 4; j++) {
+			viewport->matProj.m[i][j] *= WORLD_SCALE_FACTOR;
+		}
+	}
 }
 
 void renderer_update_objects(ArmScene *scene) {
@@ -104,9 +115,19 @@ void renderer_update_objects(ArmScene *scene) {
 				t3d_mat4_to_fixed(&obj->model_mat[mat_idx], &world_float);
 			}
 		} else {
-			// Root object: build float matrix, store for children, convert to FP
+			// Root object: build float matrix with scale and position multiplied by WORLD_SCALE_FACTOR_INV, store for children, convert to FP
 			T3DMat4 world_float;
-			t3d_mat4_from_srt(&world_float, obj->transform.scale.v, obj->transform.rot.v, obj->transform.loc.v);
+			float scale_scaled[3] = {
+				obj->transform.scale.v[0] * WORLD_SCALE_FACTOR_INV,
+				obj->transform.scale.v[1] * WORLD_SCALE_FACTOR_INV,
+				obj->transform.scale.v[2] * WORLD_SCALE_FACTOR_INV
+			};
+			float loc_scaled[3] = {
+				obj->transform.loc.v[0] * WORLD_SCALE_FACTOR_INV,
+				obj->transform.loc.v[1] * WORLD_SCALE_FACTOR_INV,
+				obj->transform.loc.v[2] * WORLD_SCALE_FACTOR_INV
+			};
+			t3d_mat4_from_srt(&world_float, scale_scaled, obj->transform.rot.v, loc_scaled);
 			obj->world_mat = world_float;
 			if (obj->model_mat) {
 				t3d_mat4_to_fixed(&obj->model_mat[mat_idx], &world_float);
@@ -117,6 +138,7 @@ void renderer_update_objects(ArmScene *scene) {
 		// Extract world position from float world matrix (column 3)
 		{
 			float world_pos[3];
+			// Keep cached AABB in 64x space to match the 64x camera frustum
 			world_pos[0] = obj->world_mat.m[3][0];
 			world_pos[1] = obj->world_mat.m[3][1];
 			world_pos[2] = obj->world_mat.m[3][2];
@@ -135,13 +157,13 @@ void renderer_update_objects(ArmScene *scene) {
 				{ 2.0f*(xy+wz),         1.0f - 2.0f*(xx+zz),  2.0f*(yz-wx)         },
 				{ 2.0f*(xz-wy),         2.0f*(yz+wx),         1.0f - 2.0f*(xx+yy)  }
 			};
-			// Start from world position, accumulate rotated AABB extents
+			// Start from world position, accumulate rotated AABB extents (scaled to 64x space)
 			for (int j = 0; j < 3; j++) {
 				obj->cached_world_aabb_min.v[j] = world_pos[j];
 				obj->cached_world_aabb_max.v[j] = world_pos[j];
 				for (int k = 0; k < 3; k++) {
-					float a = m[j][k] * obj->bounds_min.v[k];
-					float b = m[j][k] * obj->bounds_max.v[k];
+					float a = m[j][k] * obj->bounds_min.v[k] * WORLD_SCALE_FACTOR_INV;
+					float b = m[j][k] * obj->bounds_max.v[k] * WORLD_SCALE_FACTOR_INV;
 					if (a < b) {
 						obj->cached_world_aabb_min.v[j] += a;
 						obj->cached_world_aabb_max.v[j] += b;

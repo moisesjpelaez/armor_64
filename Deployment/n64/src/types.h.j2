@@ -80,6 +80,9 @@ typedef struct ArmAnimation ArmAnimation;
 // Number of frames to keep transform dirty for double/triple buffering
 #define TRANSFORM_DIRTY_FRAMES 3
 
+#define WORLD_SCALE_FACTOR 0.015625f
+#define WORLD_SCALE_FACTOR_INV 64.0f
+
 struct OimoRigidBody;
 
 typedef struct {{ float x, y; }} ArmVec2;
