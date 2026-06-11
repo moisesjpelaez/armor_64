@@ -80,6 +80,7 @@ typedef struct ArmAnimation ArmAnimation;
 // Number of frames to keep transform dirty for double/triple buffering
 #define TRANSFORM_DIRTY_FRAMES 3
 
+// TODO: remove this and clean scaling calculations from `renderer.c`. These calculations should be handled at export time using the values from `utils.py` or `Constants.hx`.
 #define WORLD_SCALE_FACTOR 0.015625f
 #define WORLD_SCALE_FACTOR_INV 64.0f
 
