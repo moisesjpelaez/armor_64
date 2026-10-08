@@ -269,8 +269,8 @@ class N64Exporter:
         Uses the same arm_external_blends_path World property as Armory's
         Krom/HTML5 pipeline. Scenes are appended (not linked) so their
         local objects can be exported via GLTF and have F3D materials
-        converted. Each appended scene is renamed to SceneName_BlendBasename
-        to match Armory's naming convention.
+        converted. Each appended scene is renamed to
+        SceneName_[Subdirs_]BlendBasename to match Armory's naming convention.
 
         Linked objects within external scenes (instance collections from
         other blend files) are preserved as library references and handled
@@ -302,7 +302,9 @@ class N64Exporter:
                     continue
 
                 blend_path = os.path.join(root, filename)
-                blend_basename = filename.replace('.blend', '')
+                rel_dir = os.path.relpath(root, abs_path)
+                subdirs = [] if rel_dir == os.curdir else rel_dir.split(os.sep)
+                blend_basename = '_'.join([*subdirs, filename.replace('.blend', '')])
 
                 try:
                     # Track existing collections before append to detect renames
@@ -326,7 +328,7 @@ class N64Exporter:
                     for scn in data_to.scenes:
                         if scn is None:
                             continue
-                        # Rename to match Armory convention: SceneName_BlendBasename
+                        # Rename to match Armory convention: SceneName_[Subdirs_]BlendBasename
                         suffixed_name = scn.name + '_' + blend_basename
                         scn.name = suffixed_name
                         self.external_scene_names.append(scn.name)
