@@ -15,7 +15,7 @@ using StringTools;
  *
  * Handles patterns like:
  *   Aura.mixChannels["music"].setVolume(v) -> arm_audio_set_mix_volume(AUDIO_MIX_MUSIC, v)
- *   Aura.createCompBufferChannel(sound, loop, mixCh) -> arm_audio_play(path, mix_ch, loop)
+ *   Aura.createUncompBufferChannel(sound, loop, mixCh) -> arm_audio_play(path, mix_ch, loop)
  *   handle.stop() -> arm_audio_stop(&handle)
  *   handle.finished -> handle.finished (bool field access)
  *   handle.setVolume(v) -> arm_audio_set_volume(&handle, v)
@@ -64,8 +64,8 @@ class AudioCallConverter implements ICallConverter {
         var meta = ctx.getMeta();
 
         switch (method) {
-            case "createCompBufferChannel":
-                // Aura.createCompBufferChannel(sound, loop, mixChannel)
+            case "createUncompBufferChannel":
+                // Aura.createUncompBufferChannel(sound, loop, mixChannel)
                 // -> arm_audio_load(path, mix_channel, loop)  (does NOT start playback)
                 if (args.length >= 3) {
                     var soundArg = args[0];
@@ -90,7 +90,7 @@ class AudioCallConverter implements ICallConverter {
                     };
                 }
                 // Fallback with fewer args - likely missing parameters
-                return { type: "skip", warn: "Aura.createCompBufferChannel() requires 3 arguments" };
+                return { type: "skip", warn: "Aura.createUncompBufferChannel() requires 3 arguments" };
 
             case "init":
                 // Aura.init({channelSize: N}) - extract channelSize and store in global config
