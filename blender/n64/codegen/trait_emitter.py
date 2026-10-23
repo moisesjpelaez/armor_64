@@ -366,16 +366,6 @@ class TraitEmitter:
             # Single/anonymous update - use generic flag
             return f"(({self.data_type}*)data)->_update_enabled = true;"
 
-    def emit_notify_fixed_update(self, node: Dict) -> str:
-        """notifyOnFixedUpdate(callback) at runtime -> re-enable specific on_fixed_update callback."""
-        callback_name = node.get("value")
-        if callback_name:
-            # Multiple fixed update functions - use specific flag
-            return f"(({self.data_type}*)data)->_fixed_update_{callback_name}_enabled = true;"
-        else:
-            # Single/anonymous fixed update - use generic flag
-            return f"(({self.data_type}*)data)->_fixed_update_enabled = true;"
-
     def emit_notify_render2d(self, node: Dict) -> str:
         """notifyOnRender2D() at runtime -> re-enable on_render2d callback."""
         return f"(({self.data_type}*)data)->_render2d_enabled = true;"
@@ -417,29 +407,6 @@ class TraitEmitter:
             return f"RGBA32((uint8_t)(({r}) * 255.0f), (uint8_t)(({g}) * 255.0f), (uint8_t)(({b}) * 255.0f), (uint8_t)(({a}) * 255.0f))"
         return "RGBA32(0, 0, 0, 255)"
 
-    def emit_literal(self, node: Dict) -> str:
-        """Emit a literal value based on its type."""
-        value = node.get("value", "")
-        props = node.get("props", {})
-        literal_type = props.get("literal_type", "")
-
-        if literal_type == "float":
-            # Ensure float format with f suffix
-            val_str = str(value)
-            if "." not in val_str:
-                val_str = f"{val_str}.0"
-            return f"{val_str}f"
-        elif literal_type == "int":
-            return str(value)
-        elif literal_type == "string":
-            return f'"{value}"'
-        elif literal_type == "bool":
-            return "true" if value == "true" else "false"
-        elif literal_type == "null":
-            return "NULL"
-        else:
-            return str(value)
-
     # =========================================================================
     # Variables
     # =========================================================================
@@ -454,38 +421,6 @@ class TraitEmitter:
         """
         name = node.get("value", "")
         return self._get_member_access(name)
-
-    def emit_inherited_member(self, node: Dict) -> str:
-        """Access to a member inherited from a parent class.
-
-        IR format:
-            type: "inherited_member"
-            value: "tween"
-            memberType: "Tween"
-            owner: "GameScene"
-
-        Emits access through the parent chain, accounting for depth:
-        - Direct parent's member: (({ParentData}*)data)->member
-        - Grandparent's member: (({GrandparentData}*)data)->_parent.member
-
-        Since _parent is at offset 0, we can cast to the owner's data type directly.
-        """
-        name = node.get("value", "")
-        owner = node.get("owner", "")
-
-        # Find the depth of this member's owner in the inheritance chain
-        depth = self._find_owner_depth(owner)
-
-        if depth >= 1:
-            # Found in inheritance chain - cast to owner's data type
-            owner_ir = self.all_traits.get(owner, {})
-            owner_c_name = owner_ir.get("c_name", owner.lower())
-            owner_data_type = f"{owner_c_name}Data"
-            return f"(({owner_data_type}*)data)->{name}"
-        else:
-            # Error: owner not in inheritance chain - emit C comment for early detection
-            log.error(f"[{self.trait_name}] inherited member '{name}' owner '{owner}' not found in inheritance chain")
-            return f"/* ERROR: inherited member '{name}' from '{owner}' not found */ data->_parent.{name}"
 
     def emit_potentially_inherited(self, node: Dict) -> str:
         """Handle identifiers that might be inherited members.
@@ -528,22 +463,6 @@ class TraitEmitter:
 
         result = self._walk_inheritance_chain(find_member, parent_hint or self.parent_name)
         return result if result else (None, None)
-
-    def _find_owner_depth(self, owner_name: str) -> int:
-        """Find the depth of an owner class in the inheritance chain.
-
-        Returns:
-            1 for direct parent
-            2 for grandparent
-            0 if not found
-        """
-        def check_owner(parent_name, parent_ir, depth):
-            if parent_name == owner_name:
-                return depth
-            return None  # Continue searching
-
-        result = self._walk_inheritance_chain(check_owner)
-        return result if result else 0
 
     def emit_ident(self, node: Dict) -> str:
         """Identifier: local var, dt, object, etc."""
@@ -623,7 +542,7 @@ class TraitEmitter:
 
                 # Handle member/inherited_member types that are pointers (UIGroup*, UILabel*, etc.)
                 # These need -> access since they're pointer types stored in data struct
-                if obj_type in ("member", "inherited_member"):
+                if obj_type == "member":
                     member_name = obj_value
                     member_ctype = self._get_member_ctype(member_name)
                     if member_ctype and member_ctype.endswith("*"):
@@ -968,190 +887,52 @@ class TraitEmitter:
     # Map Operations (arm_map.h)
     # =========================================================================
 
-    def emit_map_set(self, node: Dict) -> str:
-        """Map set operation: mapname_set(&map, key, value)
+    def _container_call(self, node: Dict, func: str, nargs: int) -> str:
+        """<Type>_<func>(&container, args...) of arm_map.h / arm_array.h.
 
         IR format:
-            value: map type name (e.g., "ArmSoundChannelMap")
-            props.map_expr: expression for the map
-            children[0]: key expression
-            children[1]: value expression
+            value: the container's C type (e.g. "ArmIntArray", "ArmSoundChannelMap")
+            object: the map or array (member, local, autoload field...)
+            children: the arguments (key, value, index...)
         """
-        map_type = node.get("value", "")
-        props = node.get("props", {})
-        children = node.get("children", [])
-
-        if len(children) < 2:
+        ctype = node.get("value", "")
+        container = self.emit(node.get("object"))
+        args = [self.emit(c) for c in (node.get("children") or [])[:nargs]]
+        if not ctype or not container or len(args) < nargs or not all(args):
             return ""
+        return f"{ctype}_{func}({', '.join([f'&{container}'] + args)})"
 
-        map_expr = props.get("map_expr", "")
-        key = self.emit(children[0])
-        val = self.emit(children[1])
-
-        if not map_type or not map_expr or not key:
-            return ""
-
-        # C macro generates TypeName_func, not typename_func
-        func_name = f"{map_type}_set"
-        return f"{func_name}(&{map_expr}, {key}, {val})"
+    def emit_map_set(self, node: Dict) -> str:
+        return self._container_call(node, "set", 2)
 
     def emit_map_get(self, node: Dict) -> str:
-        """Map get operation: mapname_get(&map, key)
+        return self._container_call(node, "get", 1)
 
-        IR format:
-            value: map type name
-            props.map_expr: expression for the map
-            children[0]: key expression
-        """
-        map_type = node.get("value", "")
-        props = node.get("props", {})
-        children = node.get("children", [])
-
-        if len(children) < 1:
-            return ""
-
-        map_expr = props.get("map_expr", "")
-        key = self.emit(children[0])
-
-        if not map_type or not map_expr or not key:
-            return ""
-
-        func_name = f"{map_type}_get"
-        return f"{func_name}(&{map_expr}, {key})"
+    def emit_map_value(self, node: Dict) -> str:
+        return self._container_call(node, "value", 1)
 
     def emit_map_exists(self, node: Dict) -> str:
-        """Map exists operation: mapname_exists(&map, key)
-
-        IR format:
-            value: map type name
-            props.map_expr: expression for the map
-            children[0]: key expression
-        """
-        map_type = node.get("value", "")
-        props = node.get("props", {})
-        children = node.get("children", [])
-
-        if len(children) < 1:
-            return ""
-
-        map_expr = props.get("map_expr", "")
-        key = self.emit(children[0])
-
-        if not map_type or not map_expr or not key:
-            return ""
-
-        func_name = f"{map_type}_exists"
-        return f"{func_name}(&{map_expr}, {key})"
+        return self._container_call(node, "exists", 1)
 
     def emit_map_remove(self, node: Dict) -> str:
-        """Map remove operation: mapname_remove(&map, key)
+        return self._container_call(node, "remove", 1)
 
-        IR format:
-            value: map type name
-            props.map_expr: expression for the map
-            children[0]: key expression
-        """
-        map_type = node.get("value", "")
-        props = node.get("props", {})
-        children = node.get("children", [])
-
-        if len(children) < 1:
-            return ""
-
-        map_expr = props.get("map_expr", "")
-        key = self.emit(children[0])
-
-        if not map_type or not map_expr or not key:
-            return ""
-
-        func_name = f"{map_type}_remove"
-        return f"{func_name}(&{map_expr}, {key})"
-
-    # =========================================================================
-    # Array Operations (arm_array.h)
-    # =========================================================================
+    def emit_map_clear(self, node: Dict) -> str:
+        return self._container_call(node, "clear", 0)
 
     def emit_array_push(self, node: Dict) -> str:
-        """Array push operation: arrayname_push(&arr, value)
-
-        IR format:
-            value: array type name (e.g., "ArmSoundHandleArray")
-            props.array_expr: expression for the array
-            children[0]: value to push
-        """
-        array_type = node.get("value", "")
-        props = node.get("props", {})
-        children = node.get("children", [])
-
-        if len(children) < 1:
-            return ""
-
-        array_expr = props.get("array_expr", "")
-        val = self.emit(children[0])
-
-        if not array_type or not array_expr:
-            return ""
-
-        # C macro generates TypeName_func, not typename_func
-        func_name = f"{array_type}_push"
-        return f"{func_name}(&{array_expr}, {val})"
+        return self._container_call(node, "push", 1)
 
     def emit_array_pop(self, node: Dict) -> str:
-        """Array pop operation: arrayname_pop(&arr)
-
-        IR format:
-            value: array type name
-            props.array_expr: expression for the array
-        """
-        array_type = node.get("value", "")
-        props = node.get("props", {})
-
-        array_expr = props.get("array_expr", "")
-
-        if not array_type or not array_expr:
-            return ""
-
-        func_name = f"{array_type}_pop"
-        return f"{func_name}(&{array_expr})"
-
-    def emit_array_length(self, node: Dict) -> str:
-        """Array length: arr.count
-
-        IR format:
-            value: array type name
-            props.array_expr: expression for the array
-        """
-        props = node.get("props", {})
-        array_expr = props.get("array_expr", "")
-
-        if not array_expr:
-            return "0"
-
-        return f"{array_expr}.count"
+        return self._container_call(node, "pop", 0)
 
     def emit_array_get(self, node: Dict) -> str:
-        """Array get operation: arrayname_get(&arr, index)
+        return self._container_call(node, "get", 1)
 
-        IR format:
-            value: array type name
-            props.array_expr: expression for the array
-            children[0]: index expression
-        """
-        array_type = node.get("value", "")
-        props = node.get("props", {})
-        children = node.get("children", [])
+    def emit_array_clear(self, node: Dict) -> str:
+        return self._container_call(node, "clear", 0)
 
-        if len(children) < 1:
-            return ""
-
-        array_expr = props.get("array_expr", "")
-        index = self.emit(children[0])
-
-        if not array_type or not array_expr:
-            return ""
-
-        func_name = f"{array_type}_get"
-        return f"{func_name}(&{array_expr}, {index})"
+    # Gets on a nested expression (map[key][i]): the inner get already returns a pointer
 
     def emit_array_get_nested(self, node: Dict) -> str:
         """Array get on nested expression (e.g., map[key][i])
@@ -1199,68 +980,6 @@ class TraitEmitter:
 
         func_name = f"{array_type}_get_ptr"
         return f"{func_name}({array_ptr}, {index})"
-
-    def emit_array_set(self, node: Dict) -> str:
-        """Array set operation: arrayname_set(&arr, index, value)
-
-        IR format:
-            value: array type name
-            props.array_expr: expression for the array
-            children[0]: index expression
-            children[1]: value expression
-        """
-        array_type = node.get("value", "")
-        props = node.get("props", {})
-        children = node.get("children", [])
-
-        if len(children) < 2:
-            return ""
-
-        array_expr = props.get("array_expr", "")
-        index = self.emit(children[0])
-        val = self.emit(children[1])
-
-        if not array_type or not array_expr:
-            return ""
-
-        func_name = f"{array_type}_set"
-        return f"{func_name}(&{array_expr}, {index}, {val})"
-
-    def emit_map_clear(self, node: Dict) -> str:
-        """Map clear operation: mapname_clear(&map)
-
-        IR format:
-            value: map type name
-            props.map_expr: expression for the map
-        """
-        map_type = node.get("value", "")
-        props = node.get("props", {})
-
-        map_expr = props.get("map_expr", "")
-
-        if not map_type or not map_expr:
-            return ""
-
-        func_name = f"{map_type}_clear"
-        return f"{func_name}(&{map_expr})"
-
-    def emit_array_clear(self, node: Dict) -> str:
-        """Array clear operation: arrayname_clear(&arr)
-
-        IR format:
-            value: array type name
-            props.array_expr: expression for the array
-        """
-        array_type = node.get("value", "")
-        props = node.get("props", {})
-
-        array_expr = props.get("array_expr", "")
-
-        if not array_type or not array_expr:
-            return ""
-
-        func_name = f"{array_type}_clear"
-        return f"{func_name}(&{array_expr})"
 
     # =========================================================================
     # Function Calls
@@ -1601,7 +1320,7 @@ class TraitEmitter:
         # Determine receiver type for method routing
         receiver_ctype = ""
         receiver_name = obj_node.get("value", "")
-        if obj_node.get("type") in ("member", "inherited_member"):
+        if obj_node.get("type") == "member":
             receiver_ctype = self._get_member_ctype(receiver_name)
 
         # getAnimation() call on ArmObject -> o->animation
@@ -1909,18 +1628,6 @@ class TraitEmitter:
         data_struct = f"{self.c_name}Data"
         return f"{autoload}_{member} = ({data_struct}*)data;"
 
-    def emit_remove_object(self, node: Dict) -> str:
-        """Remove object call - substitute {obj} placeholder."""
-        c_code = node.get("c_code", "")
-        if not c_code:
-            return ""
-
-        obj_node = node.get("object")
-        obj = self.emit(obj_node) if obj_node else "object"
-        c_code = c_code.replace("{obj}", obj)
-
-        return c_code
-
     def emit_cast_call(self, node: Dict) -> str:
         """Std.int() -> (int32_t)value"""
         cast = node.get("value", "(int32_t)")
@@ -2048,26 +1755,6 @@ class TraitEmitter:
 
         return f"arm_audio_load({sound_path}, {mix_channel}, {loop})"
 
-    def emit_audio_play(self, node: Dict) -> str:
-        """Audio play call - loads and immediately starts playing."""
-        props = node.get("props", {})
-        args = node.get("args", [])
-
-        # Get sound path - either from args or c_code
-        if args:
-            sound_path = self.emit(args[0])
-        else:
-            # Fallback to c_code if present
-            c_code = node.get("c_code", "")
-            if c_code:
-                return c_code
-            sound_path = '"rom:/sound.wav64"'
-
-        mix_channel = props.get("mix_channel", "AUDIO_MIX_MASTER")
-        loop = props.get("loop", "false")
-
-        return f"arm_audio_play({sound_path}, {mix_channel}, {loop})"
-
     def emit_audio_mix_volume(self, node: Dict) -> str:
         """Mix channel volume set - emit args through emitter for proper prefixing."""
         props = node.get("props", {})
@@ -2138,19 +1825,6 @@ class TraitEmitter:
             if handle_node.get("type") == "ident" and handle_node.get("value") in self.local_pointer_vars:
                 return f"arm_audio_set_volume({handle}, {vol})"
             return f"arm_audio_set_volume(&{handle}, {vol})"
-        return node.get("c_code", "")
-
-    def emit_audio_handle_field(self, node: Dict) -> str:
-        """Handle field access (e.g., handle.finished).
-
-        For autoloads, the handle_name in props needs to be prefixed with c_name_
-        if it's a member. The AutoloadIREmitter overrides this method.
-        """
-        props = node.get("props", {})
-        handle_name = props.get("handle_name", "")
-        field = node.get("value", "")
-        if handle_name and field:
-            return f"{handle_name}.{field}"
         return node.get("c_code", "")
 
     # =========================================================================

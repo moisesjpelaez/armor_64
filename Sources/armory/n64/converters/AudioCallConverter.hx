@@ -214,10 +214,22 @@ class AudioCallConverter implements ICallConverter {
     }
 
     /**
+     * Mix channel constant of an `Aura.mixChannels["name"]` expression
+     * (AUDIO_MIX_NAME), null for other expressions.
+     */
+    public static function mixChannel(e:Expr):Null<String> {
+        return switch (e.expr) {
+            case EArray({expr: EField(auraObj, "mixChannels")}, indexExpr) if (TypedIndex.isClassRef(auraObj, "aura.Aura")):
+                getMixChannelConstant(ExprUtils.extractString(indexExpr));
+            default: null;
+        };
+    }
+
+    /**
      * Convert a mix channel name to a C constant.
      * Follows Aura.mixChannels naming: "music" -> AUDIO_MIX_MUSIC
      */
-    function getMixChannelConstant(name:String):String {
+    static function getMixChannelConstant(name:String):String {
         if (name == null || name == "") return "AUDIO_MIX_MASTER";
         // Convert channel name to uppercase C constant: "music" -> "AUDIO_MIX_MUSIC"
         return 'AUDIO_MIX_' + name.toUpperCase();

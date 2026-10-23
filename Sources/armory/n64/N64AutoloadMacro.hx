@@ -282,45 +282,6 @@ class AutoloadExtractor extends N64Extractor {
         return { type: "binop", value: "=", children: [exprToIR(e1), exprToIR(e2)] };
     }
 
-    // Typed Map and Array members: the generated container functions
-    override function convertArrayAccess(e1:Expr, e2:Expr):IRNode {
-        var objType = getExprType(e1);
-        if (TypeMap.isMapType(objType)) {
-            return {
-                type: "map_get",
-                value: TypeMap.getCType(objType),
-                props: { map_expr: accessPath(e1) },
-                children: [exprToIR(e2)]
-            };
-        }
-        if (TypeMap.isArrayType(objType)) {
-            var arrayExpr = accessPath(e1);
-            // Nested expression (e.g., channels[key][i]): the inner expression as IR
-            if (arrayExpr == "") {
-                return { type: "array_get_nested", value: TypeMap.getCType(objType), children: [exprToIR(e1), exprToIR(e2)] };
-            }
-            return {
-                type: "array_get",
-                value: TypeMap.getCType(objType),
-                props: { array_expr: arrayExpr },
-                children: [exprToIR(e2)]
-            };
-        }
-        return super.convertArrayAccess(e1, e2);
-    }
-
-    /**
-     * C access path of a member ("c_name_member", a global) or local, "" for
-     * other expressions.
-     */
-    function accessPath(e:Expr):String {
-        return switch (e.expr) {
-            case EConst(CIdent(name)): memberTypes.exists(name) ? cName + "_" + name : name;
-            case EField(_, field): cName + "_" + field;
-            default: "";
-        };
-    }
-
     override public function isAutoload():Bool {
         return true;
     }

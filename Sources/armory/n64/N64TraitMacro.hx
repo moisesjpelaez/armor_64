@@ -1302,18 +1302,6 @@ class TraitExtractor extends N64Extractor {
                         is_member: true
                     });
                 }
-            case "inherited_member":
-                var name = Std.string(node.value);
-                if (!captures.exists(name)) {
-                    var memberType = Std.string(node.memberType);
-                    captures.set(name, {
-                        name: name,
-                        type: memberType,
-                        ctype: TypeMap.getCType(memberType),
-                        is_inherited: true,
-                        owner: node.owner
-                    });
-                }
             default:
                 // Recurse into children and args
                 if (node.children != null) {

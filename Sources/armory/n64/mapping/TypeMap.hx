@@ -160,8 +160,13 @@ class TypeMap {
                                 return "ArmSoundChannelMap";
                             }
                         }
-                        // Generic string map
-                        return "ArmStringMap";
+                        switch (valueType) {
+                            case "String": return "ArmStringMap";
+                            case "Int": return "ArmIntMap";
+                            case "Float": return "ArmFloatMap";
+                            case "Bool": return "ArmBoolMap";
+                            default:
+                        }
                     }
                 }
         }
@@ -176,6 +181,16 @@ class TypeMap {
         if (haxeType == null) return false;
         var parsed = parseParameterizedType(haxeType);
         return parsed != null && parsed.base == "Map";
+    }
+
+    /**
+     * Node type reading a Map's value: "map_value" (a copy), or "map_get" (a
+     * pointer, updated in place) when the values are containers themselves.
+     */
+    public static function mapReadNode(haxeType:String):String {
+        var parsed = parseParameterizedType(haxeType);
+        var value = parsed != null && parsed.params.length >= 2 ? parsed.params[1] : null;
+        return isArrayType(value) || isMapType(value) ? "map_get" : "map_value";
     }
 
     /**

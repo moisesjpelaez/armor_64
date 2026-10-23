@@ -166,14 +166,3 @@ class AutoloadEmitter(TraitEmitter):
             return f"{func_name}({', '.join(arg_strs)})"
         return ""
 
-    def emit_audio_handle_field(self, node: Dict) -> str:
-        """Handle field access - prefix handle name if it's a member."""
-        props = node.get("props", {})
-        handle_name = props.get("handle_name", "")
-        field = node.get("value", "")
-        if handle_name and field:
-            # If handle_name is a member of this autoload, prefix it
-            if handle_name in self.member_names:
-                handle_name = f"{self.c_name}_{handle_name}"
-            return f"{handle_name}.{field}"
-        return node.get("c_code", "")

@@ -75,6 +75,12 @@
         return NULL; \
     } \
     \
+    /* Haxe map[key] / map.get(key): the value, zero (or NULL) if missing */ \
+    static inline value_type map_name##_value(map_name *map, const char *key) { \
+        value_type *value = map_name##_get(map, key); \
+        return value ? *value : (value_type){0}; \
+    } \
+    \
     static inline bool map_name##_exists(map_name *map, const char *key) { \
         return map_name##_get(map, key) != NULL; \
     } \
@@ -99,7 +105,10 @@
         return map->count; \
     }
 
-// Default generic string->string map (used for Haxe Map<String, String> and similar)
+// String-keyed maps of the basic types: Haxe Map<String, String/Int/Float/Bool>
 ARM_MAP_DECLARE(const char*, ArmStringMap, 16)
+ARM_MAP_DECLARE(int32_t, ArmIntMap, 16)
+ARM_MAP_DECLARE(float, ArmFloatMap, 16)
+ARM_MAP_DECLARE(bool, ArmBoolMap, 16)
 
 #endif // ARM_MAP_H

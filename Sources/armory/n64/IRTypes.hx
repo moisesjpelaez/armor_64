@@ -56,7 +56,13 @@ package armory.n64;
  *   audio_handle_*                   - Audio handle operations
  *
  * CONSTRUCTORS:
- *   new, new_vec                     - Object/vector creation
+ *   new_vec, tween_alloc             - Vector literal, tween from the pool
+ *
+ * CONTAINERS (object = the map or array, value = its C type):
+ *   map_set, map_get, map_value      - map_get gives a pointer (container values),
+ *   map_exists, map_remove, map_clear  map_value a copy
+ *   array_push, array_pop, array_get, array_clear
+ *   array_get_nested                 - map[key][i]: children = [inner get, index]
  */
 
 typedef IRNode = {

@@ -11,6 +11,7 @@ import armory.n64.TypedIndex;
 import armory.n64.mapping.TypeMap;
 import armory.n64.mapping.EngineTypes;
 import armory.n64.converters.ICallConverter;
+import armory.n64.converters.AudioCallConverter;
 import armory.n64.converters.AutoloadCallConverter;
 import armory.n64.converters.InputCallConverter;
 
@@ -24,8 +25,8 @@ using StringTools;
  *   (members are data->x), setters, callbacks
  * - AutoloadExtractor: static members and functions stored as C globals
  *
- * Hooks: resolveIdent, convertAssign, convertArrayAccess,
- * convertSpecialMethodCall, convertFunctionCall.
+ * Hooks: resolveIdent, convertAssign, convertSpecialMethodCall,
+ * convertFunctionCall.
  */
 class N64Extractor implements IExtractorContext {
     var className:String;
@@ -244,6 +245,9 @@ class N64Extractor implements IExtractorContext {
             case ETernary(econd, eif, eelse):
                 { type: "ternary", children: [exprToIR(econd), exprToIR(eif), exprToIR(eelse)] };
 
+            // Aura.mixChannels["name"]: the mix channel's constant
+            case EArray(_, _) if (AudioCallConverter.mixChannel(e) != null):
+                { type: "c_literal", c_code: AudioCallConverter.mixChannel(e) };
             case EArray(e1, e2):
                 convertArrayAccess(e1, e2);
 
@@ -265,9 +269,22 @@ class N64Extractor implements IExtractorContext {
         return { type: "assign", children: [exprToIR(e1), exprToIR(e2)] };
     }
 
-    /** Hook: `e1[e2]`. */
+    /** `e1[e2]`: typed Map and Array containers use their generated functions. */
     function convertArrayAccess(e1:Expr, e2:Expr):IRNode {
-        return { type: "array_access", children: [exprToIR(e1), exprToIR(e2)] };
+        var objType = getExprType(e1);
+        var ctype = TypeMap.getCType(objType);
+        var container = TypeMap.isMapType(objType) ? TypeMap.mapReadNode(objType) : TypeMap.isArrayType(objType) ? "array_get" : null;
+        // Other arrays (e.g. Koui's elements) are left to the emitter
+        if (container == null || ctype == null || !ctype.startsWith("Arm")) {
+            return { type: "array_access", children: [exprToIR(e1), exprToIR(e2)] };
+        }
+        // map[key][i]: the inner get returns a pointer
+        switch (e1.expr) {
+            case EArray(_, _):
+                return { type: "array_get_nested", value: ctype, children: [exprToIR(e1), exprToIR(e2)] };
+            default:
+        }
+        return { type: container, value: ctype, object: exprToIR(e1), children: [exprToIR(e2)] };
     }
 
     function convertIf(econd:Expr, eif:Expr, eelse:Expr):IRNode {

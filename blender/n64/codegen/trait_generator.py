@@ -847,8 +847,7 @@ class TraitCodeGenerator:
                 return False
             node_type = node.get("type", "")
             # Check for graphics2d-related node types
-            if node_type in ("graphics2d_call", "set_color", "g2_set_color",
-                             "render2d_set_color", "render2d_fill_rect"):
+            if node_type in ("render2d_set_color", "render2d_fill_rect"):
                 return True
             # Recursively scan children and args
             for child in node.get("children", []):
