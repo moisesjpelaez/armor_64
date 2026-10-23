@@ -92,18 +92,59 @@ class N64MacroBase {
             for (cls in extractedClasses) TypedIndex.addClass(cls.get());
             for (extract in extractions) extract();
             for (write in writers) write();
+            writeSignalsJson();
         });
     }
 
-    // Signals across traits: a child can emit or connect a signal its parent
-    // declares. Argument C types by "<declaring trait>.<signal>", and handlers
-    // a child connects that its parent (the handler's class) must generate.
-    public static var signalArgTypes:Map<String, Array<String>> = new Map();
-    public static var inheritedHandlers:Array<{owner:String, handler:String, signal:String}> = [];
+    // Signals used by the game, by "<declaring class>.<name>". Argument types
+    // are collected from every trait and autoload using a signal (typed
+    // handlers first, then emits), then written to n64_signals.json
+    public static var signals:Map<String, SignalDef> = new Map();
 
-    public static function recordSignalArgTypes(owner:String, signal:String, cTypes:Array<String>):Void {
-        var key = '$owner.$signal';
-        if (cTypes.length > 0 && !signalArgTypes.exists(key)) signalArgTypes.set(key, cTypes);
+    public static function useSignal(owner:String, name:String, isStatic:Bool):String {
+        var key = '$owner.$name';
+        if (!signals.exists(key)) {
+            var shortName = owner.substr(owner.lastIndexOf(".") + 1);
+            signals.set(key, {
+                owner: owner,
+                name: name,
+                isStatic: isStatic,
+                cSymbol: isStatic ? 'g_${shortName.toLowerCase()}_$name' : null,
+                handlerTypes: [],
+                emitTypes: []
+            });
+        }
+        return key;
+    }
+
+    // Argument C types of a signal (null when unknown): the first known type
+    // per position wins
+    public static function recordSignalTypes(key:String, cTypes:Array<Null<String>>, fromHandler:Bool):Void {
+        var def = signals.get(key);
+        var known = fromHandler ? def.handlerTypes : def.emitTypes;
+        for (i in 0...cTypes.length) {
+            if (i >= known.length) known.push(cTypes[i]);
+            else if (known[i] == null) known[i] = cTypes[i];
+        }
+    }
+
+    static function writeSignalsJson():Void {
+        var out:Dynamic = {};
+        var keys = [for (k in signals.keys()) k];
+        keys.sort(Reflect.compare);
+        for (key in keys) {
+            var def = signals.get(key);
+            var count = Std.int(Math.max(def.handlerTypes.length, def.emitTypes.length));
+            var argTypes = [for (i in 0...count) {
+                var t = i < def.handlerTypes.length ? def.handlerTypes[i] : null;
+                if (t == null && i < def.emitTypes.length) t = def.emitTypes[i];
+                t != null ? t : "void*";
+            }];
+            var entry:Dynamic = {owner: def.owner, name: def.name, is_static: def.isStatic, arg_types: argTypes};
+            if (def.cSymbol != null) entry.c_symbol = def.cSymbol;
+            Reflect.setField(out, key, entry);
+        }
+        writeJsonFile("n64_signals.json", {ir_version: 1, signals: out});
     }
 
     // Position of the expression being converted, set by the extractors' exprToIR()
@@ -163,6 +204,50 @@ class N64MacroBase {
             method: method,
             object: exprToIR(obj),
             args: args
+        };
+    }
+
+    // iron.math vectors: C struct type and constructor defaults
+    static var vectorTypes:Map<String, {ctype:String, defaults:Array<String>}> = [
+        "iron.math.Vec2" => {ctype: "ArmVec2", defaults: ["0", "0"]},
+        "iron.math.Vec3" => {ctype: "ArmVec3", defaults: ["0", "0", "0"]},
+        "iron.math.Vec4" => {ctype: "ArmVec4", defaults: ["0", "0", "0", "1.0f"]},
+    ];
+
+    /**
+     * `new Vec4(x, y)` etc. as a C struct literal, missing arguments taking the
+     * constructor's defaults. Null if `e` isn't an iron.math vector.
+     */
+    public static function vectorLiteral(e:Expr, args:Array<IRNode>):Null<IRNode> {
+        var vector = vectorTypes.get(TypedIndex.newClass(e));
+        if (vector == null) return null;
+        var values = [for (i in 0...vector.defaults.length) i < args.length ? '{$i}' : vector.defaults[i]];
+        return {
+            type: "new_vec",
+            c_code: '(${vector.ctype}){' + values.join(", ") + '}',
+            args: args.slice(0, vector.defaults.length)
+        };
+    }
+
+    /**
+     * `a == b` / `a != b` on two Strings (not a null check): compares the text,
+     * as Haxe does, instead of the pointers.
+     */
+    public static function stringEquality(op:Binop, e1:Expr, e2:Expr, exprToIR:Expr->IRNode):Null<IRNode> {
+        if (op != OpEq && op != OpNotEq) return null;
+        if (isNullLiteral(e1) || isNullLiteral(e2)) return null;
+        if (TypedIndex.typeOf(e1) != "String" || TypedIndex.typeOf(e2) != "String") return null;
+        return {
+            type: "string_equals",
+            value: op == OpEq ? "==" : "!=",
+            children: [exprToIR(e1), exprToIR(e2)]
+        };
+    }
+
+    static function isNullLiteral(e:Expr):Bool {
+        return switch (e.expr) {
+            case EConst(CIdent("null")): true;
+            default: false;
         };
     }
 
@@ -376,82 +461,6 @@ class N64MacroBase {
         };
     }
 
-    /**
-     * Generate struct_type and struct_def for signals with 2+ arguments.
-     *
-     * For signals that pass multiple arguments, we generate a payload struct:
-     *   typedef struct {
-     *       int32_t arg0;
-     *       float arg1;
-     *   } traitname_signalname_payload_t;
-     *
-     * @param signals Array of SignalMeta from IR
-     * @param cName The C-style name prefix (e.g., "arm_node_player")
-     */
-    public static function generateSignalStructs(signals:Array<SignalMeta>, cName:String):Void {
-        for (sig in signals) {
-            var argCount = sig.arg_types.length;
-            if (argCount >= 2) {
-                sig.struct_type = '${cName}_${sig.name}_payload_t';
-                var lines:Array<String> = ['typedef struct {'];
-                for (i in 0...argCount) {
-                    lines.push('    ${sig.arg_types[i]} arg$i;');
-                }
-                lines.push('} ${sig.struct_type};');
-                sig.struct_def = lines.join('\n');
-            }
-        }
-    }
-
-    /**
-     * Generate preamble code for signal handlers.
-     *
-     * The preamble extracts the payload and sets up local variables:
-     * - 0 args: "(void)payload;"
-     * - 1 arg:  "int32_t arg0 = (int32_t)(uintptr_t)payload;"
-     * - 2+ args: Unpack from struct pointer
-     *
-     * @param signalHandlers Array of SignalHandlerMeta from IR
-     * @param signals Array of SignalMeta to lookup arg types
-     * @param dataType The data struct type name (e.g., "PlayerData")
-     */
-    public static function generateSignalHandlerPreambles(
-        signalHandlers:Array<SignalHandlerMeta>,
-        signals:Array<SignalMeta>,
-        paramNames:String->Array<String>
-    ):Void {
-        for (sh in signalHandlers) {
-            // Find the signal this handler connects to
-            for (sig in signals) {
-                if (sig.name == sh.signal_name) {
-                    var argTypes = sig.arg_types;
-                    var argCount = argTypes.length;
-                    // The handler body uses its own parameter names
-                    var names = paramNames(sh.handler_name);
-                    var argName = i -> i < names.length ? names[i] : 'arg$i';
-
-                    // Only the payload: the C code generator adds the data
-                    // cast and obj, which depend on the struct layout
-                    if (argCount == 0) {
-                        sh.preamble = '(void)payload;';
-                    } else if (argCount == 1) {
-                        var value = argTypes[0] == "float" ? 'signal_payload_to_float(payload)' : '(${argTypes[0]})(uintptr_t)payload';
-                        sh.preamble = '${argTypes[0]} ${argName(0)} = $value; (void)${argName(0)};';
-                    } else {
-                        // Multiple args - unpack from struct
-                        var structType = sig.struct_type;
-                        var lines:Array<String> = [];
-                        lines.push('$structType* p = ($structType*)payload;');
-                        for (i in 0...argCount) {
-                            lines.push('${argTypes[i]} ${argName(i)} = p->arg$i; (void)${argName(i)};');
-                        }
-                        sh.preamble = lines.join(" ");
-                    }
-                    break;
-                }
-            }
-        }
-    }
 }
 
 #end

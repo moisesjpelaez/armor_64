@@ -64,6 +64,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 #include <rspq.h>
 #include <t3d/t3dmath.h>
 #include <t3d/t3dmodel.h>
@@ -122,6 +123,12 @@ typedef struct {{
 // Signal System - Per-instance event dispatch
 // =============================================================================
 
+// Haxe string equality: compares the text, and a null string only equals null
+static inline bool arm_string_equals(const char *a, const char *b) {{
+    if (a == b) return true;
+    return a != NULL && b != NULL && strcmp(a, b) == 0;
+}}
+
 #ifndef ARM_SIGNAL_MAX_SUBS
 #define ARM_SIGNAL_MAX_SUBS 16
 #endif
@@ -129,7 +136,8 @@ typedef struct {{
 /**
  * Signal handler function type.
  * Called when a signal is emitted with: (context, payload)
- * Pack all data into a struct and pass its pointer as payload.
+ * The payload of a signal with arguments points to its argument struct
+ * (<signal>_payload_t in data/signals.h), built by the emitter for the call.
  */
 typedef void (*ArmSignalHandler)(void *ctx, void *payload);
 
@@ -147,32 +155,22 @@ typedef struct {{
  *
  * Usage in traits:
  *   - Declare: var onDeath:Signal; (Haxe) → ArmSignal onDeath; (C struct member)
- *   - Connect: onDeath.connect(callback) → signal_connect(&data->onDeath, handler, obj, data)
- *   - Emit: onDeath.emit(damage) → signal_emit(&data->onDeath, obj, damage)
- *   - Disconnect: onDeath.disconnect(callback) → signal_disconnect(&data->onDeath, handler)
+ *   - Connect: onDeath.connect(callback) → signal_connect(&data->onDeath, handler, data)
+ *   - Emit: onDeath.emit(damage) → {{ payload_t _p = {{damage}}; signal_emit(&data->onDeath, &_p); }}
+ *   - Disconnect: onDeath.disconnect(callback) → signal_disconnect(&data->onDeath, handler, data)
  */
 typedef struct {{
     uint8_t count;
+    uint8_t emitting;  // Nested emits in progress: removals are deferred meanwhile
+    uint8_t removed;   // Entries cleared during an emit, compacted after it
     ArmSignalEntry entries[ARM_SIGNAL_MAX_SUBS];
 }} ArmSignal;
 
 // Signal functions (implemented in signal.c)
 void signal_connect(ArmSignal *signal, ArmSignalHandler handler, void *ctx);
-void signal_disconnect(ArmSignal *signal, ArmSignalHandler handler);
+void signal_disconnect(ArmSignal *signal, ArmSignalHandler handler, void *ctx);
 void signal_emit(ArmSignal *signal, void *payload);
 void signal_clear(ArmSignal *signal);
-
-// A single argument travels in the payload pointer itself. Integers, bools and
-// pointers are cast; a float is passed as its bits (a cast would convert its value)
-static inline void *signal_payload_from_float(float value) {{
-    union {{ float f; uint32_t u; }} bits = {{ .f = value }};
-    return (void *)(uintptr_t)bits.u;
-}}
-
-static inline float signal_payload_to_float(void *payload) {{
-    union {{ float f; uint32_t u; }} bits = {{ .u = (uint32_t)(uintptr_t)payload }};
-    return bits.f;
-}}
 
 typedef struct {{
     T3DVec3 loc;

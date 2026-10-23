@@ -62,12 +62,6 @@ interface IExtractorContext {
     // Events map access (for contact/signal handlers)
     function getEvents():Map<String, Array<IRNode>>;
 
-    // Add a signal handler for extraction
-    function addSignalHandler(callbackName:String, signalName:String):Void;
-
-    // Update signal arg types from emit() call
-    function updateSignalArgTypes(signalName:String, params:Array<Expr>):Void;
-
     // Infer expression type (for signal arg types)
     function inferExprType(e:Expr):String;
 

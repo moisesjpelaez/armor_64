@@ -43,7 +43,7 @@ package armory.n64;
  *   scene_call, transform_call       - Domain-specific calls
  *   math_call, input_call            - Domain-specific calls
  *   physics_call, vec_call           - Domain-specific calls
- *   signal_call, global_signal_call  - Signal system calls
+ *   signal_connect, signal_disconnect, signal_emit - Signals (see SignalCallConverter)
  *   canvas_get_label, label_set_text - UI calls
  *   autoload_call                    - Call to autoload function
  *   object_call                      - Object method call
@@ -110,17 +110,20 @@ typedef ContactEventMeta = {
 }
 
 typedef SignalMeta = {
-    name: String,            // Signal member name, e.g., "onDeath"
-    arg_types: Array<String>, // C types for emit args, e.g., ["int32_t", "ArmObject*"]
-    max_subs: Int,           // Max subscribers, default 16, configurable via @:n64MaxSubs(N)
-    ?struct_type: String,    // Payload struct type name for 2+ args
-    ?struct_def: String      // Full C struct definition for 2+ args
+    name: String             // Signal member name, e.g., "onDeath"
 }
 
-typedef SignalHandlerMeta = {
-    handler_name: String,    // Function name used as callback, e.g., "onEnemyDeath"
-    signal_name: String,     // Which signal it connects to, e.g., "onDeath"
-    ?preamble: String        // C code for payload unpacking, generated after arg_types known
+/**
+ * A signal used by the game, identified by "<declaring class>.<name>" (see
+ * N64MacroBase.signals): written to n64_signals.json for the C generator.
+ */
+typedef SignalDef = {
+    owner: String,           // Declaring class, full path
+    name: String,            // Field name
+    isStatic: Bool,          // Static (one global ArmSignal) or per-instance (in the owner's data)
+    ?cSymbol: String,        // Global C symbol of a static signal, e.g., "g_gameevents_levelWon"
+    handlerTypes: Array<Null<String>>, // Argument C types from typed handlers (preferred)
+    emitTypes: Array<Null<String>>     // Argument C types from emit() calls
 }
 
 /**
@@ -158,8 +161,7 @@ typedef TraitMeta = {
     button_events: Array<ButtonEventMeta>,  // structured button event info
     contact_events: Array<ContactEventMeta>, // physics contact subscriptions
     signals: Array<SignalMeta>, // per-instance signal declarations
-    signal_handlers: Array<SignalHandlerMeta>, // functions used as signal callbacks
-    global_signals: Array<String>, // global signals used (e.g., "g_gameevents_gemCollected")
+    ?connects_signals: Bool,   // Connects handlers with its data as context: needs a data struct
     has_remove_update: Bool,       // True if trait calls removeUpdate() - adds _update_enabled guard
     has_remove_fixed_update: Bool, // True if trait calls removeFixedUpdate() - adds _fixed_update_enabled guard
     has_remove_late_update: Bool,  // True if trait calls removeLateUpdate()
@@ -212,10 +214,7 @@ typedef AutoloadParamIR = {
 }
 
 typedef AutoloadMeta = {
-    order: Int,              // Initialization order (lower = earlier)
-    signals: Array<SignalMeta>,           // Static signal declarations
-    signal_handlers: Array<SignalHandlerMeta>, // Functions used as signal callbacks
-    global_signals: Array<String>         // Global signals used by this autoload
+    order: Int               // Initialization order (lower = earlier)
 }
 
 typedef AutoloadIR = {

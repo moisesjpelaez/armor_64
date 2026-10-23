@@ -206,16 +206,6 @@ class N64AutoloadMacro {
                 });
             }
 
-            // Generate struct_type and struct_def for signals with 2+ args
-            N64MacroBase.generateSignalStructs(ir.meta.signals, ir.cName);
-
-            // Generate preambles for signal handlers
-            N64MacroBase.generateSignalHandlerPreambles(
-                ir.meta.signal_handlers,
-                ir.meta.signals,
-                function(_) return []
-            );
-
             Reflect.setField(autoloads, name, {
                 module: ir.module,
                 c_name: ir.cName,
@@ -275,10 +265,7 @@ class AutoloadExtractor implements IExtractorContext {
         this.memberTypes = new Map();
         this.hasInit = false;
         this.meta = {
-            order: order,
-            signals: [],
-            signal_handlers: [],
-            global_signals: []
+            order: order
         };
 
         // Generate C-safe name
@@ -341,27 +328,8 @@ class AutoloadExtractor implements IExtractorContext {
                     var haxeType = t != null ? N64MacroBase.complexTypeToString(t) : "Dynamic";
                     memberTypes.set(field.name, haxeType);
 
-                    // Signal members tracked separately
-                    if (haxeType == "Signal") {
-                        var maxSubs = 16;
-                        if (field.meta != null) {
-                            for (m in field.meta) {
-                                if (m.name == ":n64MaxSubs" || m.name == "n64MaxSubs") {
-                                    if (m.params != null && m.params.length > 0) {
-                                        switch (m.params[0].expr) {
-                                            case EConst(CInt(v)): maxSubs = Std.parseInt(v);
-                                            default:
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        meta.signals.push({
-                            name: field.name,
-                            arg_types: [],
-                            max_subs: maxSubs
-                        });
-                    } else {
+                    // Static signals: declared by the signal registry (n64_signals.json)
+                    if (haxeType != "Signal") {
                         var member = extractMember(field.name, t, e);
                         if (member != null) {
                             members.set(field.name, member);
@@ -374,27 +342,7 @@ class AutoloadExtractor implements IExtractorContext {
                     var haxeType = t != null ? N64MacroBase.complexTypeToString(t) : "Dynamic";
                     memberTypes.set(field.name, haxeType);
 
-                    // Signal properties should be tracked separately like FVar signals
-                    if (haxeType == "Signal") {
-                        var maxSubs = 16;
-                        if (field.meta != null) {
-                            for (m in field.meta) {
-                                if (m.name == ":n64MaxSubs" || m.name == "n64MaxSubs") {
-                                    if (m.params != null && m.params.length > 0) {
-                                        switch (m.params[0].expr) {
-                                            case EConst(CInt(v)): maxSubs = Std.parseInt(v);
-                                            default:
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        meta.signals.push({
-                            name: field.name,
-                            arg_types: [],
-                            max_subs: maxSubs
-                        });
-                    } else {
+                    if (haxeType != "Signal") {
                         var member = extractMember(field.name, t, e);
                         if (member != null) {
                             members.set(field.name, member);
@@ -610,6 +558,8 @@ class AutoloadExtractor implements IExtractorContext {
                 return N64MacroBase.constToIR(c);
 
             case EBinop(op, e1, e2):
+                var equality = N64MacroBase.stringEquality(op, e1, e2, exprToIR);
+                if (equality != null) return equality;
                 return {
                     type: "binop",
                     value: N64MacroBase.binopToString(op),
@@ -817,6 +767,8 @@ class AutoloadExtractor implements IExtractorContext {
                     // Tween allocation from pool
                     return { type: "tween_alloc" };
                 }
+                var vector = N64MacroBase.vectorLiteral(e, [for (p in params) exprToIR(p)]);
+                if (vector != null) return vector;
                 return N64MacroBase.unsupported('new $typeName() is not supported on N64 yet');
 
             default:
@@ -939,31 +891,6 @@ class AutoloadExtractor implements IExtractorContext {
         };
     }
 
-    public function addSignalHandler(handlerName:String, signalName:String):Void {
-        // Check if already tracked (avoid duplicates)
-        for (h in meta.signal_handlers) {
-            if (h.handler_name == handlerName) return;
-        }
-
-        meta.signal_handlers.push({
-            handler_name: handlerName,
-            signal_name: signalName
-        });
-    }
-
-    public function updateSignalArgTypes(signalName:String, params:Array<Expr>):Void {
-        for (sig in meta.signals) {
-            if (sig.name == signalName && sig.arg_types.length == 0) {
-                for (p in params) {
-                    var haxeType = inferExprType(p);
-                    var cType = TypeMap.getCType(haxeType);
-                    sig.arg_types.push(cType);
-                }
-                break;
-            }
-        }
-    }
-
     public function getMeta():TraitMeta {
         // Return a TraitMeta-compatible structure
         // AutoloadMeta is a subset, so we create a compatible wrapper
@@ -979,9 +906,7 @@ class AutoloadExtractor implements IExtractorContext {
             buttons_used: [],
             button_events: [],
             contact_events: [],
-            signals: meta.signals,
-            signal_handlers: meta.signal_handlers,
-            global_signals: meta.global_signals,
+            signals: [],
             has_remove_update: false,
             has_remove_fixed_update: false,
             has_remove_late_update: false,

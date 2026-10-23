@@ -7,7 +7,6 @@
  *
  * Usage in Haxe traits:
  *   var onDeath:Signal;                    // Declare signal
- *   @:n64MaxSubs(8) var onHit:Signal;      // Custom max subscribers (default 16)
  *
  *   onDeath.connect(myCallback);           // Subscribe
  *   onDeath.disconnect(myCallback);        // Unsubscribe
@@ -18,5 +17,6 @@
 
 #include "../types.h"
 
-// Functions are declared in types.h since ArmSignal is defined there
-// This header is for documentation and potential future extensions
+// Functions are declared in types.h since ArmSignal is defined there.
+// Payload structs and static signals of the game (generated)
+#include "../data/signals.h"

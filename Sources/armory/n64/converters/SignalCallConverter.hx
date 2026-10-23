@@ -2,338 +2,143 @@ package armory.n64.converters;
 
 #if macro
 import haxe.macro.Expr;
-import haxe.macro.Context;
 import armory.n64.IRTypes;
 import armory.n64.N64MacroBase;
 import armory.n64.TypedIndex;
 import armory.n64.mapping.TypeMap;
 import armory.n64.converters.ICallConverter;
-import armory.n64.util.ExprUtils;
 
 /**
- * Converts Signal method calls to C signal_* functions.
- * Handles: connect, disconnect, emit for both instance and global signals.
- * Supports both named function references and anonymous inline functions.
+ * Converts armory.system.Signal calls: connect, disconnect and emit, on static
+ * and per-instance signals, with method or anonymous handlers.
+ *
+ * Signals are identified by their declaring class and name (from the typed
+ * AST) and registered in N64MacroBase.signals, which collects their argument
+ * types from typed handlers and emits across all traits and autoloads. The C
+ * generator (signal_codegen.py) renders the nodes:
+ *   signal_connect / signal_disconnect: props {signal, handler}, object = instance
+ *   signal_emit: props {signal}, args, object = instance
+ * where `object` is the instance whose signal it is, absent for static signals
+ * and the trait's own ones.
  */
 class SignalCallConverter implements ICallConverter {
-    // Per class (one converter per extractor): callback names stay the same
-    // whatever order the classes are compiled in
+    // Per class (one converter per extractor): anonymous handler names stay the
+    // same whatever order the classes are compiled in
     var anonCounter:Int = 0;
 
     public function new() {}
 
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
-        // Only handle Signal methods
-        if (method != "connect" && method != "disconnect" && method != "emit") {
-            return null;
+        // Only armory.system.Signal, from the typed AST
+        if (TypedIndex.receiverPath(obj) != "armory.system.Signal") return null;
+
+        var ref = TypedIndex.fieldRef(obj);
+        if (ref == null) {
+            return N64MacroBase.unsupported('Signal.$method() is only supported on Signal fields on N64');
         }
+        var key = N64MacroBase.useSignal(ref.owner, ref.name, ref.isStatic);
+        var instance = ref.isStatic ? null : instanceOf(obj, ctx);
 
-        // Static signal on a class: ClassName.signalName.method(). Checked first
-        // because its type is also Signal; the class comes from the typed AST,
-        // so import aliases resolve to the real class name
-        switch (obj.expr) {
-            case EField(classExpr, signalName):
-                var classType = TypedIndex.classOf(classExpr);
-                if (classType != null) {
-                    return convertGlobalSignalCall(method, classType.name, signalName, args, rawParams, ctx);
-                }
-            default:
-        }
-
-        // Static signal written without its class (inside the class declaring
-        // it, e.g. an autoload connecting its own signal): also global
-        switch (obj.expr) {
-            case EConst(CIdent(signalName)):
-                var staticOwner = TypedIndex.staticFieldOwner(obj);
-                if (staticOwner != null) {
-                    return convertGlobalSignalCall(method, staticOwner.name, signalName, args, rawParams, ctx);
-                }
-            default:
-        }
-
-        // Check if object is a Signal type
-        var objType = ctx.getExprType(obj);
-        if (objType == "Signal") {
-            return convertSignalCall(method, obj, args, rawParams, ctx);
-        }
-
-        // Check memberTypes directly for this.signalName pattern
-        var memberName = ExprUtils.extractIdentName(obj);
-
-        if (memberName != null && ctx.getMemberType(memberName) == "Signal") {
-            return convertSignalCall(method, obj, args, rawParams, ctx);
-        }
-
-        // Fallback for expressions without a typed node: ClassName.signalName.method()
-        switch (obj.expr) {
-            case EField(classExpr, signalName):
-                switch (classExpr.expr) {
-                    case EConst(CIdent(className)):
-                        // This is ClassName.signalName.method() - global signal
-                        return convertGlobalSignalCall(method, className, signalName, args, rawParams, ctx);
-                    default:
-                }
-            default:
-        }
-
-        return null;
+        return switch (method) {
+            case "connect", "disconnect": connection(method, key, ref.name, instance, rawParams, ctx);
+            case "emit": emit(key, instance, args, rawParams, ctx);
+            default: N64MacroBase.unsupported('Signal.$method() is not supported on N64 yet');
+        };
     }
 
-    function convertSignalCall(method:String, signalExpr:Expr, args:Array<IRNode>, params:Array<Expr>, ctx:IExtractorContext):IRNode {
-        var node = buildSignalCall(method, signalExpr, args, params, ctx);
-        // A signal declared in a parent trait lives in that trait's data struct
-        var owner = TypedIndex.fieldOwner(signalExpr);
-        if (node != null && node.type == "signal_call" && owner != null) {
-            Reflect.setField(node.props, "owner", owner);
+    // The instance whose per-instance signal this is: null for the trait's own
+    function instanceOf(signalExpr:Expr, ctx:IExtractorContext):Null<IRNode> {
+        return switch (signalExpr.expr) {
+            case EField(receiver, _) if (!isThis(receiver)): ctx.exprToIR(receiver);
+            default: null;
+        };
+    }
+
+    function connection(method:String, key:String, signalName:String, instance:Null<IRNode>, params:Array<Expr>, ctx:IExtractorContext):IRNode {
+        if (params.length == 0) return N64MacroBase.unsupported('Signal.$method() needs a handler');
+
+        var handler = handlerOf(params[0], key, signalName, method == "connect", ctx);
+        if (handler == null) {
+            return N64MacroBase.unsupported(method == "connect"
+                ? "Signal.connect() handler must be a method or an anonymous function on N64"
+                : "Signal.disconnect() handler must be a method on N64");
         }
+        // Handlers of a trait are connected with its data as context
+        if (!ctx.isAutoload() && handler.kind != "static") ctx.getMeta().connects_signals = true;
+
+        var node:IRNode = {
+            type: 'signal_$method',
+            props: {signal: key, handler: handler}
+        };
+        if (instance != null) node.object = instance;
         return node;
     }
 
-    function buildSignalCall(method:String, signalExpr:Expr, args:Array<IRNode>, params:Array<Expr>, ctx:IExtractorContext):IRNode {
-        // Get the signal member name from the expression
-        var signalName = ExprUtils.extractIdentName(signalExpr);
-
-        if (signalName == null) {
-            return N64MacroBase.unsupported('Signal.$method() on this expression is not supported on N64');
-        }
-
-        switch (method) {
-            case "connect":
-                if (params.length > 0) {
-                    // Try to extract as named function reference first
-                    var callbackName = extractFunctionRef(params[0]);
-                    if (callbackName != null) {
-                        recordArgTypes(signalExpr, signalName, TypedIndex.functionArgTypes(params[0]));
-                        var node:IRNode = {
-                            type: "signal_call",
-                            value: "connect",
-                            c_code: 'signal_connect({signal_ptr}, {handler}, data);',
-                            props: {
-                                signal_name: signalName,
-                                callback: callbackName
-                            }
-                        };
-                        if (ctx.getMethod(callbackName) == null && TypedIndex.fieldOwner(params[0]) != null) {
-                            // Handler declared in a parent: that class generates it
-                            var owner = TypedIndex.fieldOwner(params[0]);
-                            N64MacroBase.inheritedHandlers.push({owner: owner, handler: callbackName, signal: signalName});
-                            Reflect.setField(node.props, "handler_owner", owner);
-                        } else {
-                            ctx.addSignalHandler(callbackName, signalName);
-                        }
-                        return node;
-                    }
-
-                    // Check for anonymous function
-                    var anonResult = extractAnonymousCallback(params[0], signalName, ctx);
-                    if (anonResult != null) {
-                        ctx.addSignalHandler(anonResult.callbackName, signalName);
-                        return {
-                            type: "signal_call",
-                            value: "connect",
-                            c_code: 'signal_connect({signal_ptr}, {handler}, data);',
-                            props: {
-                                signal_name: signalName,
-                                callback: anonResult.callbackName,
-                                inline_callback: anonResult.inlineCallback
-                            }
-                        };
-                    }
-                }
-                return N64MacroBase.unsupported("Signal.connect() callback must be a method name or an anonymous function on N64");
-
-            case "disconnect":
-                if (params.length > 0) {
-                    var callbackName = extractFunctionRef(params[0]);
-                    if (callbackName != null) {
-                        return {
-                            type: "signal_call",
-                            value: "disconnect",
-                            c_code: 'signal_disconnect({signal_ptr}, {handler});',
-                            props: {
-                                signal_name: signalName,
-                                callback: callbackName
-                            }
-                        };
-                    }
-                }
-                return N64MacroBase.unsupported("Signal.disconnect() callback must be a method name on N64");
-
-            case "emit":
-                ctx.updateSignalArgTypes(signalName, params);
-                recordArgTypes(signalExpr, signalName, [for (p in params) argType(p, ctx)]);
-                var argCount = params.length;
-
-                var c_code:String;
-                if (argCount == 0) {
-                    c_code = 'signal_emit({signal_ptr}, NULL);';
-                } else if (argCount == 1) {
-                    c_code = singleArgEmit(params[0], ctx);
-                } else {
-                    var argPlaceholders = [for (i in 0...argCount) '{$i}'];
-                    c_code = '{struct_type} _p = {' + argPlaceholders.join(', ') + '}; signal_emit({signal_ptr}, &_p);';
-                }
-
-                return {
-                    type: "signal_call",
-                    value: "emit",
-                    c_code: c_code,
-                    props: {
-                        signal_name: signalName,
-                        arg_count: argCount
-                    },
-                    args: args
-                };
-
-            default:
-                return { type: "skip" };
-        }
-    }
-
-    function convertGlobalSignalCall(method:String, className:String, signalName:String, args:Array<IRNode>, params:Array<Expr>, ctx:IExtractorContext):IRNode {
-        // Handle global/static signals: GameEvents.gemCollected.emit()
-        var globalSignalName = 'g_${className.toLowerCase()}_$signalName';
-
-        // Track this global signal
-        var meta = ctx.getMeta();
-        if (!Lambda.has(meta.global_signals, globalSignalName)) {
-            meta.global_signals.push(globalSignalName);
-        }
-
-        switch (method) {
-            case "connect":
-                if (params.length > 0) {
-                    // Try to extract as named function reference first
-                    var callbackName = extractFunctionRef(params[0]);
-                    if (callbackName != null) {
-                        ctx.addSignalHandler(callbackName, signalName);
-                        return {
-                            type: "global_signal_call",
-                            c_code: 'signal_connect({signal_ptr}, {handler}, data);',
-                            props: {
-                                global_signal: globalSignalName,
-                                callback: callbackName
-                            }
-                        };
-                    }
-
-                    // Check for anonymous function
-                    var anonResult = extractAnonymousCallback(params[0], signalName, ctx);
-                    if (anonResult != null) {
-                        ctx.addSignalHandler(anonResult.callbackName, signalName);
-                        return {
-                            type: "global_signal_call",
-                            c_code: 'signal_connect({signal_ptr}, {handler}, data);',
-                            props: {
-                                global_signal: globalSignalName,
-                                callback: anonResult.callbackName,
-                                inline_callback: anonResult.inlineCallback
-                            }
-                        };
-                    }
-                }
-                return N64MacroBase.unsupported("Signal.connect() callback must be a method name or an anonymous function on N64");
-
-            case "disconnect":
-                if (params.length > 0) {
-                    var callbackName = extractFunctionRef(params[0]);
-                    if (callbackName != null) {
-                        return {
-                            type: "global_signal_call",
-                            c_code: 'signal_disconnect({signal_ptr}, {handler});',
-                            props: {
-                                global_signal: globalSignalName,
-                                callback: callbackName
-                            }
-                        };
-                    }
-                }
-                return N64MacroBase.unsupported("Signal.disconnect() callback must be a method name on N64");
-
-            case "emit":
-                var argCount = params.length;
-                var c_code:String;
-                if (argCount == 0) {
-                    c_code = 'signal_emit({signal_ptr}, NULL);';
-                } else if (argCount == 1) {
-                    c_code = singleArgEmit(params[0], ctx);
-                } else {
-                    c_code = 'signal_emit({signal_ptr}, (void*){0});';
-                }
-                return {
-                    type: "global_signal_call",
-                    c_code: c_code,
-                    props: {
-                        global_signal: globalSignalName
-                    },
-                    args: args
-                };
-
-            default:
-                return { type: "skip" };
-        }
+    function emit(key:String, instance:Null<IRNode>, args:Array<IRNode>, params:Array<Expr>, ctx:IExtractorContext):IRNode {
+        N64MacroBase.recordSignalTypes(key, [for (p in params) cType(argType(p, ctx))], false);
+        var node:IRNode = {
+            type: "signal_emit",
+            props: {signal: key},
+            args: args
+        };
+        if (instance != null) node.object = instance;
+        return node;
     }
 
     /**
-     * Extract an anonymous function callback, generating a unique name and IR body.
-     * Returns null if the expression is not an anonymous function.
+     * Handler of connect()/disconnect(): a method (of this trait, a parent,
+     * another instance or a static function) or an anonymous function.
      */
-    function extractAnonymousCallback(e:Expr, signalName:String, ctx:IExtractorContext):{ callbackName:String, inlineCallback:Dynamic } {
+    function handlerOf(e:Expr, key:String, signalName:String, allowAnonymous:Bool, ctx:IExtractorContext):Dynamic {
+        var args = TypedIndex.functionArgs(e);
+        var params = args != null ? [for (a in args) {name: a.name, ctype: cType(a.type)}] : null;
+
         switch (e.expr) {
             case EFunction(_, func):
-                // It's an anonymous function: function(param: Type) { ... }
-                var cName = ctx.getCName();
-                var callbackName = '${signalName}_cb_${anonCounter++}';
-
-                // Extract function parameters
-                var params:Array<Dynamic> = [];
-                if (func.args != null) {
-                    for (arg in func.args) {
-                        var paramName = arg.name;
-                        var haxeType = "Dynamic";
-                        if (arg.type != null) {
-                            haxeType = haxe.macro.ComplexTypeTools.toString(arg.type);
-                        }
-                        var ctype = TypeMap.getCType(haxeType);
-                        params.push({
-                            name: paramName,
-                            haxe_type: haxeType,
-                            ctype: ctype
-                        });
-                    }
+                if (!allowAnonymous) return null;
+                if (params == null) {
+                    params = [for (a in func.args) {name: a.name, ctype: a.type != null ? cType(haxe.macro.ComplexTypeTools.toString(a.type)) : null}];
                 }
-
-                // Extract function body as IR nodes
-                var bodyNodes:Array<Dynamic> = [];
-                if (func.expr != null) {
-                    switch (func.expr.expr) {
-                        case EBlock(exprs):
-                            for (expr in exprs) {
-                                var node = ctx.exprToIR(expr);
-                                if (N64MacroBase.keepStatement(node)) {
-                                    bodyNodes.push(node);
-                                }
-                            }
-                        default:
-                            var node = ctx.exprToIR(func.expr);
-                            if (N64MacroBase.keepStatement(node)) {
-                                bodyNodes.push(node);
-                            }
-                    }
-                }
-
+                N64MacroBase.recordSignalTypes(key, [for (p in params) p.ctype], true);
                 return {
-                    callbackName: callbackName,
-                    inlineCallback: {
-                        callback_name: callbackName,
-                        params: params,
-                        body: bodyNodes
-                    }
+                    kind: "anonymous",
+                    id: '${signalName}_cb_${anonCounter++}',
+                    params: params,
+                    body: bodyOf(func, ctx)
                 };
-
             default:
-                return null;
+                var ref = TypedIndex.fieldRef(e);
+                if (ref == null || params == null) return null;
+                N64MacroBase.recordSignalTypes(key, [for (p in params) p.ctype], true);
+                var handler:Dynamic = {
+                    kind: ref.isStatic ? "static" : "method",
+                    owner: ref.owner,
+                    name: ref.name,
+                    params: params
+                };
+                // Another instance's method: other.onHit
+                if (!ref.isStatic) {
+                    switch (e.expr) {
+                        case EField(receiver, _) if (!isThis(receiver)): handler.instance = ctx.exprToIR(receiver);
+                        default:
+                    }
+                }
+                return handler;
         }
+    }
+
+    function bodyOf(func:Function, ctx:IExtractorContext):Array<IRNode> {
+        var nodes:Array<IRNode> = [];
+        if (func.expr == null) return nodes;
+        var statements = switch (func.expr.expr) {
+            case EBlock(exprs): exprs;
+            default: [func.expr];
+        };
+        for (statement in statements) {
+            var node = ctx.exprToIR(statement);
+            if (N64MacroBase.keepStatement(node)) nodes.push(node);
+        }
+        return nodes;
     }
 
     // Type of an emitted argument: emit() takes `...args:Any`, so look past
@@ -343,23 +148,17 @@ class SignalCallConverter implements ICallConverter {
         return t != null ? t : ctx.inferExprType(arg);
     }
 
-    // One argument is passed in the payload pointer: a float as its bits
-    // (signal_payload_from_float), anything else cast
-    static function singleArgEmit(arg:Expr, ctx:IExtractorContext):String {
-        return TypeMap.getCType(argType(arg, ctx)) == "float"
-            ? 'signal_emit({signal_ptr}, signal_payload_from_float({0}));'
-            : 'signal_emit({signal_ptr}, (void*)(uintptr_t)({0}));';
+    // C type of a signal argument, null when unknown
+    static function cType(haxeType:Null<String>):Null<String> {
+        if (haxeType == null || haxeType == "Dynamic" || haxeType == "Any") return null;
+        return TypeMap.getCType(haxeType);
     }
 
-    // Argument types for a signal, under the trait declaring it
-    function recordArgTypes(signalExpr:Expr, signalName:String, haxeTypes:Null<Array<String>>):Void {
-        var owner = TypedIndex.fieldOwner(signalExpr);
-        if (owner == null || haxeTypes == null || haxeTypes.indexOf(null) >= 0) return;
-        N64MacroBase.recordSignalArgTypes(owner, signalName, [for (t in haxeTypes) TypeMap.getCType(t)]);
-    }
-
-    function extractFunctionRef(e:Expr):String {
-        return ExprUtils.extractIdentName(e);
+    static function isThis(e:Expr):Bool {
+        return switch (e.expr) {
+            case EConst(CIdent("this")): true;
+            default: false;
+        };
     }
 }
 

@@ -12,119 +12,7 @@ from typing import Dict, List
 from arm import log
 from arm.n64.codegen.autoload_emitter import AutoloadEmitter
 from arm.n64.codegen import tween_helper
-
-
-def _find_signal_inline_callbacks(nodes: List[dict]) -> List[dict]:
-    """Recursively find all inline signal callbacks in IR nodes.
-
-    Searches for signal_call and global_signal_call nodes that have
-    props.inline_callback defined (anonymous functions).
-
-    Args:
-        nodes: List of IR nodes to search
-
-    Returns:
-        List of inline callback info dicts
-    """
-    callbacks = []
-    for node in nodes:
-        if node is None:
-            continue
-        node_type = node.get("type")
-
-        # Check for signal connect nodes with inline callbacks
-        if node_type in ("signal_call", "global_signal_call"):
-            props = node.get("props", {})
-            inline_cb = props.get("inline_callback")
-            if inline_cb and isinstance(inline_cb, dict) and inline_cb.get("callback_name"):
-                callbacks.append(inline_cb)
-
-        # Recurse into children
-        children = node.get("children", [])
-        if children:
-            callbacks.extend(_find_signal_inline_callbacks(children))
-        # Recurse into args
-        args = node.get("args", [])
-        if args:
-            callbacks.extend(_find_signal_inline_callbacks(args))
-        # Recurse into body
-        body = node.get("body", [])
-        if body and isinstance(body, list):
-            callbacks.extend(_find_signal_inline_callbacks(body))
-        # Recurse into props values
-        props = node.get("props", {})
-        if props:
-            for val in props.values():
-                if isinstance(val, list):
-                    callbacks.extend(_find_signal_inline_callbacks(val))
-                elif isinstance(val, dict) and "type" in val:
-                    callbacks.extend(_find_signal_inline_callbacks([val]))
-    return callbacks
-
-
-def _generate_signal_inline_callback(callback_info: dict, emitter, c_name: str) -> str:
-    """Generate a static C callback wrapper for an inline signal callback.
-
-    Args:
-        callback_info: Dict with callback_name, params, and body
-        emitter: The code emitter for generating C code from IR
-        c_name: The C name prefix for the autoload
-
-    Returns:
-        C code string for the callback wrapper function
-    """
-    if not callback_info:
-        return ""
-
-    cb_name = callback_info.get("callback_name", "")
-    body_nodes = callback_info.get("body", [])
-    params = callback_info.get("params", [])
-
-    if not cb_name or not body_nodes:
-        return ""
-
-    lines = []
-    # Generate the wrapper with ArmSignalHandler signature
-    wrapper_name = f"{c_name}_{cb_name}_wrapper"
-    lines.append(f"static void {wrapper_name}(void* ctx, void* payload) {{")
-    lines.append("    (void)ctx;")
-
-    # Generate parameter declarations from payload
-    if not params:
-        lines.append("    (void)payload;")
-    elif len(params) == 1:
-        # Single parameter - cast payload directly
-        p = params[0]
-        pname = p.get("name", "arg")
-        ctype = p.get("ctype", "void*")
-        if ctype == "const char*":
-            lines.append(f"    const char* {pname} = payload ? (const char*)payload : \"\";")
-        elif ctype in ("int32_t", "int"):
-            lines.append(f"    int32_t {pname} = (int32_t)(intptr_t)payload;")
-        elif ctype == "float":
-            lines.append(f"    float {pname} = signal_payload_to_float(payload);")
-        elif ctype == "bool":
-            lines.append(f"    bool {pname} = (bool)(intptr_t)payload;")
-        else:
-            lines.append(f"    {ctype} {pname} = ({ctype})payload;")
-    else:
-        # Multiple parameters - assume payload is a struct pointer
-        lines.append("    // TODO: unpack struct from payload")
-        lines.append("    (void)payload;")
-
-    # Emit body
-    for node in body_nodes:
-        code = emitter.emit(node)
-        if code and code != "":
-            for line in code.split('\n'):
-                if line.strip():
-                    if not line.strip().endswith((';', '{', '}')):
-                        lines.append(f"    {line};")
-                    else:
-                        lines.append(f"    {line}")
-
-    lines.append("}")
-    return "\n".join(lines)
+from arm.n64.codegen.signal_codegen import SignalContext, find_signal_bindings
 
 
 def load_autoloads_json(build_dir: str = None) -> dict:
@@ -157,7 +45,7 @@ def load_autoloads_json(build_dir: str = None) -> dict:
     return {"ir_version": 0, "autoloads": {}}
 
 
-def _prepare_autoload_template_data(name: str, autoload_ir: dict) -> dict:
+def _prepare_autoload_template_data(name: str, autoload_ir: dict, signal_ctx: SignalContext) -> dict:
     """Prepare template data for a single autoload.
 
     Args:
@@ -172,7 +60,6 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict) -> dict:
     members = autoload_ir.get("members", [])
     functions = autoload_ir.get("functions", [])
     meta = autoload_ir.get("meta", {})
-    signals = meta.get("signals", [])
 
     # Build function info dict for default parameter handling
     function_info = {}
@@ -186,6 +73,7 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict) -> dict:
     member_types = {m["name"]: m.get("ctype", "int32_t") for m in members}
     function_names = [f["name"] for f in functions]
     emitter = AutoloadEmitter(name, c_name, member_names, function_names, member_types, function_info)
+    emitter.signals = signal_ctx
 
     # Helper to emit default value
     def emit_default_value(default: dict, ctype: str) -> str:
@@ -237,9 +125,6 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict) -> dict:
             prefix += "__attribute__((unused)) "
         lines = [f"{prefix}{decl} {{"]
 
-        # Populate param_types for this function so emit_binop can detect string parameters
-        params = func.get("params", [])
-        emitter.param_types = {p.get("name", ""): p.get("ctype", "int32_t") for p in params}
         # Clear local pointer vars from previous function
         emitter.local_pointer_vars = set()
 
@@ -273,9 +158,6 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict) -> dict:
                         else:
                             # Normal statement - add semicolon
                             lines.append(f"    {line};")
-
-        # Clear param_types after processing
-        emitter.param_types = {}
 
         lines.append("}")
         return "\n".join(lines)
@@ -316,26 +198,18 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict) -> dict:
             if cb_code:
                 tween_callback_lines.append(cb_code)
 
-    # Collect and generate inline signal callbacks from all functions
-    inline_signal_callback_lines = []
-    seen_signal_callbacks = set()
-    for func in functions:
-        body = func.get("body", [])
-        inline_cbs = _find_signal_inline_callbacks(body)
-        for cb in inline_cbs:
-            cb_name = cb.get("callback_name", "")
-            if cb_name and cb_name not in seen_signal_callbacks:
-                seen_signal_callbacks.add(cb_name)
-                cb_code = _generate_signal_inline_callback(cb, emitter, c_name)
-                if cb_code:
-                    inline_signal_callback_lines.append(cb_code)
-
-    # Build signal structs
-    signal_struct_lines = []
-    for sig in signals:
-        struct_def = sig.get("struct_def")
-        if struct_def:
-            signal_struct_lines.append(struct_def)
+    # Signal handlers connected or disconnected by this autoload, once each
+    handler_names = set()
+    handler_decl_lines = []
+    handler_lines = []
+    for node in find_signal_bindings(functions):
+        props = node.get("props", {})
+        handler, key = props.get("handler", {}), props.get("signal", "")
+        handler_name = signal_ctx.handler_name(handler, key, c_name)
+        if handler_name not in handler_names:
+            handler_names.add(handler_name)
+            handler_decl_lines.append(signal_ctx.handler_declaration(handler, key, c_name))
+            handler_lines.append(signal_ctx.handler_function(handler, key, c_name, None, emitter))
 
     # Build forward declarations for non-trait pointer types
     # Trait data types (ending with Data*) are defined in traits.h, so we include that instead
@@ -363,14 +237,6 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict) -> dict:
             mname = m.get("name", "")
             member_extern_lines.append(f"extern {ctype} {c_name}_{mname};")
 
-    # Build signal externs (for header)
-    signal_extern_lines = []
-    if signals:
-        signal_extern_lines.append(f"// {name} signals")
-        for sig in signals:
-            sig_name = sig.get("name", "")
-            signal_extern_lines.append(f"extern ArmSignal {c_name}_{sig_name};")
-
     # Build function declarations (public only, for header)
     func_decl_lines = []
     public_funcs = [f for f in functions if f.get("is_public", False) and f.get("name") != "init"]
@@ -391,14 +257,6 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict) -> dict:
             init_value = emit_default_value(default, ctype)
             member_def_lines.append(f"{ctype} {c_name}_{mname} = {init_value};")
 
-    # Build signal definitions (for source)
-    signal_def_lines = []
-    if signals:
-        signal_def_lines.append(f"// {name} signals")
-        for sig in signals:
-            sig_name = sig.get("name", "")
-            signal_def_lines.append(f"ArmSignal {c_name}_{sig_name} = {{0}};")
-
     # Build private function implementations
     private_func_lines = []
     private_funcs = [f for f in functions if not f.get("is_public", False) and f.get("name") != "init"]
@@ -406,56 +264,6 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict) -> dict:
         # Mark as maybe_unused since setters might not be called externally
         impl = generate_function_implementation(func, is_static=True, maybe_unused=True)
         private_func_lines.append(impl)
-
-    # Build signal handler wrappers
-    # When a function is connected to a signal, we need a wrapper with the correct signature
-    # Skip handlers that don't have a matching function (these are inline callbacks)
-    signal_handlers = meta.get("signal_handlers", [])
-    signal_wrapper_lines = []
-    for sh in signal_handlers:
-        handler_name = sh.get("handler_name", "")
-        if handler_name:
-            # Find the function to get its parameters
-            handler_func = next((f for f in functions if f["name"] == handler_name), None)
-
-            # Skip if no matching function - this is an inline callback handled separately
-            if handler_func is None:
-                continue
-
-            params = handler_func.get("params", []) if handler_func else []
-
-            # Generate wrapper that calls the actual function
-            # Wrapper has ArmSignalHandler signature: void (*)(void* ctx, void* payload)
-            wrapper_lines = [
-                f"static void {c_name}_{handler_name}_wrapper(void* ctx, void* payload) {{",
-                f"    (void)ctx;",
-            ]
-
-            if not params:
-                # No parameters - just suppress payload warning and call
-                wrapper_lines.append(f"    (void)payload;")
-                wrapper_lines.append(f"    {c_name}_{handler_name}();")
-            elif len(params) == 1:
-                # Single parameter - check if signal provides this or if it's ignored
-                # For signals like sceneLoaded that send const char*, cast payload
-                p = params[0]
-                ptype = p.get("ctype", "void*")
-                if ptype == "const char*":
-                    # If payload is NULL, pass empty string to avoid crash
-                    wrapper_lines.append(f"    {c_name}_{handler_name}(payload ? (const char*)payload : \"\");")
-                elif ptype in ("int32_t", "int"):
-                    wrapper_lines.append(f"    {c_name}_{handler_name}((int32_t)(intptr_t)payload);")
-                elif ptype == "float":
-                    wrapper_lines.append(f"    {c_name}_{handler_name}(signal_payload_to_float(payload));")
-                else:
-                    wrapper_lines.append(f"    {c_name}_{handler_name}(({ptype})payload);")
-            else:
-                # Multiple parameters - assume payload is a struct pointer
-                wrapper_lines.append(f"    (void)payload;  // TODO: unpack struct")
-                wrapper_lines.append(f"    // {c_name}_{handler_name}(...);")
-
-            wrapper_lines.append(f"}}")
-            signal_wrapper_lines.append("\n".join(wrapper_lines))
 
     # Build public function implementations
     public_func_lines = []
@@ -492,16 +300,13 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict) -> dict:
         'order': order,
         'traits_include': traits_include,
         'forward_declarations': '\n'.join(forward_decl_lines),
-        'signal_structs': '\n'.join(signal_struct_lines),
         'member_externs': '\n'.join(member_extern_lines),
-        'signal_externs': '\n'.join(signal_extern_lines),
         'function_declarations': '\n'.join(func_decl_lines),
         'member_definitions': '\n'.join(member_def_lines + capture_global_lines),
-        'signal_definitions': '\n'.join(signal_def_lines),
+        'signal_handler_declarations': '\n'.join(handler_decl_lines),
         'tween_callbacks': '\n\n'.join(tween_callback_lines),
-        'inline_signal_callbacks': '\n\n'.join(inline_signal_callback_lines),
         'private_functions': '\n\n'.join(private_func_lines),
-        'signal_wrappers': '\n\n'.join(signal_wrapper_lines),
+        'signal_handlers': '\n\n'.join(handler_lines),
         'public_functions': '\n\n'.join(public_func_lines),
         'init_body': '\n'.join(init_body_lines),
     }
@@ -525,21 +330,18 @@ def prepare_autoload_template_data():
     if not autoloads:
         return [], None, {}
 
+    from arm.n64.codegen.trait_generator import signals_context
+    signals = signals_context()
+
     # Sort autoloads by order
     sorted_autoloads = sorted(autoloads.items(), key=lambda x: x[1].get("order", 100))
     autoload_data = []
     autoload_names = []
-    all_global_signals = set()
     features = {'has_audio': False}
 
     for name, autoload_ir in sorted_autoloads:
         c_name = autoload_ir.get("c_name", name.lower())
         autoload_names.append(c_name)
-
-        # Collect global signals from this autoload
-        meta = autoload_ir.get("meta", {})
-        for gs in meta.get("global_signals", []):
-            all_global_signals.add(gs)
 
         # Detect audio usage in functions
         for func in autoload_ir.get("functions", []):
@@ -548,14 +350,13 @@ def prepare_autoload_template_data():
                 break
 
         # Prepare template data for this autoload
-        tmpl_data = _prepare_autoload_template_data(name, autoload_ir)
+        tmpl_data = _prepare_autoload_template_data(name, autoload_ir, signals)
         autoload_data.append((c_name, tmpl_data))
 
     # Prepare master autoloads.h data
     master_data = {
         'includes': '\n'.join(f'#include "{c_name}.h"' for c_name in autoload_names),
         'init_calls': '\n'.join(f'    {c_name}_init();' for c_name in autoload_names),
-        'global_signals': list(all_global_signals),  # Pass to caller for merging with traits
     }
 
     return autoload_data, master_data, features

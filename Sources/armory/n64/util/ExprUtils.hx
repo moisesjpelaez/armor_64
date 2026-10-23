@@ -48,23 +48,5 @@ class ExprUtils {
             return null;
         }
     }
-
-    /**
-     * Check if an expression type starts with a given prefix.
-     * Useful for checking type families like "Vec" for Vec2/Vec3/Vec4.
-     */
-    public static function typeStartsWith(e:Expr, prefix:String, ctx:IExtractorContext):Bool {
-        var t = getExprTypeSafe(e, ctx);
-        return t != null && StringTools.startsWith(t, prefix);
-    }
-
-    /**
-     * Check if an expression type contains a substring.
-     * Useful for checking for type families like "Handle" in channel handles.
-     */
-    public static function typeContains(e:Expr, substr:String, ctx:IExtractorContext):Bool {
-        var t = getExprTypeSafe(e, ctx);
-        return t != null && t.indexOf(substr) >= 0;
-    }
 }
 #end

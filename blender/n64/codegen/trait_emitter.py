@@ -75,6 +75,9 @@ class TraitEmitter:
 
         # Virtual method support
         self.methods = methods or {}
+        # Signal rendering (signal_codegen.SignalContext), set by the generator
+        self.signals = None
+
         # Virtual methods callable from this trait (own and inherited) -> trait
         # whose struct holds their vtable pointer
         self.vtable_owners = vtable_owners or {}
@@ -808,6 +811,14 @@ class TraitEmitter:
                     return f"{left} {op} {right};"
                 return f"({left} {op} {right})"
         return ""
+
+    def emit_string_equals(self, node: Dict) -> str:
+        """String == / != (typed in the macro): compares the text."""
+        children = node.get("children", [])
+        if len(children) < 2:
+            return ""
+        equals = f"arm_string_equals({self.emit(children[0])}, {self.emit(children[1])})"
+        return equals if node.get("value") == "==" else f"!{equals}"
 
     def emit_unop(self, node: Dict) -> str:
         """Unary operator: ++x or x++"""
@@ -1847,53 +1858,39 @@ class TraitEmitter:
 
         return self._substitute_placeholders(c_code, node.get("args", []), obj=obj)
 
-    def emit_signal_call(self, node: Dict) -> str:
-        """Signal calls - connect/disconnect/emit on per-instance signals.
+    # Signals: rendered by signal_codegen.SignalContext (set by the generator)
 
-        Uses c_code template from macro with placeholder substitution.
-        """
-        c_code = node.get("c_code", "")
-        if not c_code:
-            return ""
+    def _signal_instance(self, node: Dict) -> Optional[str]:
+        """C expression of the instance owning a per-instance signal (None: own data)."""
+        obj = node.get("object")
+        return self.emit(obj) if obj else None
 
+    def emit_signal_emit(self, node: Dict) -> str:
+        key = node.get("props", {}).get("signal", "")
+        ptr = self.signals.signal_ptr(key, self._signal_instance(node))
+        return self.signals.emit_code(key, ptr, [self.emit(a) for a in node.get("args", [])])
+
+    def emit_signal_connect(self, node: Dict) -> str:
+        return self._signal_connection(node, "signal_connect")
+
+    def emit_signal_disconnect(self, node: Dict) -> str:
+        return self._signal_connection(node, "signal_disconnect")
+
+    def _signal_connection(self, node: Dict, func: str) -> str:
         props = node.get("props", {})
-        signal_name = props.get("signal_name", "")
-        callback = props.get("callback", "")
-
-        # The signal lives in the struct of the trait declaring it (a parent
-        # for inherited signals), which also names its payload type
-        owner = props.get("owner")
-        owner_c_name = self.all_traits.get(owner, {}).get("c_name", self.c_name) if owner else self.c_name
-        signal_ptr = f"&(({owner_c_name}Data*)data)->{signal_name}"
-        # A handler declared in a parent is that parent's function
-        handler_owner = props.get("handler_owner")
-        handler_c_name = self.all_traits.get(handler_owner, {}).get("c_name", self.c_name) if handler_owner else self.c_name
-        handler_name = f"{handler_c_name}_{callback}" if callback else ""
-        struct_type = f"{owner_c_name}_{signal_name}_payload_t"
-
-        return self._substitute_placeholders(
-            c_code, node.get("args", []),
-            signal_ptr=signal_ptr, handler=handler_name, struct_type=struct_type
-        )
-
-    def emit_global_signal_call(self, node: Dict) -> str:
-        """Global signal calls - uses c_code template from macro."""
-        c_code = node.get("c_code", "")
-        if not c_code:
-            return ""
-
-        props = node.get("props", {})
-        global_signal = props.get("global_signal", "")
-        callback = props.get("callback", "")
-
-        # Build signal pointer and handler name
-        signal_ptr = f"&{global_signal}"
-        handler_name = f"{self.c_name}_{callback}" if callback else ""
-
-        return self._substitute_placeholders(
-            c_code, node.get("args", []),
-            signal_ptr=signal_ptr, handler=handler_name
-        )
+        key = props.get("signal", "")
+        handler = props.get("handler", {})
+        ptr = self.signals.signal_ptr(key, self._signal_instance(node))
+        name = self.signals.handler_name(handler, key, self.c_name)
+        # Context passed to the handler: the instance owning the method, or this
+        # trait's data (none for static functions and in autoloads)
+        if handler.get("kind") == "static" or not self.is_trait and not handler.get("instance"):
+            ctx = "NULL"
+        elif handler.get("instance"):
+            ctx = self.emit(handler["instance"])
+        else:
+            ctx = "data"
+        return f"{func}({ptr}, {name}, {ctx})"
 
     def emit_autoload_call(self, node: Dict) -> str:
         """Autoload function call - ClassName.method() -> classname_method(args)."""

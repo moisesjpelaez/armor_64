@@ -113,26 +113,6 @@ def deselect_from_all_viewlayers():
 def to_uint8(value):
     return int(max(0, min(1, value)) * 255)
 
-def extract_blender_trait_props(trait) -> dict:
-    values = {}
-    types = {}
-    if hasattr(trait, 'arm_traitpropslist'):
-        for prop in trait.arm_traitpropslist:
-            if prop.type == 'Float':
-                values[prop.name] = prop.value_float
-            elif prop.type == 'Int':
-                values[prop.name] = prop.value_int
-            elif prop.type == 'Bool':
-                values[prop.name] = prop.value_bool
-            elif prop.type == 'String':
-                values[prop.name] = prop.value_string
-            elif prop.type == 'TSceneFormat':
-                if prop.value_scene is not None:
-                    values[prop.name] = prop.value_scene.name
-                    types[prop.name] = 'SceneId'
-    return {'values': values, 'types': types}
-
-
 # =============================================================================
 # Trait IR Helpers
 # =============================================================================

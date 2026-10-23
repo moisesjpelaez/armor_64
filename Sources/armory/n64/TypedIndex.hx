@@ -232,29 +232,53 @@ class TypedIndex {
     }
 
     /**
-     * Class declaring the static field an expression reads, also when written
-     * without its class (`speedChanged` inside the class). Null otherwise.
+     * Class constructed by a `new` expression (full path). Looks for the
+     * TNew node itself: the compiler may wrap it at the same position (e.g.
+     * as an argument of `emit(...args:Any)`). Null otherwise.
      */
-    public static function staticFieldOwner(e:Expr):Null<ClassType> {
-        var list = nodesAt(e);
-        if (list.length == 0) return null;
-        return switch (list[0].expr) {
-            case TField(_, FStatic(c, _)): c.get();
-            default: null;
-        };
+    public static function newClass(e:Expr):Null<String> {
+        for (t in nodesAt(e)) {
+            switch (t.expr) {
+                case TNew(c, _, _): return classPath(c.get());
+                default:
+            }
+        }
+        return null;
     }
 
     /**
-     * Parameter types of a function value (e.g. a method passed as a signal
-     * handler), as short Haxe type names. Null if it isn't a typed function.
+     * The field an identifier or field access reads: declaring class (full
+     * path), field name and whether it's static. Null otherwise.
      */
-    public static function functionArgTypes(e:Expr):Null<Array<String>> {
-        var list = nodesAt(e);
-        if (list.length == 0) return null;
-        return switch (Context.follow(list[0].t)) {
-            case TFun(args, _): [for (arg in args) typeName(arg.t)];
-            default: null;
-        };
+    public static function fieldRef(e:Expr):Null<{owner:String, name:String, isStatic:Bool}> {
+        // The first field access at this position: the compiler may wrap it
+        // (e.g. a method converted to Function when passed as a handler)
+        for (t in nodesAt(e)) {
+            switch (t.expr) {
+                case TField(_, FInstance(c, _, cf)): return {owner: classPath(c.get()), name: cf.get().name, isStatic: false};
+                case TField(_, FClosure(owner, cf)) if (owner != null): return {owner: classPath(owner.c.get()), name: cf.get().name, isStatic: false};
+                case TField(_, FStatic(c, cf)): return {owner: classPath(c.get()), name: cf.get().name, isStatic: true};
+                case TField(_, _): return null;
+                default:
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Parameters of a function value (a method passed as a handler, or an
+     * anonymous function): names and short Haxe types. Null if not a function.
+     */
+    public static function functionArgs(e:Expr):Null<Array<{name:String, type:Null<String>}>> {
+        // The first function-typed node: the outermost may be its conversion
+        // to Function (a handler parameter)
+        for (t in nodesAt(e)) {
+            switch (Context.follow(t.t)) {
+                case TFun(args, _): return [for (arg in args) {name: arg.name, type: typeName(arg.t)}];
+                default:
+            }
+        }
+        return null;
     }
 
     /**

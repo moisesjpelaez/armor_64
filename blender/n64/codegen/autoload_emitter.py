@@ -22,7 +22,6 @@ class AutoloadEmitter(TraitEmitter):
         self.function_names = function_names
         self.member_types = member_types or {}
         self.function_info = function_info or {}  # {func_name: {params: [{name, ctype, optional, default_value}]}}
-        self.param_types: Dict[str, str] = {}  # Populated when emitting a function
 
     def emit_member(self, node: Dict) -> str:
         """Autoload member access: c_name_member_name (global variable)"""
@@ -45,21 +44,8 @@ class AutoloadEmitter(TraitEmitter):
             return self.member_types.get(name) == "ArmSoundHandle"
         return False
 
-    def _is_string_type(self, node: Dict) -> bool:
-        """Check if a node is a string type (string literal or const char* variable)."""
-        if node is None:
-            return False
-        node_type = node.get("type", "")
-        if node_type == "string":
-            return True
-        if node_type == "ident":
-            name = node.get("value", "")
-            ctype = self.member_types.get(name) or self.param_types.get(name)
-            return ctype == "const char*"
-        return False
-
     def emit_binop(self, node: Dict) -> str:
-        """Binary operator - special handling for ArmSoundHandle and string comparisons."""
+        """Binary operator - special handling for ArmSoundHandle comparisons."""
         op = node.get("value", "+")
         children = node.get("children", [])
         if len(children) >= 2:
@@ -94,16 +80,6 @@ class AutoloadEmitter(TraitEmitter):
                             return f"arm_sound_handle_equals({left}, {right})"
                         else:
                             return f"!arm_sound_handle_equals({left}, {right})"
-
-                # Check for string comparison
-                if self._is_string_type(left_node) or self._is_string_type(right_node):
-                    left = self.emit(left_node)
-                    right = self.emit(right_node)
-                    if left and right:
-                        if op == "==":
-                            return f"(strcmp({left}, {right}) == 0)"
-                        else:
-                            return f"(strcmp({left}, {right}) != 0)"
 
             # Fall back to base implementation
             return super().emit_binop(node)
@@ -196,36 +172,6 @@ class AutoloadEmitter(TraitEmitter):
                 func_name = f"{self.c_name}_{func_name}"
             return f"{func_name}({', '.join(arg_strs)})"
         return ""
-
-    def emit_global_signal_call(self, node: Dict) -> str:
-        """Global signal calls - uses c_code template from macro.
-
-        For autoloads, the callback is a module-level function and there's
-        no data pointer (unlike traits), so we pass NULL.
-        Signal handlers need a wrapper for proper signature matching.
-        """
-        c_code = node.get("c_code", "")
-        if not c_code:
-            return ""
-
-        props = node.get("props", {})
-        global_signal = props.get("global_signal", "")
-        callback = props.get("callback", "")
-
-        # Build signal pointer and handler name
-        signal_ptr = f"&{global_signal}"
-        # Use wrapper function for signal handlers (has proper ArmSignalHandler signature)
-        handler_name = f"{self.c_name}_{callback}_wrapper" if callback else ""
-
-        # Substitute placeholders, then fix autoload-specific data pattern
-        c_code = self._substitute_placeholders(
-            c_code, node.get("args", []),
-            signal_ptr=signal_ptr, handler=handler_name
-        )
-        # Autoloads don't have a data pointer, pass NULL
-        c_code = c_code.replace(", data)", ", NULL)")
-
-        return c_code
 
     def emit_audio_handle_field(self, node: Dict) -> str:
         """Handle field access - prefix handle name if it's a member."""

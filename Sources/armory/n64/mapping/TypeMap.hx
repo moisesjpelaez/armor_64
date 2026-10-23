@@ -186,28 +186,4 @@ class TypeMap {
         var parsed = parseParameterizedType(haxeType);
         return parsed != null && parsed.base == "Array";
     }
-
-    /**
-     * Get the element type for an Array type.
-     */
-    public static function getArrayElementType(haxeType:String):String {
-        if (haxeType == null) return null;
-        var parsed = parseParameterizedType(haxeType);
-        if (parsed != null && parsed.base == "Array" && parsed.params.length >= 1) {
-            return parsed.params[0];
-        }
-        return null;
-    }
-
-    /**
-     * Get key and value types for a Map type.
-     */
-    public static function getMapTypes(haxeType:String):{key:String, value:String} {
-        if (haxeType == null) return null;
-        var parsed = parseParameterizedType(haxeType);
-        if (parsed != null && parsed.base == "Map" && parsed.params.length >= 2) {
-            return { key: parsed.params[0], value: parsed.params[1] };
-        }
-        return null;
-    }
 }

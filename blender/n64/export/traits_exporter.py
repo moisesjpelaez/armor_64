@@ -45,11 +45,17 @@ def write_traits(exporter):
     # Get template data from codegen
     template_data, features = codegen.prepare_traits_template_data(type_overrides)
 
+    # Payload structs and static signals, included through system/signal.h
+    signals = codegen.signals_context()
+    signals_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'signals.h')
+    with open(signals_path, 'w', encoding='utf-8') as f:
+        f.write(signals.header())
+
     # Write files
     if template_data is None:
         # No traits - create empty stubs
         _write_traits_h_empty()
-        _write_traits_c_empty()
+        _write_traits_c_empty(signals)
     else:
         _write_traits_h(template_data)
         _write_traits_c(template_data)
@@ -88,11 +94,12 @@ def _write_traits_h_empty():
         f.write("// Auto-generated empty traits header\n#ifndef _TRAITS_H_\n#define _TRAITS_H_\n#endif\n")
 
 
-def _write_traits_c_empty():
-    """Generate empty traits.c stub."""
+def _write_traits_c_empty(signals):
+    """Generate traits.c without traits: still defines the static signals."""
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'traits.c')
     with open(out_path, 'w', encoding='utf-8') as f:
-        f.write("// Auto-generated empty traits implementation\n#include \"traits.h\"\n")
+        f.write("// Auto-generated traits implementation (no traits)\n#include \"traits.h\"\n\n")
+        f.write(signals.static_definitions() + "\n")
 
 
 def _collect_type_overrides(exporter) -> dict:

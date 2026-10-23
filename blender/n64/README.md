@@ -80,6 +80,17 @@ The rules deciding whether a trait has a data struct, which lifecycle events the
 
 Trait and autoload class names must be unique across packages: they identify classes in the IR, and a clash is reported as a compile error.
 
+## Signals
+
+`armory.system.Signal` fields, static (e.g. in autoloads) or per-instance (in traits), work the same way, with any argument types (numbers, bools, strings, vectors, objects) and any number of arguments:
+
+- `SignalCallConverter.hx` turns `connect`, `disconnect` and `emit` into `signal_connect`, `signal_disconnect` and `signal_emit` nodes. A signal is identified by its declaring class and name, and `N64MacroBase.signals` collects its argument types from typed handlers (first) and emits across the whole game, written to `n64_signals.json`.
+- `codegen/signal_codegen.py` renders everything: `data/signals.h` (a payload struct per signal with arguments, the static signals), emits (`{ <signal>_payload_t _p = {...}; signal_emit(&sig, &_p); }`), connections, and one handler function per handler. Method handlers call the method (through its vtable pointer if it's virtual) and anonymous handlers contain their body; each unpacks only the parameters it declares.
+- Handlers of a trait are connected with its data as context. Connecting and disconnecting is up to the game code: a trait must disconnect its handlers before it's removed (e.g. in `notifyOnRemove`), since its data is freed with its scene.
+- `system/signal.c`: disconnect matches handler and context; handlers can connect and disconnect (also themselves) during an emit.
+
+Every signal has `ARM_SIGNAL_MAX_SUBS` subscriber slots (16 by default).
+
 ## IR Node Types
 
 The IR (Intermediate Representation) is a JSON format that bridges Haxe semantics to C code. See `IRTypes.hx` for complete documentation.
@@ -159,9 +170,7 @@ N64_CONFIG = {
 
 ### Haxe Metadata
 
-- `@:n64MaxSubs(N)` - Set max signal subscribers
 - `@:n64Autoload(order=N)` - Set autoload initialization order
-- `@:n64SignalType("name")` - Declare global signal type
 
 ## Coordinate System
 

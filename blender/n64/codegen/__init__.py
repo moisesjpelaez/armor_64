@@ -17,6 +17,7 @@ from arm.n64.codegen.trait_generator import (
     get_trait_info,
     load_traits_json,
     prepare_traits_template_data,
+    signals_context,
     TraitCodeGenerator,
 )
 
@@ -45,6 +46,7 @@ __all__ = [
     'get_trait_info',
     'load_traits_json',
     'prepare_traits_template_data',
+    'signals_context',
     'TraitCodeGenerator',
     # Autoload functions
     'load_autoloads_json',
