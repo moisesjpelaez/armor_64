@@ -455,45 +455,6 @@ class TraitEmitter:
         name = node.get("value", "")
         return self._get_member_access(name)
 
-    def emit_var_decl(self, node: Dict) -> str:
-        """Local variable declaration.
-
-        IR format:
-            type: "var_decl"
-            value: "varName"
-            props: { var_type: "int32_t" }
-            children: [initializer_expr] or null
-        """
-        var_name = node.get("value", "")
-        props = node.get("props", {})
-        var_type = props.get("var_type", "void*")
-        children = node.get("children")
-
-        if children and len(children) > 0:
-            init_node = children[0]
-
-            # Special case: ArmSoundHandle from array_get_nested should use pointer
-            # This handles: var channel: BaseChannelHandle = channels[key][i]
-            # We need a pointer to modify the handle in-place for audio state tracking
-            if var_type == "ArmSoundHandle" and init_node.get("type") == "array_get_nested":
-                array_type = init_node.get("value", "")
-                if array_type == "ArmSoundHandleArray":
-                    # Use pointer version: TypeName_get_ptr returns a pointer
-                    init_expr = self.emit_array_get_nested_ptr(init_node)
-                    self.local_pointer_vars.add(var_name)
-                    return f"{var_type}* {var_name} = {init_expr}"
-
-            init_expr = self.emit(init_node)
-            # Handle array initializers: ArmSoundHandleArray = {0} for empty array
-            if var_type.endswith("Array") and init_expr in ("", "[]", "NULL", "{0}"):
-                return f"{var_type} {var_name} = {{0}}"
-            return f"{var_type} {var_name} = {init_expr}"
-        else:
-            # Uninitialized - use zero initialization for arrays
-            if var_type.endswith("Array"):
-                return f"{var_type} {var_name} = {{0}}"
-            return f"{var_type} {var_name}"
-
     def emit_inherited_member(self, node: Dict) -> str:
         """Access to a member inherited from a parent class.
 
@@ -616,16 +577,9 @@ class TraitEmitter:
             obj_type = obj_node.get("type", "")
             obj_value = obj_node.get("value", "")
 
-            # Check for Assets.sounds.sound_name pattern -> ROM path
-            if obj_type == "field_access" and obj_node.get("value") == "sounds":
-                inner_obj = obj_node.get("object", {})
-                if inner_obj.get("type") == "ident" and inner_obj.get("value") == "Assets":
-                    # Convert to ROM path: "rom:/sound_name.wav64"
-                    return f'"rom:/{field}.wav64"'
-
             # Handle elements.length for UI elements array
             # Can be either "potentially_inherited" or "member" depending on context
-            if obj_type in ("potentially_inherited", "member") and field == "length":
+            if obj_type in ("potentially_inherited", "member") and field in ("length", "count"):
                 if obj_value == "elements":
                     # Koui elements.length -> N64 UI element count (unified array)
                     return "UI_ELEMENT_COUNT"
@@ -883,13 +837,23 @@ class TraitEmitter:
         """Local variable declaration: ctype name = value;"""
         name = node.get("value", "")
         props = node.get("props", {})
-        children = node.get("children", [])
+        children = node.get("children") or []
         ctype = props.get("ctype", "float")
+        init = children[0] if children else None
 
-        if children and len(children) > 0:
-            val = self.emit(children[0])
-            if val:
-                return f"{ctype} {name} = {val};"
+        # A sound handle read from an array (channels[key][i]): a pointer, so
+        # the audio state is updated in place
+        if (ctype == "ArmSoundHandle" and init and init.get("type") == "array_get_nested"
+                and init.get("value") == "ArmSoundHandleArray"):
+            self.local_pointer_vars.add(name)
+            return f"{ctype}* {name} = {self.emit_array_get_nested_ptr(init)};"
+
+        val = self.emit(init) if init else ""
+        # Arrays start empty
+        if ctype.endswith("Array") and val in ("", "[]", "NULL", "{0}"):
+            return f"{ctype} {name} = {{0}};"
+        if val:
+            return f"{ctype} {name} = {val};"
         return f"{ctype} {name};"
 
     def emit_return(self, node: Dict) -> str:

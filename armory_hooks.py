@@ -7,7 +7,7 @@ Called by write_data.py get_library_hooks() during khafile and Main.hx generatio
 When an N64 build is active (state.is_n64), this hook injects:
   - arm_target_n64 define (enables N64 Haxe macros at compile-time)
   - arm_build_dir define (tells macros where to write IR output)
-  - --macro parameter to register the N64AutoloadMacro
+  - --macro parameter to register the N64 build macro (N64Macro)
 """
 
 def write_main():
@@ -25,6 +25,6 @@ def write_main():
             f'arm_build_dir=../{build_dir}',
         ],
         'parameters': [
-            '--macro armory.n64.N64AutoloadMacro.register()',
+            '--macro armory.n64.N64Macro.register()',
         ],
     }

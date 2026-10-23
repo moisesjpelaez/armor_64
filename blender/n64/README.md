@@ -49,8 +49,10 @@ This document provides an architectural overview of the Armory3D N64 exporter, w
 
 | Module | Purpose |
 |--------|---------|
-| `N64TraitMacro.hx` | Extracts trait code to IR at compile-time |
-| `N64AutoloadMacro.hx` | Extracts autoload code to IR |
+| `N64Macro.hx` | Entry point (`register()`): one build macro on the `arm` package, hands classes to the two below |
+| `N64Extractor.hx` | Haxe → IR conversion shared by traits and autoloads; subclasses override a few hooks |
+| `N64TraitMacro.hx` | Traits: lifecycles and events, inheritance, data struct → `n64_traits.json` |
+| `N64AutoloadMacro.hx` | Autoloads: static members and functions as C globals → `n64_autoloads.json` |
 | `IRTypes.hx` | IR node type definitions and documentation |
 | `TypedIndex.hx` | Maps source positions to the compiler's typed AST |
 | `converters/*.hx` | Domain-specific call converters |
@@ -133,13 +135,13 @@ class MyCallConverter implements ICallConverter {
 
 ### Step 2: Register the Converter (Haxe)
 
-In `N64TraitMacro.hx`, add to the converter list in `TraitExtractor`:
+Add it to the converter list passed to `super()` in the `TraitExtractor` constructor (`N64TraitMacro.hx`), and in `AutoloadExtractor` (`N64AutoloadMacro.hx`) too if its C doesn't use the trait's `obj` or `data`:
 
 ```haxe
-callConverters = [
+super(fields, cls, N64Extractor.traitCName(cls), [
     // ... existing converters ...
-    new MyCallConverter()
-];
+    new MyCallConverter(),
+]);
 ```
 
 Calls no converter handles become a generic `method_call`. When the typed AST knows the method's class, `N64MacroBase.methodCall()` reports it as unsupported unless the Python emitter translates it (`emitterMethods`); add an entry there if you handle a new method in `emit_method_call`.

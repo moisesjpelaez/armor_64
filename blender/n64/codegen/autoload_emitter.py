@@ -106,13 +106,6 @@ class AutoloadEmitter(TraitEmitter):
             obj_type = obj_node.get("type", "")
             obj_value = obj_node.get("value", "")
 
-            # Check for Assets.sounds.sound_name pattern -> ROM path
-            if obj_type == "field_access" and obj_node.get("value") == "sounds":
-                inner_obj = obj_node.get("object", {})
-                if inner_obj.get("type") == "ident" and inner_obj.get("value") == "Assets":
-                    # Convert to ROM path: "rom:/sound_name.wav64"
-                    return f'"rom:/{field}.wav64"'
-
             # this.field or inst.field -> c_name_field (global variable)
             if obj_type == "ident" and obj_value in ("this", "inst"):
                 if field in self.member_names:

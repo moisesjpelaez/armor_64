@@ -298,8 +298,12 @@ def extract_default_value(node, member_ctype: str) -> str:
             return "true" if value else "false"
         elif node_type == "null":
             return "SCENE_UNKNOWN" if member_ctype == "SceneId" else "NULL"
-        elif node_type == "new":
-            return _extract_vec_constructor(value, node.get("args", []))
+        elif node_type == "new_vec":
+            # c_code template with {0}, {1}... for the given arguments
+            c_code = node.get("c_code", "")
+            for i, a in enumerate(node.get("args", [])):
+                c_code = c_code.replace(f"{{{i}}}", extract_default_value(a, "float"))
+            return c_code
         elif node_type == "c_literal":
             # Direct C code literal - use c_code field directly
             return node.get("c_code", get_type_default(member_ctype))
@@ -307,16 +311,6 @@ def extract_default_value(node, member_ctype: str) -> str:
     if isinstance(node, (int, float, str, bool)):
         return to_c_literal(node, member_ctype)
     return get_type_default(member_ctype)
-
-def _extract_vec_constructor(type_name: str, args: list) -> str:
-    def arg(i): return extract_default_value(args[i], "float") if i < len(args) else "0.0f"
-    if type_name == "Vec4":
-        return f"(ArmVec4){{{arg(0)}, {arg(1)}, {arg(2)}, {arg(3)}}}"
-    elif type_name == "Vec3":
-        return f"(ArmVec3){{{arg(0)}, {arg(1)}, {arg(2)}}}"
-    elif type_name == "Vec2":
-        return f"(ArmVec2){{{arg(0)}, {arg(1)}}}"
-    return "0"
 
 TYPE_DEFAULTS = {
     "float": "0.0f", "int32_t": "0", "int": "0", "bool": "false",

@@ -30,13 +30,12 @@ package armory.n64;
  * CONTROL FLOW:
  *   if                               - Conditional: if/else
  *   block                            - Code block { ... }
- *   var, var_decl                    - Local variable declaration
+ *   var                              - Local variable declaration
  *   return                           - Return statement
  *   while, do_while                  - Loop constructs
  *   for_range                        - For loop with range
  *   break, continue                  - Loop control
  *   ternary                          - Ternary operator a ? b : c
- *   paren                            - Parenthesized expression
  *
  * CALLS:
  *   call, method_call                - Generic function/method calls

@@ -4,19 +4,15 @@ package armory.n64;
 import haxe.macro.Context;
 import haxe.macro.Expr;
 import haxe.macro.Type;
-import haxe.Json;
-import sys.io.File;
-import sys.FileSystem;
 
-// Import modular components
 import armory.n64.IRTypes;
 import armory.n64.N64MacroBase;
+import armory.n64.N64Extractor;
 import armory.n64.TypedIndex;
 import armory.n64.mapping.Constants;
 import armory.n64.mapping.TypeMap;
 import armory.n64.mapping.ButtonMap;
 import armory.n64.mapping.EngineTypes;
-import armory.n64.converters.ICallConverter;
 import armory.n64.converters.SceneCallConverter;
 import armory.n64.converters.CanvasCallConverter;
 import armory.n64.converters.VecCallConverter;
@@ -37,72 +33,30 @@ import armory.n64.converters.StringCallConverter;
 import armory.n64.converters.ButtonCallConverter;
 
 using haxe.macro.ExprTools;
-using haxe.macro.TypeTools;
 using StringTools;
-using Lambda;
 
 /**
- * N64 Trait Macro - Event-Driven Architecture
+ * Traits (classes extending iron.Trait) → n64_traits.json.
  *
- * Pipeline: Haxe AST → IR (JSON) → Python → C code
- *
- * This macro:
- * 1. Extracts trait members with ctype
- * 2. Detects event patterns (input, lifecycle) and extracts handlers
- * 3. Outputs clean JSON IR for Python to emit C code
- *
- * The macro is the SINGLE SOURCE OF TRUTH for semantics.
- * Python only does 1:1 IR→C translation.
+ * Lifecycle callbacks become events (on_ready, on_update, ...), other methods
+ * callable C functions, members fields of the trait's data struct. The
+ * expression conversion is shared with autoloads (N64Extractor).
  */
 class N64TraitMacro {
     static var traitData:Map<String, TraitIR> = new Map();
     static var initialized:Bool = false;
 
-    macro public static function build():Array<Field> {
-        var defines = Context.getDefines();
-        if (!defines.exists("arm_target_n64")) {
-            return null;
-        }
-
+    /** Called by N64Macro.build() for a trait class. */
+    public static function build(localClass:Ref<ClassType>, fields:Array<Field>):Void {
         if (!initialized) {
             initialized = true;
             N64MacroBase.addWriter(writeTraitJson);
         }
 
-        var localClass = Context.getLocalClass();
-        if (localClass == null) return null;
-
-        var cls = localClass.get();
-        var className = cls.name;
-        var modulePath = cls.module;
-
-        // Skip internal/engine classes
-        if (modulePath.indexOf("iron.") == 0 || modulePath.indexOf("armory.") == 0) {
-            return null;
-        }
-
-        // Only process classes that extend iron.Trait (directly or indirectly)
-        if (!extendsIronTrait(cls)) {
-            return null;
-        }
-
-        // Detect parent class for inheritance support
-        var parentName:String = null;
-        if (cls.superClass != null) {
-            var superClass = cls.superClass.t.get();
-            var superModule = superClass.module;
-            // Only track user traits as parents (not iron.Trait or armory.* classes)
-            if (superModule.indexOf("iron.") != 0 && superModule.indexOf("armory.") != 0) {
-                parentName = superClass.pack.concat([superClass.name]).join(".");
-            }
-        }
-
-        var fields = Context.getBuildFields();
-
         // Extract trait IR after typing, when the TypedIndex is available
         N64MacroBase.deferExtraction(localClass, function() {
             // Get the class again: the build-time snapshot has no typed fields yet
-            var extractor = new TraitExtractor(className, modulePath, fields, parentName, localClass.get());
+            var extractor = new TraitExtractor(fields, localClass.get());
             var traitIR = extractor.extract();
 
             // Traits are identified by their full class path in the IR
@@ -110,18 +64,6 @@ class N64TraitMacro {
                 traitData.set(extractor.traitKey, traitIR);
             }
         });
-
-        return null;
-    }
-
-    static function extendsIronTrait(cls:haxe.macro.Type.ClassType):Bool {
-        var current = cls;
-        while (current.superClass != null) {
-            var superCls = current.superClass.t.get();
-            if (superCls.module == "iron.Trait" && superCls.name == "Trait") return true;
-            current = superCls;
-        }
-        return false;
     }
 
     static function writeTraitJson():Void {
@@ -214,28 +156,14 @@ class N64TraitMacro {
 // Trait Extractor
 // ============================================================================
 
-class TraitExtractor implements IExtractorContext {
-    var className:String;
-    var modulePath:String;
-    var fields:Array<Field>;
-    var members:Map<String, MemberIR>;
-    var memberNames:Array<String>;
-    var methodMap:Map<String, Function>;
-    var methodIRMap:Map<String, MethodIR>;   // Extracted methods as IR for C generation
-    var publicMethods:Map<String, Bool>;     // Track which methods are public (potentially virtual)
-    var events:Map<String, Array<IRNode>>;
-    public var meta(default, null):TraitMeta;
-    var localVarTypes:Map<String, String>;  // Track local variable types
-    var memberTypes:Map<String, String>;    // Track member types for signal detection
-    var setterMembers:Map<String, String>;  // Members with setters: memberName -> setterMethodName
-    var currentSetterTarget:String;            // When inside a setter body, the member name being set (to avoid recursion)
-    public var cName(default, null):String;  // C-safe name for this trait
+class TraitExtractor extends N64Extractor {
+    var methodIRMap:Map<String, MethodIR> = new Map();   // Extracted methods as IR for C generation
+    var publicMethods:Map<String, Bool> = new Map();     // Public methods (potentially virtual)
+    var events:Map<String, Array<IRNode>> = new Map();
+    var currentSetterTarget:String;  // Inside a setter body, the member it sets (written directly, not through the setter)
 
     // Lifecycle method names that are handled specially (not as callable methods)
     static var lifecycleMethodNames:Array<String> = ["new", "__onInit", "__onUpdate", "__onFixedUpdate", "__onLateUpdate", "__onRemove", "__onRender2D"];
-
-    // Call converters for modular method call handling
-    var converters:Array<ICallConverter>;
 
     /**
      * Input handling mode:
@@ -248,60 +176,11 @@ class TraitExtractor implements IExtractorContext {
      */
     static var useInlineInputMode:Bool = true;
 
-    // Inheritance support
-    var parentName:String;  // Parent trait name (null if none)
-    var cls:ClassType;  // Typed class (fields have their compiler types)
+    var parentName:String;  // Parent user trait (full path), null if none
     public var traitKey(default, null):String;  // Full class path, identifies the trait in the IR
 
-    public function new(className:String, modulePath:String, fields:Array<Field>, parentName:String, cls:ClassType) {
-        this.className = className;
-        this.modulePath = modulePath;
-        this.fields = fields;
-        this.parentName = parentName;
-        this.cls = cls;
-        this.traitKey = cls.pack.concat([cls.name]).join(".");
-        this.members = new Map();
-        this.memberNames = [];
-        this.methodMap = new Map();
-        this.methodIRMap = new Map();
-        this.publicMethods = new Map();  // Track which methods are public (potentially virtual)
-        this.events = new Map();
-        this.localVarTypes = new Map();
-        this.memberTypes = new Map();
-        this.setterMembers = new Map();
-        this.currentSetterTarget = null;
-        this.meta = {
-            uses_input: false,
-            uses_transform: false,
-            mutates_transform: false,
-            uses_time: false,
-            uses_physics: false,
-            uses_ui: false,
-            uses_tween: false,
-            uses_autoload: false,
-            buttons_used: [],
-            button_events: [],
-            contact_events: [],
-            signals: [],
-            has_remove_update: false,
-            has_remove_fixed_update: false,
-            has_remove_late_update: false,
-            has_remove_render2d: false,
-            dynamic_updates: [],
-            dynamic_fixed_updates: []
-        };
-
-        // Generate C-safe name early so it's available during extraction
-        var moduleParts = modulePath.split(".");
-        var lastModulePart = moduleParts[moduleParts.length - 1];
-        if (lastModulePart.toLowerCase() == className.toLowerCase()) {
-            this.cName = modulePath.replace(".", "_").toLowerCase();
-        } else {
-            this.cName = (modulePath.replace(".", "_") + "_" + className).toLowerCase();
-        }
-
-        // Initialize call converters
-        this.converters = [
+    public function new(fields:Array<Field>, cls:ClassType) {
+        super(fields, cls, N64Extractor.traitCName(cls), [
             new VecCallConverter(),
             new PhysicsCallConverter(),
             new TransformCallConverter(),
@@ -320,11 +199,16 @@ class TraitExtractor implements IExtractorContext {
             new ArrayCallConverter(),
             new StringCallConverter(),
             new ButtonCallConverter(),
-        ];
+        ]);
+        this.traitKey = cls.pack.concat([cls.name]).join(".");
 
-        // NOTE: We do NOT load inherited member types here to avoid triggering
-        // early type resolution. Instead, inherited member checks happen lazily
-        // when the parent trait's IR is available (during Python code generation).
+        // Only user traits are parents (not iron.Trait or armory.* classes)
+        if (cls.superClass != null) {
+            var superClass = cls.superClass.t.get();
+            if (!superClass.module.startsWith("iron.") && !superClass.module.startsWith("armory.")) {
+                parentName = superClass.pack.concat([superClass.name]).join(".");
+            }
+        }
     }
 
     public function extract():TraitIR {
@@ -332,45 +216,13 @@ class TraitExtractor implements IExtractorContext {
         for (field in fields) {
             switch (field.kind) {
                 case FVar(t, e):
-                    var haxeType = t != null ? N64MacroBase.complexTypeToString(t) : "Dynamic";
-                    memberTypes.set(field.name, haxeType);
-
-                    // Signal members are tracked separately, not as regular data members
-                    if (haxeType == "Signal") {
-                        meta.signals.push({name: field.name});
-                    } else {
-                        var member = extractMember(field.name, t, e);
-                        if (member != null) {
-                            members.set(field.name, member);
-                            memberNames.push(field.name);
-                        }
-                    }
-                case FProp(get, set, t, e):
-                    // Haxe property with getter/setter (e.g., @:isVar var paused(default, set): Bool)
-                    // These have a backing field that we need to track as a member
-                    var haxeType = t != null ? N64MacroBase.complexTypeToString(t) : "Dynamic";
-                    memberTypes.set(field.name, haxeType);
-
-                    if (haxeType == "Signal") {
-                        meta.signals.push({name: field.name});
-                    } else {
-                        var member = extractMember(field.name, t, e);
-                        if (member != null) {
-                            // Track setter if this property has one (set != "null" and set != "never")
-                            if (set == "set") {
-                                var setterName = "set_" + field.name;
-                                member.setter = setterName;
-                                setterMembers.set(field.name, setterName);
-                            }
-                            members.set(field.name, member);
-                            memberNames.push(field.name);
-                        }
-                    }
+                    collectVar(field.name, t, e);
+                case FProp(_, set, t, e):
+                    // Property with a backing field (e.g., @:isVar var paused(default, set): Bool)
+                    collectVar(field.name, t, e, set);
                 case FFun(func):
                     methodMap.set(field.name, func);
-                    // Check if method is public (has APublic access)
-                    var isPublic = field.access != null && Lambda.has(field.access, APublic);
-                    publicMethods.set(field.name, isPublic);
+                    publicMethods.set(field.name, field.access != null && Lambda.has(field.access, APublic));
                 default:
             }
         }
@@ -517,9 +369,6 @@ class TraitExtractor implements IExtractorContext {
         // Pass 4: Extract ALL non-lifecycle methods as callable C functions
         extractMethods();
 
-        // Generate C-safe name is now done in constructor
-        // cName is available as this.cName
-
         return {
             name: traitKey,
             module: modulePath,
@@ -530,22 +379,6 @@ class TraitExtractor implements IExtractorContext {
             methods: methodIRMap,  // All callable methods (non-lifecycle)
             events: events,
             meta: meta
-        };
-    }
-
-    function extractMember(name:String, t:ComplexType, e:Expr):MemberIR {
-        // Engine-provided on N64 (gamepad, rigid body, ...): not stored
-        if (EngineTypes.isProvidedMember(cls, name)) return null;
-
-        var haxeType = t != null ? N64MacroBase.complexTypeToString(t) : "Dynamic";
-        if (!TypeMap.isSupported(haxeType)) return null;
-
-        var defaultNode:IRNode = e != null ? exprToIR(e) : null;
-
-        return {
-            haxeType: haxeType,
-            ctype: TypeMap.getCType(haxeType),
-            defaultValue: defaultNode
         };
     }
 
@@ -592,29 +425,12 @@ class TraitExtractor implements IExtractorContext {
             var prevSetterTarget = currentSetterTarget;
             if (methodName.length > 4 && methodName.substr(0, 4) == "set_") {
                 var memberName = methodName.substr(4);
-                if (setterMembers.exists(memberName)) {
+                if (members.exists(memberName) && members.get(memberName).setter != null) {
                     currentSetterTarget = memberName;
                 }
             }
-            var bodyNodes:Array<IRNode> = [];
-            switch (method.expr.expr) {
-                case EBlock(exprs):
-                    for (e in exprs) {
-                        var node = exprToIR(e);
-                        if (N64MacroBase.keepStatement(node)) {
-                            bodyNodes.push(node);
-                        }
-                    }
-                default:
-                    var node = exprToIR(method.expr);
-                    if (N64MacroBase.keepStatement(node)) {
-                        bodyNodes.push(node);
-                    }
-            }
+            var bodyNodes = statements(method.expr);
             currentSetterTarget = prevSetterTarget;
-
-            // Generate C function name: arm_<traitname>_<methodname>
-            var methodCName = "arm_" + cName.substring(4) + "_" + methodName.toLowerCase();  // cName already starts with "arm_"
 
             // Virtual Method Detection (Haxe side):
             // Public methods are marked as potentially virtual because they can be overridden
@@ -629,7 +445,7 @@ class TraitExtractor implements IExtractorContext {
 
             methodIRMap.set(methodName, {
                 name: methodName,
-                cName: methodCName,
+                cName: methodCName(methodName),
                 params: params,
                 returnType: returnType,
                 body: bodyNodes,
@@ -808,27 +624,27 @@ class TraitExtractor implements IExtractorContext {
     // ========================================================================
 
     function extractEvents(baseEventName:String, body:Expr):Void {
-        var statements:Array<IRNode> = [];
+        var eventNodes:Array<IRNode> = [];
 
         switch (body.expr) {
             case EBlock(exprs):
                 for (expr in exprs) {
-                    processStatement(expr, statements);
+                    processStatement(expr, eventNodes);
                 }
             default:
-                processStatement(body, statements);
+                processStatement(body, eventNodes);
         }
 
-        // If there are remaining statements after event extraction, add to base event
-        if (statements.length > 0) {
+        // If there are remaining eventNodes after event extraction, add to base event
+        if (eventNodes.length > 0) {
             if (!events.exists(baseEventName)) events.set(baseEventName, []);
-            for (stmt in statements) {
+            for (stmt in eventNodes) {
                 events.get(baseEventName).push(stmt);
             }
         }
     }
 
-    function processStatement(e:Expr, statements:Array<IRNode>):Void {
+    function processStatement(e:Expr, eventNodes:Array<IRNode>):Void {
         if (e == null) return;
 
         switch (e.expr) {
@@ -840,7 +656,7 @@ class TraitExtractor implements IExtractorContext {
                     // Extract body as separate event
                     var eventName = inputEvent.eventName;
                     if (!events.exists(eventName)) events.set(eventName, []);
-                    extractEventBody(eif, events.get(eventName));
+                    for (node in statements(eif)) events.get(eventName).push(node);
 
                     // Track button and meta
                     if (!Lambda.has(meta.buttons_used, inputEvent.button)) {
@@ -854,32 +670,15 @@ class TraitExtractor implements IExtractorContext {
                         event_type: inputEvent.eventType
                     });
                     meta.uses_input = true;
-                    return; // Don't add to statements
+                    return; // Don't add to eventNodes
                 }
-                // Regular if (or inline input mode) - add to statements as normal if
+                // Regular if (or inline input mode) - add to eventNodes as normal if
                 // When useInlineInputMode=true, InputCallConverter handles the conversion
                 // of gamepad.started("a") -> input_started(N64_BTN_A) as the condition
-                statements.push(convertIfToIR(econd, eif, eelse));
+                eventNodes.push(convertIf(econd, eif, eelse));
 
             default:
                 var node = exprToIR(e);
-                if (N64MacroBase.keepStatement(node)) {
-                    statements.push(node);
-                }
-        }
-    }
-
-    function extractEventBody(body:Expr, eventNodes:Array<IRNode>):Void {
-        switch (body.expr) {
-            case EBlock(exprs):
-                for (expr in exprs) {
-                    var node = exprToIR(expr);
-                    if (N64MacroBase.keepStatement(node)) {
-                        eventNodes.push(node);
-                    }
-                }
-            default:
-                var node = exprToIR(body);
                 if (N64MacroBase.keepStatement(node)) {
                     eventNodes.push(node);
                 }
@@ -918,15 +717,6 @@ class TraitExtractor implements IExtractorContext {
         return null;
     }
 
-    // IExtractorContext interface implementation
-    public function extractStringArg(e:Expr):String {
-        return switch (e.expr) {
-            case EConst(CString(s)): s;
-            case EConst(CIdent(s)): s;
-            default: null;
-        };
-    }
-
     // Check if expression is 'super' keyword
     function isSuperExpr(e:Expr):Bool {
         return switch (e.expr) {
@@ -935,269 +725,19 @@ class TraitExtractor implements IExtractorContext {
         };
     }
 
-    public function getMemberType(name:String):String {
-        return memberTypes.exists(name) ? memberTypes.get(name) : null;
-    }
-
-    public function getInheritedMemberType(name:String):String {
-        // Inherited member types are resolved at Python code generation time
-        // to avoid triggering early type resolution during macro expansion
-        return null;
-    }
-
-    public function getLocalVarType(name:String):String {
-        return localVarTypes.exists(name) ? localVarTypes.get(name) : null;
-    }
-
-    public function getMethod(name:String):Function {
-        return methodMap.exists(name) ? methodMap.get(name) : null;
-    }
-
-    // Interface methods for converters
-    public function getMeta():TraitMeta {
-        return meta;
-    }
-
-    public function getCName():String {
-        return cName;
-    }
-
-    public function getParentName():String {
+    override public function getParentName():String {
         return parentName;
     }
 
-    public function getEvents():Map<String, Array<IRNode>> {
+    override public function getEvents():Map<String, Array<IRNode>> {
         return events;
     }
 
-    // Signal handler support for SignalCallConverter
-    public function isAutoload():Bool {
-        return false;  // Traits are not autoloads
-    }
-
     // ========================================================================
-    // AST → IR Conversion
+    // AST → IR hooks (see N64Extractor)
     // ========================================================================
 
-    function convertIfToIR(econd:Expr, eif:Expr, eelse:Expr):IRNode {
-        var thenNodes:Array<IRNode> = [];
-        extractEventBody(eif, thenNodes);
-
-        var elseNodes:Array<IRNode> = null;
-        if (eelse != null) {
-            elseNodes = [];
-            extractEventBody(eelse, elseNodes);
-        }
-
-        return {
-            type: "if",
-            children: [exprToIR(econd)],
-            props: {
-                then: [for (n in thenNodes) n],
-                else_: elseNodes != null ? [for (n in elseNodes) n] : null
-            }
-        };
-    }
-
-    public function exprToIR(e:Expr):IRNode {
-        if (e == null) return null;
-
-        // Track the source position so unsupported code is reported at its line
-        var prevPos = N64MacroBase.currentPos;
-        N64MacroBase.currentPos = e.pos;
-        var ir = convertExpr(e);
-        N64MacroBase.currentPos = prevPos;
-        return ir;
-    }
-
-    function convertExpr(e:Expr):IRNode {
-        return switch (e.expr) {
-            // Literals
-            case EConst(CInt(v)): { type: "int", value: Std.parseInt(v) };
-            case EConst(CFloat(v)): { type: "float", value: Std.parseFloat(v) };
-            case EConst(CString(v)): { type: "string", value: v };
-            case EConst(CIdent("true")): { type: "bool", value: true };
-            case EConst(CIdent("false")): { type: "bool", value: false };
-            case EConst(CIdent("null")): { type: "null" };
-            case EConst(CIdent(name)): resolveIdent(name, e);
-
-            // Binary ops
-            case EBinop(op, e1, e2):
-                var opStr = N64MacroBase.binopToString(op);
-                if (op == OpAssign) {
-                    // Check if assigning to transform.loc/rot/scale (mutating transform)
-                    checkTransformMutation(e1);
-
-                    // Special case: transform.scale = value -> emit transform_call with it_set_scale()
-                    if (isTransformScaleAssign(e1)) {
-                        var valueIR = exprToIR(e2);
-                        // Swizzle: Blender (x, y, z) → N64 (x, z, y) and multiply by SCALE_FACTOR
-                        var sf = Constants.SCALE_FACTOR_C;
-                        {
-                            type: "transform_call",
-                            c_code: 'it_set_scale(&((ArmObject*)obj)->transform, ({0}).x * $sf, ({0}).z * $sf, ({0}).y * $sf);',
-                            args: [valueIR]
-                        };
-                    }
-                    // Special case: label.text = value -> emit label_set_text
-                    else if (isLabelTextAssign(e1)) {
-                        var labelName = extractLabelFromTextAssign(e1);
-                        var valueIR = exprToIR(e2);
-                        meta.uses_ui = true;
-                        {
-                            type: "label_set_text",
-                            props: { label: labelName },
-                            args: [valueIR]
-                        };
-                    }
-                    // Special case: g2.color = value -> emit render2d_set_color
-                    else if (isGraphics2ColorAssign(e1)) {
-                        var valueIR = exprToIR(e2);
-                        {
-                            type: "render2d_set_color",
-                            args: [valueIR]
-                        };
-                    }
-                    // Skip other g2 property assignments (imageScaleQuality, etc.)
-                    else if (isGraphics2PropertyAssign(e1)) {
-                        { type: "skip" };
-                    }
-                    // Special case: AutoloadClass.member = this where member is a trait type
-                    // e.g., MainInstances.player = this -> maininstances_player = data
-                    else if (isAutoloadTraitAssign(e1, e2)) {
-                        var autoloadInfo = getAutoloadFieldInfo(e1);
-                        meta.uses_autoload = true;
-                        // The stored pointer is this trait's data, which must exist
-                        meta.stores_self = true;
-                        {
-                            type: "autoload_trait_assign",
-                            props: {
-                                autoload: autoloadInfo.c_name,
-                                member: autoloadInfo.field
-                            }
-                        };
-                    } else {
-                        // Check if assigning to a member with a setter -> emit setter call
-                        // Skip if we're inside that setter's own body (to avoid infinite recursion)
-                        var targetIR = exprToIR(e1);
-                        if (targetIR != null && targetIR.type == "member"
-                            && setterMembers.exists(targetIR.value)
-                            && targetIR.value != currentSetterTarget) {
-                            var setterName = setterMembers.get(targetIR.value);
-                            var methodCName = cName + "_" + setterName;
-                            {
-                                type: "trait_method_call",
-                                cName: methodCName,
-                                method: setterName,
-                                trait: traitKey,
-                                args: [exprToIR(e2)]
-                            };
-                        } else if (targetIR != null && targetIR.value == "elements"
-                            && (targetIR.type == "member" || targetIR.type == "potentially_inherited")) {
-                            // The emitter maps the `elements` member to the canvas
-                            // element list, so the assigned value isn't needed
-                            { type: "assign", children: [targetIR, { type: "skip" }] };
-                        } else {
-                            { type: "assign", children: [targetIR, exprToIR(e2)] };
-                        }
-                    }
-                } else if (op == OpAdd) {
-                    // Check if this is string concatenation
-                    var leftType = getExprType(e1);
-                    var rightType = getExprType(e2);
-                    if (leftType == "String" || rightType == "String") {
-                        // String concatenation - use helper class
-                        var builder = new StringConcatBuilder(members, localVarTypes, exprToIR, getExprType);
-                        builder.build(e1, e2);
-                    } else {
-                        { type: "binop", value: opStr, children: [exprToIR(e1), exprToIR(e2)] };
-                    }
-                } else {
-                    var equality = N64MacroBase.stringEquality(op, e1, e2, exprToIR);
-                    equality != null ? equality : { type: "binop", value: opStr, children: [exprToIR(e1), exprToIR(e2)] };
-                }
-
-            // Unary ops
-            case EUnop(op, postFix, operand):
-                { type: "unop", value: N64MacroBase.unopToString(op), children: [exprToIR(operand)], props: { postfix: postFix } };
-
-            // Field access
-            case EField(obj, field):
-                convertFieldAccess(e, obj, field);
-
-            // Call
-            case ECall(callExpr, params):
-                convertCall(callExpr, params);
-
-            // Parentheses
-            case EParenthesis(inner):
-                exprToIR(inner);
-
-            // New
-            case ENew(tp, params):
-                convertNew(e, tp, params);
-
-            // Block
-            case EBlock(exprs):
-                { type: "block", children: [for (expr in exprs) exprToIR(expr)] };
-
-            // If statement (nested ifs)
-            case EIf(econd, eif, eelse):
-                convertIfToIR(econd, eif, eelse);
-
-            // Local variable declaration: var x = value
-            case EVars(vars):
-                var varDecls:Array<IRNode> = [];
-                for (v in vars) {
-                    var varType = v.type != null ? N64MacroBase.complexTypeToString(v.type) : getExprType(v.expr);
-                    var ctype = TypeMap.getCType(varType);
-                    if (ctype == null) ctype = "float"; // fallback for unknown types
-                    // Track this local variable's type
-                    localVarTypes.set(v.name, varType);
-                    varDecls.push({
-                        type: "var",
-                        value: v.name,
-                        props: { ctype: ctype, haxeType: varType },
-                        children: v.expr != null ? [exprToIR(v.expr)] : null
-                    });
-                }
-                if (varDecls.length == 1) varDecls[0];
-                else { type: "block", children: varDecls };
-
-            // Return statement
-            case EReturn(retExpr):
-                { type: "return", children: retExpr != null ? [exprToIR(retExpr)] : null };
-
-            // While loop
-            case EWhile(econd, ebody, normalWhile):
-                { type: normalWhile ? "while" : "do_while", children: [exprToIR(econd), exprToIR(ebody)] };
-
-            // For loop (range-based)
-            case EFor(it, ebody):
-                convertForLoop(it, ebody);
-
-            // Break statement
-            case EBreak:
-                { type: "break" };
-
-            // Continue statement
-            case EContinue:
-                { type: "continue" };
-
-            // Ternary operator
-            case ETernary(econd, eif, eelse):
-                { type: "ternary", children: [exprToIR(econd), exprToIR(eif), exprToIR(eelse)] };
-
-            // Array access
-            case EArray(e1, e2):
-                { type: "array_access", children: [exprToIR(e1), exprToIR(e2)] };
-
-            default:
-                N64MacroBase.unhandledExpr(e);
-        };
-    }
-
-    function resolveIdent(name:String, e:Expr):IRNode {
+    override function resolveIdent(name:String, e:Expr):IRNode {
         if (name == "this" || name == "object") {
             meta.uses_transform = true;
             return { type: "ident", value: "object" };
@@ -1216,12 +756,10 @@ class TraitExtractor implements IExtractorContext {
         // Check if this is a method reference (function pointer)
         // e.g., fadeOut(initTransitionDone) -> fadeOut(arm_gamescene_inittransitiondone)
         if (methodMap.exists(name)) {
-            // Generate C function name for this method
-            var methodCName = "arm_" + cName.substring(4) + "_" + name.toLowerCase();
             return {
                 type: "method_ref",
                 method: name,
-                cName: methodCName,
+                cName: methodCName(name),
                 trait: traitKey
             };
         }
@@ -1243,28 +781,260 @@ class TraitExtractor implements IExtractorContext {
         return { type: "ident", value: name };
     }
 
-    // Convert for loop: for (i in 0...10) pattern
-    function convertForLoop(it:Expr, body:Expr):IRNode {
-        switch (it.expr) {
-            case EBinop(OpIn, e1, e2):
-                var varName = switch (e1.expr) {
-                    case EConst(CIdent(s)): s;
-                    default: "_i";
-                };
-                localVarTypes.set(varName, "Int");
+    // C function of one of this trait's methods: arm_<trait>_<method>
+    function methodCName(name:String):String {
+        return "arm_" + cName.substring(4) + "_" + name.toLowerCase();  // cName already starts with "arm_"
+    }
 
-                switch (e2.expr) {
-                    case EBinop(OpInterval, start, end):
-                        return {
-                            type: "for_range",
-                            value: varName,
-                            children: [exprToIR(start), exprToIR(end), exprToIR(body)]
-                        };
-                    default:
-                }
-            default:
+    override function convertAssign(e1:Expr, e2:Expr):IRNode {
+        // Check if assigning to transform.loc/rot/scale (mutating transform)
+        checkTransformMutation(e1);
+
+        // transform.scale = value -> it_set_scale()
+        if (isTransformScaleAssign(e1)) {
+            // Swizzle: Blender (x, y, z) → N64 (x, z, y) and multiply by SCALE_FACTOR
+            var sf = Constants.SCALE_FACTOR_C;
+            return {
+                type: "transform_call",
+                c_code: 'it_set_scale(&((ArmObject*)obj)->transform, ({0}).x * $sf, ({0}).z * $sf, ({0}).y * $sf);',
+                args: [exprToIR(e2)]
+            };
         }
-        return N64MacroBase.unsupported("for loops are only supported over integer ranges (for (i in a...b)) on N64");
+        // label.text = value -> label_set_text
+        if (isLabelTextAssign(e1)) {
+            var labelName = extractLabelFromTextAssign(e1);
+            var valueIR = exprToIR(e2);
+            meta.uses_ui = true;
+            return {
+                type: "label_set_text",
+                props: { label: labelName },
+                args: [valueIR]
+            };
+        }
+        // g2.color = value -> render2d_set_color
+        if (isGraphics2ColorAssign(e1)) {
+            return { type: "render2d_set_color", args: [exprToIR(e2)] };
+        }
+        // Other g2 property assignments (imageScaleQuality, etc.)
+        if (isGraphics2PropertyAssign(e1)) {
+            return { type: "skip" };
+        }
+        // AutoloadClass.member = this where member is a trait type
+        // e.g., MainInstances.player = this -> maininstances_player = data
+        if (isAutoloadTraitAssign(e1, e2)) {
+            var autoloadInfo = getAutoloadFieldInfo(e1);
+            meta.uses_autoload = true;
+            // The stored pointer is this trait's data, which must exist
+            meta.stores_self = true;
+            return {
+                type: "autoload_trait_assign",
+                props: {
+                    autoload: autoloadInfo.c_name,
+                    member: autoloadInfo.field
+                }
+            };
+        }
+
+        var targetIR = exprToIR(e1);
+        // A member with a setter: call it, except inside that setter's own
+        // body (to avoid infinite recursion)
+        if (targetIR != null && targetIR.type == "member" && targetIR.value != currentSetterTarget) {
+            var member = members.get(targetIR.value);
+            if (member != null && member.setter != null) {
+                return {
+                    type: "trait_method_call",
+                    cName: cName + "_" + member.setter,
+                    method: member.setter,
+                    trait: traitKey,
+                    args: [exprToIR(e2)]
+                };
+            }
+        }
+        if (targetIR != null && targetIR.value == "elements"
+            && (targetIR.type == "member" || targetIR.type == "potentially_inherited")) {
+            // The emitter maps the `elements` member to the canvas
+            // element list, so the assigned value isn't needed
+            return { type: "assign", children: [targetIR, { type: "skip" }] };
+        }
+        // `this` stored in a trait-typed member: the trait's data
+        if (targetIR != null && targetIR.type == "member" && isThis(e2)) {
+            var member = members.get(targetIR.value);
+            if (member != null && member.ctype.endsWith("Data*")) {
+                meta.stores_self = true;
+                return { type: "assign", children: [targetIR, { type: "c_literal", c_code: "data" }] };
+            }
+        }
+        return { type: "assign", children: [targetIR, exprToIR(e2)] };
+    }
+
+    function isThis(e:Expr):Bool {
+        return switch (e.expr) {
+            case EConst(CIdent("this")): true;
+            default: false;
+        };
+    }
+
+    override function convertSpecialMethodCall(obj:Expr, method:String, params:Array<Expr>, args:Array<IRNode>):IRNode {
+        // super.method()
+        if (isSuperExpr(obj)) {
+            // No parent - skip (shouldn't happen in valid Haxe code)
+            if (parentName == null) return { type: "skip" };
+            return {
+                type: "super_call",
+                value: parentName,    // Parent trait name
+                method: method,       // Method name (e.g., "onReady", "onUpdate")
+                args: args
+            };
+        }
+
+        // this.method(): a method of this trait is inlined
+        if (isThis(obj)) {
+            var methodFunc = methodMap.get(method);
+            if (methodFunc != null && methodFunc.expr != null) {
+                return { type: "block", children: statements(methodFunc.expr) };
+            }
+            // Not a local method - emit as method_call (might be from parent)
+            return {
+                type: "method_call",
+                method: method,
+                object: { type: "ident", value: "this" },
+                args: args
+            };
+        }
+        return null;
+    }
+
+    override function convertFunctionCall(funcName:String, params:Array<Expr>, args:Array<IRNode>):IRNode {
+        // super() - call parent constructor (on_ready)
+        if (funcName == "super") {
+            // No parent - skip (shouldn't happen in valid Haxe code)
+            if (parentName == null) return { type: "skip" };
+            return {
+                type: "super_call",
+                value: parentName,    // Parent trait name
+                method: "new",        // Constructor - maps to on_ready
+                args: args
+            };
+        }
+
+        // Skip lifecycle registration calls - they're handled by scanForLifecycles
+        // Note: notifyOnRender2D is now handled separately, not skipped
+        if (funcName == "notifyOnInit" ||
+            funcName == "notifyOnFixedUpdate" || funcName == "notifyOnLateUpdate" ||
+            funcName == "notifyOnRemove" || funcName == "notifyOnAdd" ||
+            funcName == "notifyOnRender") {
+            return { type: "skip" };
+        }
+
+        // removeFixedUpdate(callback) -> set _fixed_update_enabled = false
+        if (funcName == "removeFixedUpdate") {
+            meta.has_remove_fixed_update = true;
+            var callbackName:String = null;
+            if (params.length > 0) {
+                callbackName = extractStringArg(params[0]);
+            }
+            return { type: "remove_fixed_update", value: callbackName };
+        }
+
+        // removeUpdate(callback) -> set _update_enabled = false
+        // On N64, we only have one update per trait, so we just disable it
+        // The callback parameter is for Haxe compatibility
+        if (funcName == "removeUpdate") {
+            meta.has_remove_update = true;
+            // Extract callback name for documentation/debugging (optional)
+            var callbackName:String = null;
+            if (params.length > 0) {
+                callbackName = extractStringArg(params[0]);
+            }
+            return { type: "remove_update", value: callbackName };
+        }
+
+        // removeLateUpdate(callback) -> set _late_update_enabled = false
+        if (funcName == "removeLateUpdate") {
+            meta.has_remove_late_update = true;
+            var callbackName:String = null;
+            if (params.length > 0) {
+                callbackName = extractStringArg(params[0]);
+            }
+            return { type: "remove_late_update", value: callbackName };
+        }
+
+        // removeRender2D(callback) -> set _render2d_enabled = false
+        if (funcName == "removeRender2D") {
+            meta.has_remove_render2d = true;
+            var callbackName:String = null;
+            if (params.length > 0) {
+                callbackName = extractStringArg(params[0]);
+            }
+            return { type: "remove_render2d", value: callbackName };
+        }
+
+        // notifyOnUpdate(callback) outside constructor -> re-enable updates
+        // In constructor it's handled by scanForLifecycles, but runtime calls enable updates
+        if (funcName == "notifyOnUpdate") {
+            // Always enable the toggle mechanism when runtime notifyOnUpdate is used
+            meta.has_remove_update = true;
+            var callbackName:String = null;
+            if (params.length > 0) {
+                callbackName = extractStringArg(params[0]);
+            }
+            return { type: "notify_update", value: callbackName };
+        }
+
+        // notifyOnRender2D(callback) outside init -> re-enable render2D
+        if (funcName == "notifyOnRender2D") {
+            // Always enable the toggle mechanism when runtime notifyOnRender2D is used
+            meta.has_remove_render2d = true;
+            var callbackName:String = null;
+            if (params.length > 0) {
+                callbackName = extractStringArg(params[0]);
+            }
+            return { type: "notify_render2d", value: callbackName };
+        }
+
+        // Check if this is a call to a local method - emit as C function call
+        if (methodMap.exists(funcName)) {
+            var method = methodMap.get(funcName);
+            if (method != null && method.expr != null) {
+                // Use extractCallbackArgs to properly handle lambda parameters
+                var processedArgs = extractCallbackArgs(params, funcName);
+                return {
+                    type: "trait_method_call",
+                    cName: methodCName(funcName),
+                    method: funcName,
+                    trait: traitKey,
+                    args: processedArgs
+                };
+            }
+        }
+
+        // Check if this is a call to a function-type parameter (callback invocation)
+        // e.g., finishedCallback() where finishedCallback: Void->Void
+        var localType = localVarTypes.get(funcName);
+        if (localType != null && (localType.indexOf("->") >= 0 || localType == "Void->Void")) {
+            // This is a callback parameter being invoked
+            return {
+                type: "callback_param_call",
+                name: funcName,
+                paramType: localType,
+                args: args
+            };
+        }
+
+        // If method not found locally but we have a parent, assume it's inherited
+        // The Python emitter will check if the method exists in parent chain
+        if (parentName != null) {
+            // Extract callbacks from raw params - function args become callback wrappers
+            var processedArgs = extractCallbackArgs(params, funcName);
+            return {
+                type: "inherited_method_call",
+                parent: parentName,
+                method: funcName,
+                args: processedArgs
+            };
+        }
+
+        return super.convertFunctionCall(funcName, params, args);
     }
 
     // Check if expression is an assignment to transform properties (loc, rot, scale, dirty)
@@ -1402,490 +1172,6 @@ class TraitExtractor implements IExtractorContext {
         return null;
     }
 
-    function convertFieldAccess(e:Expr, obj:Expr, field:String):IRNode {
-        // Handle this.member -> member access for trait members
-        // Must be checked early so trait members route through data struct, not ArmObject
-        switch (obj.expr) {
-            case EConst(CIdent("this")):
-                if (memberNames.indexOf(field) >= 0) {
-                    return { type: "member", value: field };
-                }
-            default:
-        }
-
-        // Handle iron.App static field access -> C global
-        switch (obj.expr) {
-            case _ if (TypedIndex.isClassRef(obj, "iron.App")):
-                if (field == "pauseUpdates") {
-                    return { type: "c_literal", c_code: "app_pause_updates" };
-                }
-            default:
-        }
-
-        // Field of an engine-provided class (like PhysicsWorld.active)
-        if (EngineTypes.isProvided(TypedIndex.typeRefPath(obj))) {
-            return { type: "skip" };
-        }
-
-        // Handle autoloadVar.object -> get object pointer from trait data
-        // Pattern: EField(EField(AutoloadClass, traitMember), "object")
-        if (field == "object") {
-            switch (obj.expr) {
-                case EField(innerObj, memberName):
-                    switch (innerObj.expr) {
-                        case EConst(CIdent(_)):
-                            var cName = AutoloadCallConverter.getAutoloadCName(innerObj);
-                            if (cName != null) {
-                                // Found AutoloadClass.traitMember.object pattern
-                                meta.uses_autoload = true;
-                                return {
-                                    type: "autoload_trait_object",
-                                    value: field,
-                                    props: {
-                                        autoload: cName,
-                                        member: memberName
-                                    }
-                                };
-                            }
-                        default:
-                    }
-                default:
-            }
-        }
-
-        // Handle AutoloadClass.member field access
-        switch (obj.expr) {
-            case EConst(CIdent(_)):
-                var cName = AutoloadCallConverter.getAutoloadCName(obj);
-                if (cName != null) {
-                    meta.uses_autoload = true;
-                    return {
-                        type: "autoload_field",
-                        value: field,
-                        props: {
-                            autoload: cName,
-                            member: field
-                        }
-                    };
-                }
-            default:
-        }
-
-        // Handle kha.Window.get(0).width/height -> render2d_get_width()/height()
-        if (field == "width" || field == "height") {
-            switch (obj.expr) {
-                case ECall(callExpr, _):
-                    // Check if this is kha.Window.get(0) or Window.get(0)
-                    switch (callExpr.expr) {
-                        case EField(windowExpr, "get") if (TypedIndex.isClassRef(windowExpr, "kha.Window")):
-                            var funcName = field == "width" ? "render2d_get_width()" : "render2d_get_height()";
-                            return { type: "c_literal", c_code: funcName };
-                        default:
-                    }
-                default:
-            }
-        }
-
-        // Handle Scene.active.raw.name -> scene_get_name(scene_get_current_id())
-        if (field == "name") {
-            switch (obj.expr) {
-                case EField(innerObj, "raw"):
-                    switch (innerObj.expr) {
-                        case EField(sceneExpr, "active"):
-                            switch (sceneExpr.expr) {
-                                case _ if (TypedIndex.isClassRef(sceneExpr, "iron.Scene")):
-                                    return { type: "c_literal", c_code: "scene_get_name(scene_get_current_id())" };
-                                default:
-                            }
-                        default:
-                    }
-                default:
-            }
-        }
-
-        // Handle Scene.active.getGroup(groupName).length -> scene_get_group_count(groupName)
-        if (field == "length") {
-            switch (obj.expr) {
-                case ECall(callExpr, params):
-                    // Check for getGroup call
-                    switch (callExpr.expr) {
-                        case EField(sceneActiveExpr, "getGroup"):
-                            // Check for Scene.active
-                            switch (sceneActiveExpr.expr) {
-                                case EField(sceneExpr, "active"):
-                                    switch (sceneExpr.expr) {
-                                        case _ if (TypedIndex.isClassRef(sceneExpr, "iron.Scene")):
-                                            // Found Scene.active.getGroup(x).length
-                                            if (params.length > 0) {
-                                                var groupArg = exprToIR(params[0]);
-                                                return { type: "scene_get_group_count", args: [groupArg] };
-                                            }
-                                        default:
-                                    }
-                                default:
-                            }
-                        default:
-                    }
-                default:
-            }
-        }
-
-        // Color constants (Color.Black, Color.Orange, ...): the compiler folds
-        // them to their ARGB value -> RGBA32 for N64
-        var argb = TypedIndex.receiverPath(e) == "kha.Color" ? TypedIndex.intConstant(e) : null;
-        if (argb != null) {
-            var r = (argb >> 16) & 0xff, g = (argb >> 8) & 0xff, b = argb & 0xff, a = (argb >>> 24) & 0xff;
-            return { type: "c_literal", c_code: 'RGBA32($r, $g, $b, $a)' };
-        }
-
-        // Handle Assets.sounds.sound_name -> "rom:/sound_name.wav64"
-        switch (obj.expr) {
-            case EField(innerObj, "sounds"):
-                switch (innerObj.expr) {
-                    case _ if (TypedIndex.isClassRef(innerObj, "kha.Assets")):
-                        var soundPath = 'rom:/${field}.wav64';
-                        return { type: "string", value: soundPath, c_code: '"$soundPath"' };
-                    default:
-                }
-            default:
-        }
-
-        // Handle transform access
-        switch (obj.expr) {
-            case EField(innerObj, "transform"):
-                meta.uses_transform = true;
-                // Check if innerObj is a specific object (not `this` or `object`)
-                var ownerNode:IRNode = switch (innerObj.expr) {
-                    case EConst(CIdent("this")), EConst(CIdent("object")):
-                        // Self-reference - use "object"
-                        { type: "ident", value: "object" };
-                    default:
-                        // External object (e.g., target.transform.loc)
-                        exprToIR(innerObj);
-                };
-                return { type: "field_access", object: ownerNode, value: "transform." + field };
-            case EConst(CIdent("transform")):
-                meta.uses_transform = true;
-                return { type: "field_access", object: { type: "ident", value: "object" }, value: "transform." + field };
-            case _ if (TypedIndex.isClassRef(obj, "iron.system.Time")):
-                if (field == "delta") {
-                    meta.uses_time = true;
-                    return { type: "ident", value: "dt" };
-                } else if (field == "scale") {
-                    meta.uses_time = true;
-                    return { type: "ident", value: "time_scale" };
-                } else if (field == "fixedStep") {
-                    meta.uses_time = true;
-                    return { type: "ident", value: "time_fixed_step" };
-                }
-            case _ if (InputCallConverter.isGamepad(obj)):
-                // gamepad.leftStick, gamepad.rightStick
-                meta.uses_input = true;
-                if (field == "leftStick" || field == "rightStick") {
-                    // Emit inline C struct with input functions
-                    return { type: "c_literal", c_code: "(ArmVec2){input_stick_x(), input_stick_y()}" };
-                }
-            default:
-        }
-
-        // Vec3 component access
-        if (field == "x" || field == "y" || field == "z") {
-            return { type: "field_access", object: exprToIR(obj), value: field };
-        }
-
-        // Handle object.parent -> object_get_parent((ArmObject*)obj, scene_get(scene_get_current_id()))
-        if (field == "parent") {
-            switch (obj.expr) {
-                case EConst(CIdent("object")), EConst(CIdent("this")):
-                    return { type: "c_literal", c_code: "object_get_parent((ArmObject*)obj, scene_get(scene_get_current_id()))" };
-                default:
-                    var ownerNode = exprToIR(obj);
-                    return { type: "c_literal", c_code: 'object_get_parent((ArmObject*){obj}, scene_get(scene_get_current_id()))' };
-            }
-        }
-
-        // Static field of a class nothing above translates
-        var classPath = TypedIndex.typeRefPath(obj);
-        if (classPath != null && !N64MacroBase.isExtractedClass(classPath)) {
-            var shortName = classPath.substr(classPath.lastIndexOf(".") + 1);
-            return N64MacroBase.unsupported('$shortName.$field is not supported on N64 yet');
-        }
-
-        return { type: "field_access", object: exprToIR(obj), value: field };
-    }
-
-    /**
-     * Haxe type name of an expression (Int, Float, String, Vec2, Label, Signal, etc.),
-     * from the compiler's typed AST, or "Dynamic" if unknown.
-     */
-    public function getExprType(e:Expr):String {
-        var typed = e != null ? TypedIndex.typeOf(e) : null;
-        return typed != null ? typed : "Dynamic";
-    }
-
-    public function inferExprType(e:Expr):String {
-        // `this` and `object` stand for the trait's object on N64
-        switch (e.expr) {
-            case EConst(CIdent("this")), EConst(CIdent("object")): return "ArmObject";
-            default:
-        }
-        var typed = TypedIndex.typeOf(e);
-        return typed != null ? typed : "Dynamic";
-    }
-
-    static var unsupportedStaticClasses = [
-        "iron.system.Audio", "kha.audio1.Audio", "kha.audio2.Audio",
-        "iron.system.Tween", "kha.netsync.Network", "koui.Koui", "kha.System",
-    ];
-
-    function convertCall(callExpr:Expr, params:Array<Expr>):IRNode {
-        var args = [for (p in params) exprToIR(p)];
-
-        // Try modular converters first (handles Vec, Physics, Transform, Math, Input, Signal, Std, Object, Scene, Canvas)
-        switch (callExpr.expr) {
-            case EField(obj, method):
-                // Check for super.method() first
-                if (isSuperExpr(obj)) {
-                    if (parentName == null) {
-                        // No parent - skip (shouldn't happen in valid Haxe code)
-                        return { type: "skip" };
-                    }
-                    return {
-                        type: "super_call",
-                        value: parentName,    // Parent trait name
-                        method: method,       // Method name (e.g., "onReady", "onUpdate")
-                        args: args
-                    };
-                }
-
-                // Check for Time.time() special case
-                switch (obj.expr) {
-                    case _ if (TypedIndex.isClassRef(obj, "iron.system.Time")):
-                        if (method == "time") {
-                            meta.uses_time = true;
-                            // Time.time() -> time_get()
-                            return { type: "call", value: "time_get", args: [] };
-                        }
-                    // Handle Color.fromFloats(r, g, b, a) -> ARGB uint32 construction
-                    case _ if (TypedIndex.isClassRef(obj, "kha.Color")):
-                        if (method == "fromFloats") {
-                            // Color.fromFloats(r, g, b, a) -> RGBA32 macro inverted to ARGB for storage
-                            // We'll emit a helper that constructs the uint32 at runtime
-                            return {
-                                type: "color_from_floats",
-                                args: args
-                            };
-                        }
-                    // Check for this.method() - call to local method on this object
-                    case EConst(CIdent("this")):
-                        // Check if this is a call to a local method
-                        if (methodMap.exists(method)) {
-                            var methodFunc = methodMap.get(method);
-                            if (methodFunc != null && methodFunc.expr != null) {
-                                // Inline the method body
-                                var bodyNodes:Array<IRNode> = [];
-                                switch (methodFunc.expr.expr) {
-                                    case EBlock(exprs):
-                                        for (e in exprs) {
-                                            var node = exprToIR(e);
-                                            if (N64MacroBase.keepStatement(node)) {
-                                                bodyNodes.push(node);
-                                            }
-                                        }
-                                    default:
-                                        var node = exprToIR(methodFunc.expr);
-                                        if (N64MacroBase.keepStatement(node)) {
-                                            bodyNodes.push(node);
-                                        }
-                                }
-                                return { type: "block", children: bodyNodes };
-                            }
-                        }
-                        // Not a local method - emit as method_call (might be from parent)
-                        return {
-                            type: "method_call",
-                            method: method,
-                            object: { type: "ident", value: "this" },
-                            args: args
-                        };
-                    default:
-                }
-
-                // Static APIs without an N64 equivalent, checked before the converters
-                // (the Tween converter would otherwise take iron.system.Tween's static calls)
-                var staticClass = TypedIndex.typeRefPath(obj);
-                if (staticClass != null && Lambda.has(unsupportedStaticClasses, staticClass)) {
-                    var shortName = staticClass.substr(staticClass.lastIndexOf(".") + 1);
-                    return N64MacroBase.unsupported('$shortName.$method() is not supported on N64');
-                }
-                switch (obj.expr) {
-                    case _ if (TypedIndex.isClassRef(obj, "koui.utils.SceneManager")):
-                        if (method == "clearScenes") return { type: "canvas_clear_scenes" };
-                        return N64MacroBase.unsupported('SceneManager.$method() is not supported on N64 yet');
-                    default:
-                }
-
-                for (conv in converters) {
-                    var result = conv.tryConvert(obj, method, args, params, this);
-                    if (result != null) return result;
-                }
-
-                // Fallback: generic call with object (for unknown method calls)
-                return N64MacroBase.methodCall(obj, method, args, exprToIR);
-
-            default:
-        }
-
-        switch (callExpr.expr) {
-            // super() - call parent constructor (on_ready)
-            case EConst(CIdent("super")):
-                if (parentName == null) {
-                    // No parent - skip (shouldn't happen in valid Haxe code)
-                    return { type: "skip" };
-                }
-                return {
-                    type: "super_call",
-                    value: parentName,    // Parent trait name
-                    method: "new",        // Constructor - maps to on_ready
-                    args: args
-                };
-
-            case EConst(CIdent(funcName)):
-                // Skip lifecycle registration calls - they're handled by scanForLifecycles
-                // Note: notifyOnRender2D is now handled separately, not skipped
-                if (funcName == "notifyOnInit" ||
-                    funcName == "notifyOnFixedUpdate" || funcName == "notifyOnLateUpdate" ||
-                    funcName == "notifyOnRemove" || funcName == "notifyOnAdd" ||
-                    funcName == "notifyOnRender") {
-                    return { type: "skip" };
-                }
-
-                // removeFixedUpdate(callback) -> set _fixed_update_enabled = false
-                if (funcName == "removeFixedUpdate") {
-                    meta.has_remove_fixed_update = true;
-                    var callbackName:String = null;
-                    if (params.length > 0) {
-                        callbackName = extractStringArg(params[0]);
-                    }
-                    return { type: "remove_fixed_update", value: callbackName };
-                }
-
-                // removeUpdate(callback) -> set _update_enabled = false
-                // On N64, we only have one update per trait, so we just disable it
-                // The callback parameter is for Haxe compatibility
-                if (funcName == "removeUpdate") {
-                    meta.has_remove_update = true;
-                    // Extract callback name for documentation/debugging (optional)
-                    var callbackName:String = null;
-                    if (params.length > 0) {
-                        callbackName = extractStringArg(params[0]);
-                    }
-                    return { type: "remove_update", value: callbackName };
-                }
-
-                // removeLateUpdate(callback) -> set _late_update_enabled = false
-                if (funcName == "removeLateUpdate") {
-                    meta.has_remove_late_update = true;
-                    var callbackName:String = null;
-                    if (params.length > 0) {
-                        callbackName = extractStringArg(params[0]);
-                    }
-                    return { type: "remove_late_update", value: callbackName };
-                }
-
-                // removeRender2D(callback) -> set _render2d_enabled = false
-                if (funcName == "removeRender2D") {
-                    meta.has_remove_render2d = true;
-                    var callbackName:String = null;
-                    if (params.length > 0) {
-                        callbackName = extractStringArg(params[0]);
-                    }
-                    return { type: "remove_render2d", value: callbackName };
-                }
-
-                // notifyOnUpdate(callback) outside constructor -> re-enable updates
-                // In constructor it's handled by scanForLifecycles, but runtime calls enable updates
-                if (funcName == "notifyOnUpdate") {
-                    // Always enable the toggle mechanism when runtime notifyOnUpdate is used
-                    meta.has_remove_update = true;
-                    var callbackName:String = null;
-                    if (params.length > 0) {
-                        callbackName = extractStringArg(params[0]);
-                    }
-                    return { type: "notify_update", value: callbackName };
-                }
-
-                // notifyOnRender2D(callback) outside init -> re-enable render2D
-                if (funcName == "notifyOnRender2D") {
-                    // Always enable the toggle mechanism when runtime notifyOnRender2D is used
-                    meta.has_remove_render2d = true;
-                    var callbackName:String = null;
-                    if (params.length > 0) {
-                        callbackName = extractStringArg(params[0]);
-                    }
-                    return { type: "notify_render2d", value: callbackName };
-                }
-
-                // trace() -> debugf() for N64 debug output
-                if (funcName == "trace") {
-                    return { type: "debug_call", args: args };
-                }
-
-                // Check if this is a call to a local method - emit as C function call
-                if (methodMap.exists(funcName)) {
-                    var method = methodMap.get(funcName);
-                    if (method != null && method.expr != null) {
-                        // Generate C function name: arm_<traitname>_<methodname>
-                        var methodCName = "arm_" + cName.substring(4) + "_" + funcName.toLowerCase();
-                        // Use extractCallbackArgs to properly handle lambda parameters
-                        var processedArgs = extractCallbackArgs(params, funcName);
-                        return {
-                            type: "trait_method_call",
-                            cName: methodCName,
-                            method: funcName,
-                            trait: traitKey,
-                            args: processedArgs
-                        };
-                    }
-                }
-
-                // Check if this is a call to a function-type parameter (callback invocation)
-                // e.g., finishedCallback() where finishedCallback: Void->Void
-                var localType = localVarTypes.get(funcName);
-                if (localType != null && (localType.indexOf("->") >= 0 || localType == "Void->Void")) {
-                    // This is a callback parameter being invoked
-                    return {
-                        type: "callback_param_call",
-                        name: funcName,
-                        paramType: localType,
-                        args: args
-                    };
-                }
-
-                // If method not found locally but we have a parent, assume it's inherited
-                // The Python emitter will check if the method exists in parent chain
-                if (parentName != null) {
-                    // Extract callbacks from raw params - function args become callback wrappers
-                    var processedArgs = extractCallbackArgs(params, funcName);
-                    return {
-                        type: "inherited_method_call",
-                        parent: parentName,
-                        method: funcName,
-                        args: processedArgs
-                    };
-                }
-
-                return { type: "call", method: funcName, args: args };
-
-            default:
-                return N64MacroBase.unsupported("only calls to named functions and methods are supported on N64 (not " + N64MacroBase.describeExpr(callExpr) + ")");
-        }
-    }
-
-    // =========================================================================
-    // New expression conversion - handles constructor calls
-    // =========================================================================
-
     /**
      * Counter for generating unique callback names for inherited method callbacks
      */
@@ -1940,21 +1226,7 @@ class TraitExtractor implements IExtractorContext {
         }
 
         // Convert function body to IR
-        var bodyNodes:Array<IRNode> = [];
-        switch (func.expr.expr) {
-            case EBlock(exprs):
-                for (e in exprs) {
-                    var node = exprToIR(e);
-                    if (N64MacroBase.keepStatement(node)) {
-                        bodyNodes.push(node);
-                    }
-                }
-            default:
-                var node = exprToIR(func.expr);
-                if (N64MacroBase.keepStatement(node)) {
-                    bodyNodes.push(node);
-                }
-        }
+        var bodyNodes = statements(func.expr);
 
         // Clean up local variable tracking
         if (paramName != null) {
@@ -2055,22 +1327,6 @@ class TraitExtractor implements IExtractorContext {
                     }
                 }
         }
-    }
-
-    function convertNew(e:Expr, tp:TypePath, params:Array<Expr>):IRNode {
-        var typeName = tp.name;
-        var args = [for (p in params) exprToIR(p)];
-
-        // Vectors: C struct literal
-        var vector = N64MacroBase.vectorLiteral(e, args);
-        if (vector != null) return vector;
-
-        // Default: generic new expression
-        return {
-            type: "new",
-            value: typeName,
-            args: args
-        };
     }
 }
 
