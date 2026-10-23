@@ -64,6 +64,19 @@ class TypedIndex {
     }
 
     /**
+     * Type of the value itself, looking past what the compiler adds at the
+     * same position for untyped parameters: conversions to Any/Dynamic, and for
+     * rest arguments (`emit(...args:Any)`) the Rest<Any> array around them.
+     */
+    public static function valueType(e:Expr):Null<String> {
+        for (t in nodesAt(e)) {
+            var name = typeName(t.t);
+            if (name != null && name != "Void" && name != "Dynamic" && name.indexOf("Any") < 0) return name;
+        }
+        return null;
+    }
+
+    /**
      * Short name of a type with its parameters. Typedef names are kept
      * (FastFloat stays FastFloat) and Null<T> is unwrapped to T.
      */
@@ -212,6 +225,34 @@ class TypedIndex {
         if (list.length == 0) return null;
         return switch (list[0].expr) {
             case TField(_, FInstance(c, _, _)), TField(_, FStatic(c, _)): classPath(c.get());
+            // Method used as a value (`signal.connect(onScored)`)
+            case TField(_, FClosure(owner, _)) if (owner != null): classPath(owner.c.get());
+            default: null;
+        };
+    }
+
+    /**
+     * Class declaring the static field an expression reads, also when written
+     * without its class (`speedChanged` inside the class). Null otherwise.
+     */
+    public static function staticFieldOwner(e:Expr):Null<ClassType> {
+        var list = nodesAt(e);
+        if (list.length == 0) return null;
+        return switch (list[0].expr) {
+            case TField(_, FStatic(c, _)): c.get();
+            default: null;
+        };
+    }
+
+    /**
+     * Parameter types of a function value (e.g. a method passed as a signal
+     * handler), as short Haxe type names. Null if it isn't a typed function.
+     */
+    public static function functionArgTypes(e:Expr):Null<Array<String>> {
+        var list = nodesAt(e);
+        if (list.length == 0) return null;
+        return switch (Context.follow(list[0].t)) {
+            case TFun(args, _): [for (arg in args) typeName(arg.t)];
             default: null;
         };
     }

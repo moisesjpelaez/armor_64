@@ -27,7 +27,9 @@ using StringTools;
  */
 class TweenCallConverter implements ICallConverter {
     // Counter for generating unique callback names
-    static var callbackCounter:Int = 0;
+    // Per class (one converter per extractor): callback names stay the same
+    // whatever order the classes are compiled in
+    var callbackCounter:Int = 0;
 
     public function new() {}
 

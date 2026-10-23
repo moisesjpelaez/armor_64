@@ -138,19 +138,26 @@ def extract_blender_trait_props(trait) -> dict:
 # =============================================================================
 
 def get_trait(trait_info: dict, trait_class: str) -> dict:
-    """Get trait info by class name. Handles both full module path and simple name."""
-    traits = trait_info.get("traits", {})
-    # Try full path first
-    if trait_class in traits:
-        return traits[trait_class]
-    # Try simple class name (last part after '.')
-    simple_name = trait_class.rsplit('.', 1)[-1]
-    return traits.get(simple_name, {})
+    """Get trait info by class name (see trait_key)."""
+    return trait_info.get("traits", {}).get(trait_key(trait_info, trait_class), {})
 
 def trait_key(trait_info: dict, trait_class: str) -> str:
-    """Key of a trait in the IR for a scene trait class name (full or simple)."""
+    """Key of a trait in the IR, its full class path (e.g. "arm.player.Player"),
+    for a class name from a scene's trait list, which Armory stores relative to
+    the project package ("player.Player")."""
     traits = trait_info.get("traits", {})
-    return trait_class if trait_class in traits else trait_class.rsplit('.', 1)[-1]
+    if trait_class in traits:
+        return trait_class
+    try:
+        package = arm.utils.safestr(bpy.data.worlds['Arm'].arm_project_package)
+    except (KeyError, AttributeError):
+        package = ''
+    if package and f'{package}.{trait_class}' in traits:
+        return f'{package}.{trait_class}'
+    # Unique match on the simple class name (e.g. IR from an older build)
+    simple_name = trait_class.rsplit('.', 1)[-1]
+    matches = [k for k in traits if k == simple_name or k.endswith('.' + simple_name)]
+    return matches[0] if len(matches) == 1 else trait_class
 
 
 def trait_needs_data(trait_info: dict, trait_class: str) -> bool:

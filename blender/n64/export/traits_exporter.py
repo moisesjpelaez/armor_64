@@ -104,11 +104,14 @@ def _collect_type_overrides(exporter) -> dict:
     Returns:
         dict mapping trait_class -> member_name -> c_type
     """
+    import arm.n64.utils as n64_utils
+
     overrides = {}
 
     def collect_from_traits(traits):
         for trait in traits:
-            class_name = trait.get("class_name", "")
+            # Keyed like the IR (full class path), scenes store package-relative names
+            class_name = n64_utils.trait_key(exporter.trait_info, trait.get("class_name", ""))
             trait_overrides = trait.get("type_overrides", {})
             if trait_overrides:
                 if class_name not in overrides:

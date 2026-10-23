@@ -16,7 +16,9 @@ import armory.n64.util.ExprUtils;
  * Supports both named function references and anonymous inline functions.
  */
 class SignalCallConverter implements ICallConverter {
-    static var anonCounter:Int = 0;
+    // Per class (one converter per extractor): callback names stay the same
+    // whatever order the classes are compiled in
+    var anonCounter:Int = 0;
 
     public function new() {}
 
@@ -34,6 +36,17 @@ class SignalCallConverter implements ICallConverter {
                 var classType = TypedIndex.classOf(classExpr);
                 if (classType != null) {
                     return convertGlobalSignalCall(method, classType.name, signalName, args, rawParams, ctx);
+                }
+            default:
+        }
+
+        // Static signal written without its class (inside the class declaring
+        // it, e.g. an autoload connecting its own signal): also global
+        switch (obj.expr) {
+            case EConst(CIdent(signalName)):
+                var staticOwner = TypedIndex.staticFieldOwner(obj);
+                if (staticOwner != null) {
+                    return convertGlobalSignalCall(method, staticOwner.name, signalName, args, rawParams, ctx);
                 }
             default:
         }
@@ -71,7 +84,7 @@ class SignalCallConverter implements ICallConverter {
         // A signal declared in a parent trait lives in that trait's data struct
         var owner = TypedIndex.fieldOwner(signalExpr);
         if (node != null && node.type == "signal_call" && owner != null) {
-            Reflect.setField(node.props, "owner", owner.substr(owner.lastIndexOf(".") + 1));
+            Reflect.setField(node.props, "owner", owner);
         }
         return node;
     }
@@ -90,8 +103,8 @@ class SignalCallConverter implements ICallConverter {
                     // Try to extract as named function reference first
                     var callbackName = extractFunctionRef(params[0]);
                     if (callbackName != null) {
-                        ctx.addSignalHandler(callbackName, signalName);
-                        return {
+                        recordArgTypes(signalExpr, signalName, TypedIndex.functionArgTypes(params[0]));
+                        var node:IRNode = {
                             type: "signal_call",
                             value: "connect",
                             c_code: 'signal_connect({signal_ptr}, {handler}, data);',
@@ -100,6 +113,15 @@ class SignalCallConverter implements ICallConverter {
                                 callback: callbackName
                             }
                         };
+                        if (ctx.getMethod(callbackName) == null && TypedIndex.fieldOwner(params[0]) != null) {
+                            // Handler declared in a parent: that class generates it
+                            var owner = TypedIndex.fieldOwner(params[0]);
+                            N64MacroBase.inheritedHandlers.push({owner: owner, handler: callbackName, signal: signalName});
+                            Reflect.setField(node.props, "handler_owner", owner);
+                        } else {
+                            ctx.addSignalHandler(callbackName, signalName);
+                        }
+                        return node;
                     }
 
                     // Check for anonymous function
@@ -139,13 +161,14 @@ class SignalCallConverter implements ICallConverter {
 
             case "emit":
                 ctx.updateSignalArgTypes(signalName, params);
+                recordArgTypes(signalExpr, signalName, [for (p in params) argType(p, ctx)]);
                 var argCount = params.length;
 
                 var c_code:String;
                 if (argCount == 0) {
                     c_code = 'signal_emit({signal_ptr}, NULL);';
                 } else if (argCount == 1) {
-                    c_code = 'signal_emit({signal_ptr}, (void*)(uintptr_t)({0}));';
+                    c_code = singleArgEmit(params[0], ctx);
                 } else {
                     var argPlaceholders = [for (i in 0...argCount) '{$i}'];
                     c_code = '{struct_type} _p = {' + argPlaceholders.join(', ') + '}; signal_emit({signal_ptr}, &_p);';
@@ -233,7 +256,7 @@ class SignalCallConverter implements ICallConverter {
                 if (argCount == 0) {
                     c_code = 'signal_emit({signal_ptr}, NULL);';
                 } else if (argCount == 1) {
-                    c_code = 'signal_emit({signal_ptr}, (void*)(uintptr_t)({0}));';
+                    c_code = singleArgEmit(params[0], ctx);
                 } else {
                     c_code = 'signal_emit({signal_ptr}, (void*){0});';
                 }
@@ -311,6 +334,28 @@ class SignalCallConverter implements ICallConverter {
             default:
                 return null;
         }
+    }
+
+    // Type of an emitted argument: emit() takes `...args:Any`, so look past
+    // the implicit conversion to Any
+    static function argType(arg:Expr, ctx:IExtractorContext):String {
+        var t = TypedIndex.valueType(arg);
+        return t != null ? t : ctx.inferExprType(arg);
+    }
+
+    // One argument is passed in the payload pointer: a float as its bits
+    // (signal_payload_from_float), anything else cast
+    static function singleArgEmit(arg:Expr, ctx:IExtractorContext):String {
+        return TypeMap.getCType(argType(arg, ctx)) == "float"
+            ? 'signal_emit({signal_ptr}, signal_payload_from_float({0}));'
+            : 'signal_emit({signal_ptr}, (void*)(uintptr_t)({0}));';
+    }
+
+    // Argument types for a signal, under the trait declaring it
+    function recordArgTypes(signalExpr:Expr, signalName:String, haxeTypes:Null<Array<String>>):Void {
+        var owner = TypedIndex.fieldOwner(signalExpr);
+        if (owner == null || haxeTypes == null || haxeTypes.indexOf(null) >= 0) return;
+        N64MacroBase.recordSignalArgTypes(owner, signalName, [for (t in haxeTypes) TypeMap.getCType(t)]);
     }
 
     function extractFunctionRef(e:Expr):String {

@@ -102,7 +102,7 @@ def _generate_signal_inline_callback(callback_info: dict, emitter, c_name: str) 
         elif ctype in ("int32_t", "int"):
             lines.append(f"    int32_t {pname} = (int32_t)(intptr_t)payload;")
         elif ctype == "float":
-            lines.append(f"    float {pname} = payload ? *(float*)payload : 0.0f;")
+            lines.append(f"    float {pname} = signal_payload_to_float(payload);")
         elif ctype == "bool":
             lines.append(f"    bool {pname} = (bool)(intptr_t)payload;")
         else:
@@ -446,7 +446,7 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict) -> dict:
                 elif ptype in ("int32_t", "int"):
                     wrapper_lines.append(f"    {c_name}_{handler_name}((int32_t)(intptr_t)payload);")
                 elif ptype == "float":
-                    wrapper_lines.append(f"    {c_name}_{handler_name}(payload ? *(float*)payload : 0.0f);")
+                    wrapper_lines.append(f"    {c_name}_{handler_name}(signal_payload_to_float(payload));")
                 else:
                     wrapper_lines.append(f"    {c_name}_{handler_name}(({ptype})payload);")
             else:

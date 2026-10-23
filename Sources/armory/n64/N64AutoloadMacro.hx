@@ -212,7 +212,8 @@ class N64AutoloadMacro {
             // Generate preambles for signal handlers
             N64MacroBase.generateSignalHandlerPreambles(
                 ir.meta.signal_handlers,
-                ir.meta.signals
+                ir.meta.signals,
+                function(_) return []
             );
 
             Reflect.setField(autoloads, name, {

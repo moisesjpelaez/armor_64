@@ -95,6 +95,17 @@ class N64MacroBase {
         });
     }
 
+    // Signals across traits: a child can emit or connect a signal its parent
+    // declares. Argument C types by "<declaring trait>.<signal>", and handlers
+    // a child connects that its parent (the handler's class) must generate.
+    public static var signalArgTypes:Map<String, Array<String>> = new Map();
+    public static var inheritedHandlers:Array<{owner:String, handler:String, signal:String}> = [];
+
+    public static function recordSignalArgTypes(owner:String, signal:String, cTypes:Array<String>):Void {
+        var key = '$owner.$signal';
+        if (cTypes.length > 0 && !signalArgTypes.exists(key)) signalArgTypes.set(key, cTypes);
+    }
+
     // Position of the expression being converted, set by the extractors' exprToIR()
     public static var currentPos:Null<Position> = null;
     static var reportedUnsupported:Map<String, Bool> = new Map();
@@ -406,7 +417,8 @@ class N64MacroBase {
      */
     public static function generateSignalHandlerPreambles(
         signalHandlers:Array<SignalHandlerMeta>,
-        signals:Array<SignalMeta>
+        signals:Array<SignalMeta>,
+        paramNames:String->Array<String>
     ):Void {
         for (sh in signalHandlers) {
             // Find the signal this handler connects to
@@ -414,20 +426,24 @@ class N64MacroBase {
                 if (sig.name == sh.signal_name) {
                     var argTypes = sig.arg_types;
                     var argCount = argTypes.length;
+                    // The handler body uses its own parameter names
+                    var names = paramNames(sh.handler_name);
+                    var argName = i -> i < names.length ? names[i] : 'arg$i';
 
                     // Only the payload: the C code generator adds the data
                     // cast and obj, which depend on the struct layout
                     if (argCount == 0) {
                         sh.preamble = '(void)payload;';
                     } else if (argCount == 1) {
-                        sh.preamble = '${argTypes[0]} arg0 = (${argTypes[0]})(uintptr_t)payload; (void)arg0;';
+                        var value = argTypes[0] == "float" ? 'signal_payload_to_float(payload)' : '(${argTypes[0]})(uintptr_t)payload';
+                        sh.preamble = '${argTypes[0]} ${argName(0)} = $value; (void)${argName(0)};';
                     } else {
                         // Multiple args - unpack from struct
                         var structType = sig.struct_type;
                         var lines:Array<String> = [];
                         lines.push('$structType* p = ($structType*)payload;');
                         for (i in 0...argCount) {
-                            lines.push('${argTypes[i]} arg$i = p->arg$i; (void)arg$i;');
+                            lines.push('${argTypes[i]} ${argName(i)} = p->arg$i; (void)${argName(i)};');
                         }
                         sh.preamble = lines.join(" ");
                     }

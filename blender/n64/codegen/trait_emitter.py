@@ -1865,7 +1865,10 @@ class TraitEmitter:
         owner = props.get("owner")
         owner_c_name = self.all_traits.get(owner, {}).get("c_name", self.c_name) if owner else self.c_name
         signal_ptr = f"&(({owner_c_name}Data*)data)->{signal_name}"
-        handler_name = f"{self.c_name}_{callback}" if callback else ""
+        # A handler declared in a parent is that parent's function
+        handler_owner = props.get("handler_owner")
+        handler_c_name = self.all_traits.get(handler_owner, {}).get("c_name", self.c_name) if handler_owner else self.c_name
+        handler_name = f"{handler_c_name}_{callback}" if callback else ""
         struct_type = f"{owner_c_name}_{signal_name}_payload_t"
 
         return self._substitute_placeholders(

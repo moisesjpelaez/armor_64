@@ -162,6 +162,18 @@ void signal_disconnect(ArmSignal *signal, ArmSignalHandler handler);
 void signal_emit(ArmSignal *signal, void *payload);
 void signal_clear(ArmSignal *signal);
 
+// A single argument travels in the payload pointer itself. Integers, bools and
+// pointers are cast; a float is passed as its bits (a cast would convert its value)
+static inline void *signal_payload_from_float(float value) {{
+    union {{ float f; uint32_t u; }} bits = {{ .f = value }};
+    return (void *)(uintptr_t)bits.u;
+}}
+
+static inline float signal_payload_to_float(void *payload) {{
+    union {{ float f; uint32_t u; }} bits = {{ .u = (uint32_t)(uintptr_t)payload }};
+    return bits.f;
+}}
+
 typedef struct {{
     T3DVec3 loc;
     T3DQuat rot;
