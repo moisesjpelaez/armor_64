@@ -3,6 +3,7 @@ package armory.n64.converters;
 #if macro
 import haxe.macro.Expr;
 import armory.n64.IRTypes;
+import armory.n64.N64MacroBase;
 import armory.n64.converters.ICallConverter;
 import armory.n64.util.ExprUtils;
 
@@ -73,7 +74,7 @@ class PhysicsCallConverter implements ICallConverter {
                 null;
         };
 
-        if (c_code == null) return { type: "skip" };
+        if (c_code == null) return N64MacroBase.unsupported('RigidBody.$method() is not supported on N64 yet');
 
         return {
             type: "physics_call",
@@ -85,11 +86,11 @@ class PhysicsCallConverter implements ICallConverter {
 
     function convertContactSubscription(method:String, args:Array<IRNode>, params:Array<Expr>, ctx:IExtractorContext):IRNode {
         // Extract handler function name from first argument
-        if (params.length == 0) return { type: "skip" };
+        if (params.length == 0) return N64MacroBase.unsupported('$method() needs a handler method');
 
         var handlerName = ExprUtils.extractIdentName(params[0]);
 
-        if (handlerName == null) return { type: "skip" };
+        if (handlerName == null) return N64MacroBase.unsupported('$method() handler must be a method name on N64');
 
         var isSubscribe = (method == "notifyOnContact");
         var meta = ctx.getMeta();
@@ -128,13 +129,13 @@ class PhysicsCallConverter implements ICallConverter {
             case EBlock(exprs):
                 for (expr in exprs) {
                     var node = ctx.exprToIR(expr);
-                    if (node != null && node.type != "skip") {
+                    if (N64MacroBase.keepStatement(node)) {
                         eventNodes.push(node);
                     }
                 }
             default:
                 var node = ctx.exprToIR(func.expr);
-                if (node != null && node.type != "skip") {
+                if (N64MacroBase.keepStatement(node)) {
                     eventNodes.push(node);
                 }
         }

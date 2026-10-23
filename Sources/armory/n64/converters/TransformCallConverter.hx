@@ -3,6 +3,7 @@ package armory.n64.converters;
 #if macro
 import haxe.macro.Expr;
 import armory.n64.IRTypes;
+import armory.n64.N64MacroBase;
 import armory.n64.converters.ICallConverter;
 
 /**
@@ -88,7 +89,7 @@ class TransformCallConverter implements ICallConverter {
                 null;
         };
 
-        if (c_code == null) return { type: "skip" };
+        if (c_code == null) return N64MacroBase.unsupported('Transform.$method() is not supported on N64 yet');
 
         return {
             type: "transform_call",

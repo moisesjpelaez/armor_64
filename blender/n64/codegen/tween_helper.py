@@ -37,9 +37,13 @@ def find_tween_callbacks(nodes: List[dict]) -> List[dict]:
             on_update = props.get("on_update")
             on_done = props.get("on_done")
             if on_update and isinstance(on_update, dict) and on_update.get("callback_name"):
-                callbacks.append(on_update)
+                if not on_update.get("is_method_ref"):
+                    callbacks.append(on_update)
             if on_done and isinstance(on_done, dict) and on_done.get("callback_name"):
-                callbacks.append(on_done)
+                # Method refs point at an existing trait method - there is no
+                # wrapper function to generate.
+                if not on_done.get("is_method_ref"):
+                    callbacks.append(on_done)
 
         # Recurse into children
         children = node.get("children", [])
@@ -159,6 +163,10 @@ def generate_tween_callback(
         C code string for the callback function
     """
     if not callback_info:
+        return ""
+
+    # Method references are existing trait/autoload functions passed directly.
+    if callback_info.get("is_method_ref"):
         return ""
 
     cb_name = callback_info.get("callback_name", "")

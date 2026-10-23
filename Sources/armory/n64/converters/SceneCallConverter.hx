@@ -3,6 +3,7 @@ package armory.n64.converters;
 #if macro
 import haxe.macro.Expr;
 import armory.n64.IRTypes;
+import armory.n64.N64MacroBase;
 import armory.n64.converters.ICallConverter;
 
 using StringTools;
@@ -67,7 +68,7 @@ class SceneCallConverter implements ICallConverter {
                     };
             }
         }
-        return { type: "skip" };
+        return N64MacroBase.unsupported('Scene.$method() is not supported on N64 yet');
     }
 
     /**

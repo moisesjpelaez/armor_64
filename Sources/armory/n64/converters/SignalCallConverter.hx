@@ -4,6 +4,7 @@ package armory.n64.converters;
 import haxe.macro.Expr;
 import haxe.macro.Context;
 import armory.n64.IRTypes;
+import armory.n64.N64MacroBase;
 import armory.n64.mapping.TypeMap;
 import armory.n64.converters.ICallConverter;
 import armory.n64.util.ExprUtils;
@@ -57,7 +58,7 @@ class SignalCallConverter implements ICallConverter {
         var signalName = ExprUtils.extractIdentName(signalExpr);
 
         if (signalName == null) {
-            return { type: "skip" };
+            return N64MacroBase.unsupported('Signal.$method() on this expression is not supported on N64');
         }
 
         switch (method) {
@@ -94,7 +95,7 @@ class SignalCallConverter implements ICallConverter {
                         };
                     }
                 }
-                return { type: "skip" };
+                return N64MacroBase.unsupported("Signal.connect() callback must be a method name or an anonymous function on N64");
 
             case "disconnect":
                 if (params.length > 0) {
@@ -111,7 +112,7 @@ class SignalCallConverter implements ICallConverter {
                         };
                     }
                 }
-                return { type: "skip" };
+                return N64MacroBase.unsupported("Signal.disconnect() callback must be a method name on N64");
 
             case "emit":
                 ctx.updateSignalArgTypes(signalName, params);
@@ -185,7 +186,7 @@ class SignalCallConverter implements ICallConverter {
                         };
                     }
                 }
-                return { type: "skip" };
+                return N64MacroBase.unsupported("Signal.connect() callback must be a method name or an anonymous function on N64");
 
             case "disconnect":
                 if (params.length > 0) {
@@ -201,7 +202,7 @@ class SignalCallConverter implements ICallConverter {
                         };
                     }
                 }
-                return { type: "skip" };
+                return N64MacroBase.unsupported("Signal.disconnect() callback must be a method name on N64");
 
             case "emit":
                 var argCount = params.length;
@@ -263,13 +264,13 @@ class SignalCallConverter implements ICallConverter {
                         case EBlock(exprs):
                             for (expr in exprs) {
                                 var node = ctx.exprToIR(expr);
-                                if (node != null && node.type != "skip") {
+                                if (N64MacroBase.keepStatement(node)) {
                                     bodyNodes.push(node);
                                 }
                             }
                         default:
                             var node = ctx.exprToIR(func.expr);
-                            if (node != null && node.type != "skip") {
+                            if (N64MacroBase.keepStatement(node)) {
                                 bodyNodes.push(node);
                             }
                     }

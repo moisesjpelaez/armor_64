@@ -640,13 +640,13 @@ class TraitExtractor implements IExtractorContext {
                 case EBlock(exprs):
                     for (e in exprs) {
                         var node = exprToIR(e);
-                        if (node != null && node.type != "skip") {
+                        if (N64MacroBase.keepStatement(node)) {
                             bodyNodes.push(node);
                         }
                     }
                 default:
                     var node = exprToIR(method.expr);
-                    if (node != null && node.type != "skip") {
+                    if (N64MacroBase.keepStatement(node)) {
                         bodyNodes.push(node);
                     }
             }
@@ -902,7 +902,7 @@ class TraitExtractor implements IExtractorContext {
 
             default:
                 var node = exprToIR(e);
-                if (node != null && node.type != "skip") {
+                if (N64MacroBase.keepStatement(node)) {
                     statements.push(node);
                 }
         }
@@ -913,13 +913,13 @@ class TraitExtractor implements IExtractorContext {
             case EBlock(exprs):
                 for (expr in exprs) {
                     var node = exprToIR(expr);
-                    if (node != null && node.type != "skip") {
+                    if (N64MacroBase.keepStatement(node)) {
                         eventNodes.push(node);
                     }
                 }
             default:
                 var node = exprToIR(body);
-                if (node != null && node.type != "skip") {
+                if (N64MacroBase.keepStatement(node)) {
                     eventNodes.push(node);
                 }
         }
@@ -1039,13 +1039,13 @@ class TraitExtractor implements IExtractorContext {
             case EBlock(exprs):
                 for (expr in exprs) {
                     var node = exprToIR(expr);
-                    if (node != null && node.type != "skip") {
+                    if (N64MacroBase.keepStatement(node)) {
                         eventNodes.push(node);
                     }
                 }
             default:
                 var node = exprToIR(func.expr);
-                if (node != null && node.type != "skip") {
+                if (N64MacroBase.keepStatement(node)) {
                     eventNodes.push(node);
                 }
         }
@@ -1119,6 +1119,15 @@ class TraitExtractor implements IExtractorContext {
     public function exprToIR(e:Expr):IRNode {
         if (e == null) return null;
 
+        // Track the source position so unsupported code is reported at its line
+        var prevPos = N64MacroBase.currentPos;
+        N64MacroBase.currentPos = e.pos;
+        var ir = convertExpr(e);
+        N64MacroBase.currentPos = prevPos;
+        return ir;
+    }
+
+    function convertExpr(e:Expr):IRNode {
         return switch (e.expr) {
             // Literals
             case EConst(CInt(v)): { type: "int", value: Std.parseInt(v) };
@@ -1198,6 +1207,11 @@ class TraitExtractor implements IExtractorContext {
                                 trait: className,
                                 args: [exprToIR(e2)]
                             };
+                        } else if (targetIR != null && targetIR.value == "elements"
+                            && (targetIR.type == "member" || targetIR.type == "potentially_inherited")) {
+                            // The emitter maps the `elements` member to the canvas
+                            // element list, so the assigned value isn't needed
+                            { type: "assign", children: [targetIR, { type: "skip" }] };
                         } else {
                             { type: "assign", children: [targetIR, exprToIR(e2)] };
                         }
@@ -1293,7 +1307,7 @@ class TraitExtractor implements IExtractorContext {
                 { type: "array_access", children: [exprToIR(e1), exprToIR(e2)] };
 
             default:
-                { type: "skip" };
+                N64MacroBase.unhandledExpr(e);
         };
     }
 
@@ -1361,7 +1375,7 @@ class TraitExtractor implements IExtractorContext {
                 }
             default:
         }
-        return { type: "skip" };
+        return N64MacroBase.unsupported("for loops are only supported over integer ranges (for (i in a...b)) on N64");
     }
 
     // Check if expression is an assignment to transform properties (loc, rot, scale, dirty)
@@ -1884,13 +1898,13 @@ class TraitExtractor implements IExtractorContext {
                                     case EBlock(exprs):
                                         for (e in exprs) {
                                             var node = exprToIR(e);
-                                            if (node != null && node.type != "skip") {
+                                            if (N64MacroBase.keepStatement(node)) {
                                                 bodyNodes.push(node);
                                             }
                                         }
                                     default:
                                         var node = exprToIR(methodFunc.expr);
-                                        if (node != null && node.type != "skip") {
+                                        if (N64MacroBase.keepStatement(node)) {
                                             bodyNodes.push(node);
                                         }
                                 }
@@ -1909,11 +1923,11 @@ class TraitExtractor implements IExtractorContext {
 
                 // Unsupported APIs - explicitly skip (before converters to prevent optimistic matching)
                 switch (obj.expr) {
-                    case EConst(CIdent("Audio")), EConst(CIdent("Tween")), EConst(CIdent("Network")), EConst(CIdent("Koui")), EConst(CIdent("System")):
-                        return { type: "skip" };
+                    case EConst(CIdent(cls = "Audio" | "Tween" | "Network" | "Koui" | "System")):
+                        return N64MacroBase.unsupported('$cls.$method() is not supported on N64');
                     case EConst(CIdent("SceneManager")):
                         if (method == "clearScenes") return { type: "canvas_clear_scenes" };
-                        return { type: "skip" };
+                        return N64MacroBase.unsupported('SceneManager.$method() is not supported on N64 yet');
                     default:
                 }
 
@@ -2076,7 +2090,7 @@ class TraitExtractor implements IExtractorContext {
                 return { type: "call", method: funcName, args: args };
 
             default:
-                return { type: "skip" };
+                return N64MacroBase.unsupported("only calls to named functions and methods are supported on N64 (not " + N64MacroBase.describeExpr(callExpr) + ")");
         }
     }
 
@@ -2106,7 +2120,7 @@ class TraitExtractor implements IExtractorContext {
                     if (callback != null) {
                         result.push(callback);
                     } else {
-                        result.push({ type: "skip" });
+                        result.push(N64MacroBase.unsupported('callback passed to $methodName() could not be converted', param.pos));
                     }
                 default:
                     // Non-function arg - convert normally
@@ -2143,13 +2157,13 @@ class TraitExtractor implements IExtractorContext {
             case EBlock(exprs):
                 for (e in exprs) {
                     var node = exprToIR(e);
-                    if (node != null && node.type != "skip") {
+                    if (N64MacroBase.keepStatement(node)) {
                         bodyNodes.push(node);
                     }
                 }
             default:
                 var node = exprToIR(func.expr);
-                if (node != null && node.type != "skip") {
+                if (N64MacroBase.keepStatement(node)) {
                     bodyNodes.push(node);
                 }
         }

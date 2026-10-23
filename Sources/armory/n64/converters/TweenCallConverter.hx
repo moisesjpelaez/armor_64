@@ -4,6 +4,7 @@ package armory.n64.converters;
 import haxe.macro.Expr;
 import haxe.macro.Context;
 import armory.n64.IRTypes;
+import armory.n64.N64MacroBase;
 import armory.n64.converters.ICallConverter;
 import armory.n64.util.ExprUtils;
 import armory.n64.mapping.TypeMap;
@@ -99,8 +100,8 @@ class TweenCallConverter implements ICallConverter {
         var duration = args.length > 2 ? args[2] : { type: "float", value: 1.0 };
 
         // Extract callbacks
-        var onUpdate = extractCallback(rawParams, 3, "float", ctx);
-        var onDone = extractCallback(rawParams, 4, "done", ctx);
+        var onUpdate = extractCallback(rawParams, args, 3, "float", ctx);
+        var onDone = extractCallback(rawParams, args, 4, "done", ctx);
 
         // Extract ease (optional, defaults to linear)
         var ease = "EASE_LINEAR";
@@ -130,8 +131,8 @@ class TweenCallConverter implements ICallConverter {
         var to = args.length > 1 ? args[1] : null;
         var duration = args.length > 2 ? args[2] : { type: "float", value: 1.0 };
 
-        var onUpdate = extractCallback(rawParams, 3, "vec4", ctx);
-        var onDone = extractCallback(rawParams, 4, "done", ctx);
+        var onUpdate = extractCallback(rawParams, args, 3, "vec4", ctx);
+        var onDone = extractCallback(rawParams, args, 4, "done", ctx);
 
         var ease = "EASE_LINEAR";
         if (args.length > 5 && args[5] != null) {
@@ -156,7 +157,7 @@ class TweenCallConverter implements ICallConverter {
     function convertTweenDelay(tweenObj:IRNode, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         // Args: duration, onDone
         var duration = args.length > 0 ? args[0] : { type: "float", value: 1.0 };
-        var onDone = extractCallback(rawParams, 1, "done", ctx);
+        var onDone = extractCallback(rawParams, args, 1, "done", ctx);
 
         var meta = ctx.getMeta();
         meta.uses_tween = true;
@@ -213,8 +214,10 @@ class TweenCallConverter implements ICallConverter {
      *   - body: IR nodes for the function body
      *   - captures: list of captured variables with their types
      *   - param_name: name of the callback parameter (for float/vec4 callbacks)
+     *   - is_method_ref: true when callback_name is an existing trait method
+     *     that can be passed directly (no generated wrapper)
      */
-    function extractCallback(rawParams:Array<Expr>, index:Int, callbackType:String, ctx:IExtractorContext):Dynamic {
+    function extractCallback(rawParams:Array<Expr>, args:Array<IRNode>, index:Int, callbackType:String, ctx:IExtractorContext):Dynamic {
         if (rawParams == null || index >= rawParams.length) {
             return null;
         }
@@ -231,14 +234,58 @@ class TweenCallConverter implements ICallConverter {
                 return extractFunctionBody(func, callbackType, ctx);
             case EConst(CIdent(name)):
                 // Declared function reference: onUpdate
+                var direct = (args != null && index < args.length)
+                    ? directMethodRef(args[index], callbackType) : null;
+                if (direct != null) return direct;
                 return extractMethodRef(name, callbackType, ctx, param.pos);
-            case EField(_, fieldName):
+            case EField(owner, fieldName):
                 // Field access function reference: this.onUpdate
+                var direct = null;
+                switch (owner.expr) {
+                    case EConst(CIdent("this")):
+                        direct = directMethodRefByName(fieldName, callbackType, ctx, param.pos);
+                    default:
+                }
+                if (direct != null) return direct;
                 return extractMethodRef(fieldName, callbackType, ctx, param.pos);
             default:
                 Context.error('Tween callback must be a function or method reference, got: ${param.expr}', param.pos);
                 return null;
         }
+    }
+
+    /**
+     * Use a trait method directly as a `done` callback.
+     *
+     * Trait methods are emitted as `void method(void* obj, void* data)`, which is
+     * exactly TweenDoneCallback. Passing the method pointer avoids generating a
+     * wrapper whose body is a copy of the method: that copy would also duplicate
+     * every nested callback inside the method, and those copies are not seen by
+     * the C declaration pass (leading to undeclared identifiers).
+     *
+     * float/vec4 callbacks have different signatures and still need the wrapper.
+     */
+    function directMethodRef(arg:IRNode, callbackType:String):Dynamic {
+        if (callbackType != "done") return null;
+        if (arg == null || arg.type != "method_ref" || arg.cName == null) return null;
+        return {
+            callback_name: arg.cName,
+            callback_type: callbackType,
+            body: [],
+            captures: [],
+            param_name: null,
+            is_method_ref: true
+        };
+    }
+
+    /**
+     * Resolve `this.method` (which arrives as a field_access node) to the bare
+     * method reference so it can also be passed directly.
+     */
+    function directMethodRefByName(name:String, callbackType:String, ctx:IExtractorContext, pos:Position):Dynamic {
+        if (callbackType != "done") return null;
+        var bare = ctx.exprToIR({ expr: EConst(CIdent(name)), pos: pos });
+        return directMethodRef(bare, callbackType);
     }
 
     /**
@@ -273,13 +320,13 @@ class TweenCallConverter implements ICallConverter {
             case EBlock(exprs):
                 for (e in exprs) {
                     var node = ctx.exprToIR(e);
-                    if (node != null && node.type != "skip") {
+                    if (N64MacroBase.keepStatement(node)) {
                         bodyNodes.push(node);
                     }
                 }
             default:
                 var node = ctx.exprToIR(func.expr);
-                if (node != null && node.type != "skip") {
+                if (N64MacroBase.keepStatement(node)) {
                     bodyNodes.push(node);
                 }
         }

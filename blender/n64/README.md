@@ -160,6 +160,14 @@ After export, check `build_<project>/n64_traits.json` and `n64_autoloads.json` t
 
 C code is generated in `armorcore/Deployment/n64/src/data/traits.c` and related files.
 
+### Unsupported Code
+
+Haxe the macros can't translate is reported as a compile warning at its source line (`N64: ...`) and kept as an `/* N64 unsupported: ... */` comment in the generated C. Converters report it with `N64MacroBase.unsupported(msg)`; return a plain `{ type: "skip" }` only for code that is intentionally a no-op on N64. `-D n64_strict` turns the warnings into errors.
+
+### Tests
+
+See `Tests/README.md`: golden tests that run the macros and the Python codegen without Blender.
+
 ### Build Errors
 
 Build output appears in Blender's system console. Common issues:

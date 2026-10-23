@@ -3,6 +3,7 @@ package armory.n64.converters;
 #if macro
 import haxe.macro.Expr;
 import armory.n64.IRTypes;
+import armory.n64.N64MacroBase;
 import armory.n64.converters.ICallConverter;
 
 /**
@@ -42,7 +43,7 @@ class StdCallConverter implements ICallConverter {
                     { type: "string", value: "" };
                 }
             default:
-                { type: "skip" };
+                N64MacroBase.unsupported('Std.$method() is not supported on N64 yet');
         };
     }
 }

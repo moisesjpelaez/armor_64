@@ -426,6 +426,15 @@ class AutoloadExtractor implements IExtractorContext {
         return false;
     }
 
+    function memberDefaultToIR(e:Expr):IRNode {
+        if (e == null) return null;
+        return switch (e.expr) {
+            // Containers are zero-initialized in C (see autoload_generator.py)
+            case ENew({name: "Map" | "Array"}, _): { type: "skip" };
+            default: exprToIR(e);
+        };
+    }
+
     function extractMember(name:String, t:ComplexType, e:Expr):MemberIR {
         if (SkipList.shouldSkipMember(name)) return null;
 
@@ -433,7 +442,7 @@ class AutoloadExtractor implements IExtractorContext {
 
         // First check standard type map
         if (TypeMap.isSupported(haxeType)) {
-            var defaultNode:IRNode = e != null ? exprToIR(e) : null;
+            var defaultNode:IRNode = memberDefaultToIR(e);
             return {
                 haxeType: haxeType,
                 ctype: TypeMap.getCType(haxeType),
@@ -445,7 +454,7 @@ class AutoloadExtractor implements IExtractorContext {
         // Use ComplexType directly for better type resolution
         var traitCType = resolveTraitCTypeFromComplexType(t);
         if (traitCType != null) {
-            var defaultNode:IRNode = e != null ? exprToIR(e) : null;
+            var defaultNode:IRNode = memberDefaultToIR(e);
             return {
                 haxeType: haxeType,
                 ctype: traitCType,
@@ -608,13 +617,13 @@ class AutoloadExtractor implements IExtractorContext {
             case EBlock(exprs):
                 for (expr in exprs) {
                     var node = exprToIR(expr);
-                    if (node != null && node.type != "skip") {
+                    if (N64MacroBase.keepStatement(node)) {
                         statements.push(node);
                     }
                 }
             default:
                 var node = exprToIR(e);
-                if (node != null && node.type != "skip") {
+                if (N64MacroBase.keepStatement(node)) {
                     statements.push(node);
                 }
         }
@@ -627,6 +636,15 @@ class AutoloadExtractor implements IExtractorContext {
     public function exprToIR(e:Expr):IRNode {
         if (e == null) return { type: "skip" };
 
+        // Track the source position so unsupported code is reported at its line
+        var prevPos = N64MacroBase.currentPos;
+        N64MacroBase.currentPos = e.pos;
+        var ir = convertExpr(e);
+        N64MacroBase.currentPos = prevPos;
+        return ir;
+    }
+
+    function convertExpr(e:Expr):IRNode {
         switch (e.expr) {
             case EConst(c):
                 return N64MacroBase.constToIR(c);
@@ -830,8 +848,7 @@ class AutoloadExtractor implements IExtractorContext {
                 if (values.length == 0) {
                     return { type: "empty_array" };
                 }
-                // For now, skip non-empty array literals
-                return { type: "skip" };
+                return N64MacroBase.unsupported("non-empty array literals are not supported on N64 yet");
 
             case ENew(typePath, params):
                 // Handle constructor calls
@@ -840,11 +857,10 @@ class AutoloadExtractor implements IExtractorContext {
                     // Tween allocation from pool
                     return { type: "tween_alloc" };
                 }
-                // Generic new - skip for now
-                return { type: "skip" };
+                return N64MacroBase.unsupported('new $typeName() is not supported on N64 yet');
 
             default:
-                return { type: "skip" };
+                return N64MacroBase.unhandledExpr(e);
         }
     }
 
@@ -884,7 +900,7 @@ class AutoloadExtractor implements IExtractorContext {
                 };
 
             default:
-                return { type: "skip" };
+                return N64MacroBase.unsupported("only calls to named functions and methods are supported on N64 (not " + N64MacroBase.describeExpr(callExpr) + ")");
         }
     }
 
@@ -909,7 +925,7 @@ class AutoloadExtractor implements IExtractorContext {
                 }
             default:
         }
-        return { type: "skip" };
+        return N64MacroBase.unsupported("for loops are only supported over integer ranges (for (i in a...b)) on N64");
     }
 
     // ========================================================================

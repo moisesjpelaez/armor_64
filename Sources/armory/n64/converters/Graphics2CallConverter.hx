@@ -3,6 +3,7 @@ package armory.n64.converters;
 #if macro
 import haxe.macro.Expr;
 import armory.n64.IRTypes;
+import armory.n64.N64MacroBase;
 import armory.n64.converters.ICallConverter;
 
 /**
@@ -38,8 +39,11 @@ class Graphics2CallConverter implements ICallConverter {
                         }
                     };
                 }
-            default:
+            case "begin", "end":
+                // Kha batching calls, nothing to do with rdpq on N64
                 return { type: "skip" };
+            default:
+                return N64MacroBase.unsupported('Graphics.$method() is not supported on N64 yet');
         }
         return null;
     }

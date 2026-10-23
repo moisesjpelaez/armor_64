@@ -3,6 +3,7 @@ package armory.n64.converters;
 #if macro
 import haxe.macro.Expr;
 import armory.n64.IRTypes;
+import armory.n64.N64MacroBase;
 import armory.n64.converters.ICallConverter;
 
 /**
@@ -59,7 +60,7 @@ class ButtonCallConverter implements ICallConverter {
         }
 
         if (rawParams.length < 1) {
-            return { type: "skip", warn: "Button." + method + "() missing callback argument" };
+            return N64MacroBase.unsupported("Button." + method + "() needs a callback argument");
         }
 
         // Extract callback body from the anonymous function argument
@@ -71,19 +72,19 @@ class ButtonCallConverter implements ICallConverter {
                         case EBlock(exprs):
                             for (e in exprs) {
                                 var node = ctx.exprToIR(e);
-                                if (node != null && node.type != "skip") {
+                                if (N64MacroBase.keepStatement(node)) {
                                     bodyNodes.push(node);
                                 }
                             }
                         default:
                             var node = ctx.exprToIR(func.expr);
-                            if (node != null && node.type != "skip") {
+                            if (N64MacroBase.keepStatement(node)) {
                                 bodyNodes.push(node);
                             }
                     }
                 }
             default:
-                return { type: "skip", warn: "Button." + method + "() expected anonymous function" };
+                return N64MacroBase.unsupported("Button." + method + "() callback must be an anonymous function on N64");
         }
 
         // Generate unique callback name

@@ -4,6 +4,7 @@ package armory.n64.converters;
 import haxe.macro.Expr;
 import haxe.ds.StringMap;
 import armory.n64.IRTypes;
+import armory.n64.N64MacroBase;
 import armory.n64.mapping.Constants;
 import armory.n64.converters.ICallConverter;
 
@@ -96,7 +97,7 @@ class VecCallConverter implements ICallConverter {
                 null;
         };
 
-        if (c_code == null) return { type: "skip" };
+        if (c_code == null) return N64MacroBase.unsupported('$vecType.$method() is not supported on N64 yet');
 
         return {
             type: "vec_call",

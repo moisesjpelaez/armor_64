@@ -3,6 +3,7 @@ package armory.n64.converters;
 #if macro
 import haxe.macro.Expr;
 import armory.n64.IRTypes;
+import armory.n64.N64MacroBase;
 import armory.n64.converters.ICallConverter;
 
 /**
@@ -35,7 +36,7 @@ class StringCallConverter implements ICallConverter {
             case "contains":
                 { type: "string_call", value: "contains", args: args };
             default:
-                { type: "skip" };
+                N64MacroBase.unsupported('StringTools.$method() is not supported on N64 yet');
         };
     }
 }

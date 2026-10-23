@@ -24,6 +24,76 @@ class N64MacroBase {
     // Global audio configuration (set by AudioCallConverter when Aura.init() is found)
     public static var audioConfig:Dynamic = {};
 
+    // Position of the expression being converted, set by the extractors' exprToIR()
+    public static var currentPos:Null<Position> = null;
+    static var reportedUnsupported:Map<String, Bool> = new Map();
+
+    /**
+     * Skip node for valid Haxe that the N64 exporter can't translate (yet).
+     * Reports it at the source line as a warning (an error with -D n64_strict)
+     * instead of silently leaving it out of the generated C.
+     */
+    public static function unsupported(msg:String, ?pos:Position):IRNode {
+        if (pos == null) pos = currentPos != null ? currentPos : Context.currentPos();
+
+        // The same expression can be converted more than once (e.g. inlined methods)
+        var infos = Context.getPosInfos(pos);
+        var key = '${infos.file}:${infos.min}:$msg';
+        if (!reportedUnsupported.exists(key)) {
+            reportedUnsupported.set(key, true);
+            if (Context.defined("n64_strict")) {
+                Context.reportError('N64: $msg', pos);
+            } else {
+                Context.warning('N64: $msg', pos);
+            }
+        }
+        return { type: "skip", warn: msg };
+    }
+
+    /**
+     * Whether a converted statement goes into the IR. Plain skips are dropped;
+     * unsupported ones are kept so the generated C shows them as comments.
+     */
+    public static function keepStatement(node:IRNode):Bool {
+        return node != null && (node.type != "skip" || node.warn != null);
+    }
+
+    /**
+     * Short readable name of an expression kind, for unsupported() messages.
+     */
+    public static function describeExpr(e:Expr):String {
+        return switch (e.expr) {
+            case ESwitch(_, _, _): "switch";
+            case ETry(_, _): "try/catch";
+            case EThrow(_): "throw";
+            case EFunction(_, _): "local function";
+            case ECast(_, _): "cast";
+            case EArrayDecl(_): "array literal";
+            case EObjectDecl(_): "object literal";
+            case EUntyped(_): "untyped";
+            case EMeta(_, _): "metadata expression";
+            case ECheckType(_, _): "type check";
+            case EIs(_, _): "'is' check";
+            case EFor(_, _): "for loop";
+            case EParenthesis(_): "parenthesized expression";
+            case ECall(_, _): "call result";
+            case EArray(_, _): "array element";
+            default: e.expr.getName();
+        };
+    }
+
+    /**
+     * Fallback for expressions the extractors don't handle.
+     * Anonymous functions are callback arguments, handled by the code that
+     * consumes the call's raw params, so they are skipped silently.
+     */
+    public static function unhandledExpr(e:Expr):IRNode {
+        return switch (e.expr) {
+            case EFunction(FAnonymous | FArrow, _): { type: "skip" };
+            default: unsupported(describeExpr(e) + " is not supported on N64 yet");
+        };
+    }
+
     /**
      * Serialize an IRNode to a Dynamic object for JSON output.
      */
@@ -62,6 +132,7 @@ class N64MacroBase {
         if (node.param_name != null) obj.param_name = node.param_name;
         if (node.param_type != null) obj.param_type = node.param_type;
         if (node.param_ctype != null) obj.param_ctype = node.param_ctype;
+        if (node.warn != null) obj.warn = node.warn;
 
         return obj;
     }

@@ -90,7 +90,7 @@ class AudioCallConverter implements ICallConverter {
                     };
                 }
                 // Fallback with fewer args - likely missing parameters
-                return { type: "skip", warn: "Aura.createUncompBufferChannel() requires 3 arguments" };
+                return N64MacroBase.unsupported("Aura.createUncompBufferChannel() requires 3 arguments on N64");
 
             case "init":
                 // Aura.init({channelSize: N}) - extract channelSize and store in global config
