@@ -15,22 +15,9 @@ class Graphics2CallConverter implements ICallConverter {
     public function new() {}
 
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
-        // The receiver's type decides when known
-        var receiver = TypedIndex.receiverPath(obj);
-        if (receiver != null) {
-            return receiver == "kha.graphics2.Graphics" ? convertGraphics2Call(method, args, rawParams, ctx) : null;
-        }
-
-        // Fallback by name for expressions without a typed node
-        switch (obj.expr) {
-            case EConst(CIdent(name)):
-                var objType = ctx.getExprType(obj);
-                if (objType == "kha.graphics2.Graphics" || objType == "Graphics" || name == "g" || name == "g2") {
-                    return convertGraphics2Call(method, args, rawParams, ctx);
-                }
-            default:
-        }
-        return null;
+        // Only Kha's 2D graphics, from the receiver's type
+        if (TypedIndex.receiverPath(obj) != "kha.graphics2.Graphics") return null;
+        return convertGraphics2Call(method, args, rawParams, ctx);
     }
 
     function convertGraphics2Call(method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {

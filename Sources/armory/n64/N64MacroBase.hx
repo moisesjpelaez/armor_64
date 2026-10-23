@@ -50,6 +50,13 @@ class N64MacroBase {
     }
 
     /**
+     * Whether a class (full path) is a trait or autoload being exported.
+     */
+    public static function isExtractedClass(path:String):Bool {
+        return extractedClasses.exists(path);
+    }
+
+    /**
      * Register a function writing IR output, run after all extractions.
      */
     public static function addWriter(write:Void->Void):Void {
@@ -108,8 +115,11 @@ class N64MacroBase {
      * instead of emitting `obj.method()`, which isn't valid C.
      */
     public static function methodCall(obj:Expr, method:String, args:Array<IRNode>, exprToIR:Expr->IRNode):IRNode {
+        if (TypedIndex.nodesAt(obj).length == 0) {
+            return unsupported('could not resolve the type of this .$method() call on N64');
+        }
         var owner = TypedIndex.callOwner(obj, method);
-        if (owner != null && !extractedClasses.exists(owner)) {
+        if (owner != null && !isExtractedClass(owner)) {
             var methods = emitterMethods.get(owner);
             if (methods == null || methods.indexOf(method) < 0) {
                 var shortName = owner.substr(owner.lastIndexOf(".") + 1);

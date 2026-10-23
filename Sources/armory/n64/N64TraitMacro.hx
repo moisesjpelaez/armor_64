@@ -15,7 +15,7 @@ import armory.n64.TypedIndex;
 import armory.n64.mapping.Constants;
 import armory.n64.mapping.TypeMap;
 import armory.n64.mapping.ButtonMap;
-import armory.n64.mapping.SkipList;
+import armory.n64.mapping.EngineTypes;
 import armory.n64.converters.ICallConverter;
 import armory.n64.converters.SceneCallConverter;
 import armory.n64.converters.CanvasCallConverter;
@@ -577,27 +577,9 @@ class TraitExtractor implements IExtractorContext {
         };
     }
 
-    /**
-     * Whether a member (of this trait or a parent) holds an input device
-     * (Gamepad, Keyboard, Mouse), which the engine provides on N64.
-     */
-    function isInputDeviceMember(name:String):Bool {
-        var c = cls;
-        while (c != null) {
-            for (f in c.fields.get()) {
-                if (f.name != name) continue;
-                return switch (Context.follow(f.type)) {
-                    case TInst(t, _): InputCallConverter.isInputDeviceType(t.get().pack.concat([t.get().name]).join("."));
-                    default: false;
-                };
-            }
-            c = c.superClass != null ? c.superClass.t.get() : null;
-        }
-        return false;
-    }
-
     function extractMember(name:String, t:ComplexType, e:Expr):MemberIR {
-        if (SkipList.shouldSkipMember(name) || isInputDeviceMember(name)) return null;
+        // Engine-provided on N64 (gamepad, rigid body, ...): not stored
+        if (EngineTypes.isProvidedMember(cls, name)) return null;
 
         var haxeType = t != null ? N64MacroBase.complexTypeToString(t) : "Dynamic";
         if (!TypeMap.isSupported(haxeType)) return null;
@@ -1095,26 +1077,6 @@ class TraitExtractor implements IExtractorContext {
         return false;  // Traits are not autoloads
     }
 
-    function guessInferExprType(e:Expr):String {
-        // Infer the Haxe type of an expression for signal arg typing
-        return switch (e.expr) {
-            case EConst(CInt(_)): "Int";
-            case EConst(CFloat(_)): "Float";
-            case EConst(CString(_)): "String";
-            case EConst(CIdent("true")), EConst(CIdent("false")): "Bool";
-            case EConst(CIdent("object")), EConst(CIdent("this")): "ArmObject";
-            case EConst(CIdent(name)):
-                // Check local vars first, then members
-                if (localVarTypes.exists(name)) localVarTypes.get(name);
-                else if (members.exists(name)) members.get(name).haxeType;
-                else "Dynamic";
-            case EField(obj, field):
-                // Could be object.transform, etc. - simplified for now
-                "Dynamic";
-            default: "Dynamic";
-        };
-    }
-
     // ========================================================================
     // AST → IR Conversion
     // ========================================================================
@@ -1159,7 +1121,7 @@ class TraitExtractor implements IExtractorContext {
             case EConst(CIdent("true")): { type: "bool", value: true };
             case EConst(CIdent("false")): { type: "bool", value: false };
             case EConst(CIdent("null")): { type: "null" };
-            case EConst(CIdent(name)): resolveIdent(name);
+            case EConst(CIdent(name)): resolveIdent(name, e);
 
             // Binary ops
             case EBinop(op, e1, e2):
@@ -1260,7 +1222,7 @@ class TraitExtractor implements IExtractorContext {
 
             // Field access
             case EField(obj, field):
-                convertFieldAccess(obj, field);
+                convertFieldAccess(e, obj, field);
 
             // Call
             case ECall(callExpr, params):
@@ -1334,7 +1296,7 @@ class TraitExtractor implements IExtractorContext {
         };
     }
 
-    function resolveIdent(name:String):IRNode {
+    function resolveIdent(name:String, e:Expr):IRNode {
         if (name == "this" || name == "object") {
             meta.uses_transform = true;
             return { type: "ident", value: "object" };
@@ -1362,7 +1324,10 @@ class TraitExtractor implements IExtractorContext {
                 trait: className
             };
         }
-        if (SkipList.shouldSkipMember(name) || SkipList.shouldSkipClass(name) || isInputDeviceMember(name)) {
+        // Engine-provided values and classes (gamepad, RigidBody, ...) and
+        // inherited Trait fields (name) have no data on N64
+        if (EngineTypes.isProvidedMember(cls, name) || EngineTypes.isProvided(TypedIndex.typeRefPath(e))
+            || TypedIndex.fieldOwner(e) == "iron.Trait") {
             return { type: "skip" };
         }
         // If we have a parent and this isn't a known local/member, it might be inherited
@@ -1536,7 +1501,7 @@ class TraitExtractor implements IExtractorContext {
         return null;
     }
 
-    function convertFieldAccess(obj:Expr, field:String):IRNode {
+    function convertFieldAccess(e:Expr, obj:Expr, field:String):IRNode {
         // Handle this.member -> member access for trait members
         // Must be checked early so trait members route through data struct, not ArmObject
         switch (obj.expr) {
@@ -1556,13 +1521,9 @@ class TraitExtractor implements IExtractorContext {
             default:
         }
 
-        // Check if accessing a field on a skipped class (like Gamepad.buttons)
-        switch (obj.expr) {
-            case EConst(CIdent(className)):
-                if (SkipList.shouldSkipClass(className)) {
-                    return { type: "skip" };
-                }
-            default:
+        // Field of an engine-provided class (like PhysicsWorld.active)
+        if (EngineTypes.isProvided(TypedIndex.typeRefPath(obj))) {
+            return { type: "skip" };
         }
 
         // Handle autoloadVar.object -> get object pointer from trait data
@@ -1615,22 +1576,9 @@ class TraitExtractor implements IExtractorContext {
                 case ECall(callExpr, _):
                     // Check if this is kha.Window.get(0) or Window.get(0)
                     switch (callExpr.expr) {
-                        case EField(windowExpr, "get"):
-                            switch (windowExpr.expr) {
-                                case EConst(CIdent("Window")):
-                                    // Window.get(0).width/height
-                                    var funcName = field == "width" ? "render2d_get_width()" : "render2d_get_height()";
-                                    return { type: "c_literal", c_code: funcName };
-                                case EField(khaExpr, "Window"):
-                                    // kha.Window.get(0).width/height
-                                    switch (khaExpr.expr) {
-                                        case EConst(CIdent("kha")):
-                                            var funcName = field == "width" ? "render2d_get_width()" : "render2d_get_height()";
-                                            return { type: "c_literal", c_code: funcName };
-                                        default:
-                                    }
-                                default:
-                            }
+                        case EField(windowExpr, "get") if (TypedIndex.isClassRef(windowExpr, "kha.Window")):
+                            var funcName = field == "width" ? "render2d_get_width()" : "render2d_get_height()";
+                            return { type: "c_literal", c_code: funcName };
                         default:
                     }
                 default:
@@ -1681,20 +1629,12 @@ class TraitExtractor implements IExtractorContext {
             }
         }
 
-        // Handle Color.Black, Color.White, etc. -> RGBA32 for N64
-        switch (obj.expr) {
-            case _ if (TypedIndex.isClassRef(obj, "kha.Color")):
-                var colorValue = switch (field) {
-                    case "Black": "RGBA32(0, 0, 0, 255)";
-                    case "White": "RGBA32(255, 255, 255, 255)";
-                    case "Red": "RGBA32(255, 0, 0, 255)";
-                    case "Green": "RGBA32(0, 255, 0, 255)";
-                    case "Blue": "RGBA32(0, 0, 255, 255)";
-                    case "Transparent": "RGBA32(0, 0, 0, 0)";
-                    default: "RGBA32(0, 0, 0, 255)";
-                };
-                return { type: "c_literal", c_code: colorValue };
-            default:
+        // Color constants (Color.Black, Color.Orange, ...): the compiler folds
+        // them to their ARGB value -> RGBA32 for N64
+        var argb = TypedIndex.receiverPath(e) == "kha.Color" ? TypedIndex.intConstant(e) : null;
+        if (argb != null) {
+            var r = (argb >> 16) & 0xff, g = (argb >> 8) & 0xff, b = argb & 0xff, a = (argb >>> 24) & 0xff;
+            return { type: "c_literal", c_code: 'RGBA32($r, $g, $b, $a)' };
         }
 
         // Handle Assets.sounds.sound_name -> "rom:/sound_name.wav64"
@@ -1763,18 +1703,23 @@ class TraitExtractor implements IExtractorContext {
             }
         }
 
+        // Static field of a class nothing above translates
+        var classPath = TypedIndex.typeRefPath(obj);
+        if (classPath != null && !N64MacroBase.isExtractedClass(classPath)) {
+            var shortName = classPath.substr(classPath.lastIndexOf(".") + 1);
+            return N64MacroBase.unsupported('$shortName.$field is not supported on N64 yet');
+        }
+
         return { type: "field_access", object: exprToIR(obj), value: field };
     }
 
     /**
-     * Unified type inference from Haxe expressions.
-     * Returns the Haxe type name (Int, Float, String, Vec2, Label, Signal, etc.) or "Dynamic" if unknown.
+     * Haxe type name of an expression (Int, Float, String, Vec2, Label, Signal, etc.),
+     * from the compiler's typed AST, or "Dynamic" if unknown.
      */
-    // Types come from the compiler's typed AST; the name-based guesses below
-    // remain as a fallback for expressions without a typed node
     public function getExprType(e:Expr):String {
         var typed = e != null ? TypedIndex.typeOf(e) : null;
-        return typed != null ? typed : guessExprType(e);
+        return typed != null ? typed : "Dynamic";
     }
 
     public function inferExprType(e:Expr):String {
@@ -1784,109 +1729,13 @@ class TraitExtractor implements IExtractorContext {
             default:
         }
         var typed = TypedIndex.typeOf(e);
-        return typed != null ? typed : guessInferExprType(e);
+        return typed != null ? typed : "Dynamic";
     }
 
-    function guessExprType(e:Expr):String {
-        if (e == null) return "Dynamic";
-
-        switch (e.expr) {
-            // Literals
-            case EConst(CInt(_)): return "Int";
-            case EConst(CFloat(_)): return "Float";
-            case EConst(CString(_)): return "String";
-
-            // Constructor: new Vec3() -> "Vec3"
-            case ENew(tp, _):
-                return tp.name;
-
-            // Identifier: variable or member
-            case EConst(CIdent(name)):
-                if (localVarTypes.exists(name)) {
-                    return localVarTypes.get(name);
-                }
-                // Check memberTypes first (includes Signal and all member types)
-                if (memberTypes.exists(name)) {
-                    return memberTypes.get(name);
-                }
-                if (members.exists(name)) {
-                    return members.get(name).haxeType;
-                }
-                return "Dynamic";
-
-            // Field access
-            case EField(innerObj, field):
-                // this.member or object.member
-                switch (innerObj.expr) {
-                    case EConst(CIdent("this")), EConst(CIdent("object")):
-                        // Check memberTypes first (includes Signal)
-                        if (memberTypes.exists(field)) {
-                            return memberTypes.get(field);
-                        }
-                        if (members.exists(field)) {
-                            return members.get(field).haxeType;
-                        }
-                    default:
-                }
-
-                // gamepad.leftStick / gamepad.rightStick -> Vec2
-                switch (innerObj.expr) {
-                    case EConst(CIdent("gamepad")):
-                        if (field == "leftStick" || field == "rightStick") return "Vec2";
-                    // transform.loc/rot/scale -> Vec4
-                    case EField(_, "transform"), EConst(CIdent("transform")):
-                        if (field == "loc" || field == "scale" || field == "rot") return "Vec4";
-                    default:
-                }
-                return "Dynamic";
-
-            // Method calls
-            case ECall(callExpr, _):
-                switch (callExpr.expr) {
-                    case EField(obj, method):
-                        // Std.string/int/parseFloat
-                        switch (obj.expr) {
-                            case _ if (TypedIndex.isClassRef(obj, "Std")):
-                                if (method == "string") return "String";
-                                if (method == "int") return "Int";
-                                if (method == "parseFloat") return "Float";
-                            default:
-                        }
-                        var objType = getExprType(obj);
-                        // Vec method calls return same Vec type
-                        if (objType != null && StringTools.startsWith(objType, "Vec")) {
-                            if (method == "mult" || method == "add" || method == "sub" ||
-                                method == "normalize" || method == "clone" || method == "cross") {
-                                return objType;
-                            }
-                        }
-                        // Tween method calls return Tween (for chaining)
-                        if (objType != null && objType.indexOf("Tween") >= 0) {
-                            if (method == "float" || method == "vec4" || method == "delay" ||
-                                method == "start" || method == "pause" || method == "stop") {
-                                return "Tween";
-                            }
-                        }
-                    default:
-                }
-                return "Dynamic";
-
-            // Binary operations
-            case EBinop(OpAdd, e1, e2):
-                var t1 = getExprType(e1);
-                var t2 = getExprType(e2);
-                if (t1 == "String" || t2 == "String") return "String";
-                if (t1 == "Float" || t2 == "Float") return "Float";
-                return "Int";
-
-            // Parentheses
-            case EParenthesis(inner):
-                return getExprType(inner);
-
-            default:
-                return "Dynamic";
-        }
-    }
+    static var unsupportedStaticClasses = [
+        "iron.system.Audio", "kha.audio1.Audio", "kha.audio2.Audio",
+        "iron.system.Tween", "kha.netsync.Network", "koui.Koui", "kha.System",
+    ];
 
     function convertCall(callExpr:Expr, params:Array<Expr>):IRNode {
         var args = [for (p in params) exprToIR(p)];
@@ -1961,10 +1810,14 @@ class TraitExtractor implements IExtractorContext {
                     default:
                 }
 
-                // Unsupported APIs - explicitly skip (before converters to prevent optimistic matching)
+                // Static APIs without an N64 equivalent, checked before the converters
+                // (the Tween converter would otherwise take iron.system.Tween's static calls)
+                var staticClass = TypedIndex.typeRefPath(obj);
+                if (staticClass != null && Lambda.has(unsupportedStaticClasses, staticClass)) {
+                    var shortName = staticClass.substr(staticClass.lastIndexOf(".") + 1);
+                    return N64MacroBase.unsupported('$shortName.$method() is not supported on N64');
+                }
                 switch (obj.expr) {
-                    case EConst(CIdent(cls = "Audio" | "Tween" | "Network" | "Koui" | "System")):
-                        return N64MacroBase.unsupported('$cls.$method() is not supported on N64');
                     case _ if (TypedIndex.isClassRef(obj, "koui.utils.SceneManager")):
                         if (method == "clearScenes") return { type: "canvas_clear_scenes" };
                         return N64MacroBase.unsupported('SceneManager.$method() is not supported on N64 yet');

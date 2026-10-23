@@ -190,24 +190,55 @@ class TypedIndex {
     }
 
     /**
+     * Full path of the class or abstract an expression refers to as a type
+     * (`Scene` in `Scene.active`). Null if it isn't a type reference.
+     */
+    public static function typeRefPath(e:Expr):Null<String> {
+        var list = nodesAt(e);
+        if (list.length == 0) return null;
+        return switch (list[0].expr) {
+            case TTypeExpr(TClassDecl(c)): classPath(c.get());
+            case TTypeExpr(TAbstract(a)): fullPath(a.get().pack, a.get().name);
+            default: null;
+        };
+    }
+
+    /**
+     * Full path of the class declaring the field an identifier or field access
+     * reads, e.g. "iron.Trait" for `name` inside a trait. Null otherwise.
+     */
+    public static function fieldOwner(e:Expr):Null<String> {
+        var list = nodesAt(e);
+        if (list.length == 0) return null;
+        return switch (list[0].expr) {
+            case TField(_, FInstance(c, _, _)), TField(_, FStatic(c, _)): classPath(c.get());
+            default: null;
+        };
+    }
+
+    /**
+     * Integer value of an expression the compiler folded to a constant, e.g.
+     * an enum abstract value like `Color.Black` (0xff000000). Null otherwise.
+     */
+    public static function intConstant(e:Expr):Null<Int> {
+        var list = nodesAt(e);
+        if (list.length == 0) return null;
+        var t = list[0];
+        while (true) {
+            switch (t.expr) {
+                case TCast(inner, null), TParenthesis(inner), TMeta(_, inner): t = inner;
+                case TConst(TInt(v)): return v;
+                default: return null;
+            }
+        }
+    }
+
+    /**
      * Whether an expression refers to the class or abstract `path` as a type
      * (e.g. "iron.Scene" for `Scene`, `iron.Scene` or an import alias).
-     * Without a typed node, falls back to comparing the class's short name.
      */
     public static function isClassRef(e:Expr, path:String):Bool {
-        var list = nodesAt(e);
-        if (list.length > 0) {
-            return switch (list[0].expr) {
-                case TTypeExpr(TClassDecl(c)): classPath(c.get()) == path;
-                case TTypeExpr(TAbstract(a)): fullPath(a.get().pack, a.get().name) == path;
-                default: false;
-            };
-        }
-        var shortName = path.substr(path.lastIndexOf(".") + 1);
-        return switch (e.expr) {
-            case EConst(CIdent(name)): name == shortName;
-            default: false;
-        };
+        return typeRefPath(e) == path;
     }
 
     /**

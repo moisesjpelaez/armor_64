@@ -21,10 +21,8 @@ class TransformCallConverter implements ICallConverter {
     public function new() {}
 
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
-        // The receiver's type decides when known; the `transform` name below is
-        // only a fallback for expressions without a typed node
-        var receiver = TypedIndex.receiverPath(obj);
-        if (receiver != null && receiver != "iron.object.Transform") return null;
+        // Only iron's Transform, from the receiver's type
+        if (TypedIndex.receiverPath(obj) != "iron.object.Transform") return null;
         if (!Lambda.has(transformMethods, method)) return null;
 
         // The C code works on the owning object: owner.transform.method()
@@ -38,10 +36,7 @@ class TransformCallConverter implements ICallConverter {
             default:
         }
 
-        if (receiver != null) {
-            return N64MacroBase.unsupported('Transform.$method() is only supported as `object.transform.$method()` (or `x.transform.$method()`) on N64');
-        }
-        return null;
+        return N64MacroBase.unsupported('Transform.$method() is only supported as `object.transform.$method()` (or `x.transform.$method()`) on N64');
     }
 
     function convert(method:String, args:Array<IRNode>, ctx:IExtractorContext, ownerNode:IRNode):IRNode {

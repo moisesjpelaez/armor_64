@@ -26,58 +26,28 @@ import armory.n64.converters.ICallConverter;
 class InputCallConverter implements ICallConverter {
 	public function new() {}
 
-	// Engine input devices: N64 has one controller, whatever a variable holding
-	// one is called
-	static var inputDevices = ["iron.system.Gamepad", "iron.system.Keyboard", "iron.system.Mouse"];
-
-	public static function isInputDeviceType(path:String):Bool {
-		return inputDevices.indexOf(path) >= 0;
-	}
-
 	/**
-	 * Whether an expression is a gamepad: from its type, or from the name
-	 * `gamepad` for expressions without a typed node.
+	 * Whether an expression is a gamepad, from its type.
 	 */
 	public static function isGamepad(e:Expr):Bool {
-		var path = TypedIndex.receiverPath(e);
-		if (path != null) return path == "iron.system.Gamepad";
-		return switch (e.expr) {
-			case EConst(CIdent("gamepad")): true;
-			default: false;
-		};
+		return TypedIndex.receiverPath(e) == "iron.system.Gamepad";
 	}
 
 	public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
-		// The receiver's type decides when known
-		switch (TypedIndex.receiverPath(obj)) {
-			case null:
+		// The receiver's type decides
+		return switch (TypedIndex.receiverPath(obj)) {
 			case "iron.system.Gamepad", "iron.system.Input":
-				return convert(method, args, rawParams, ctx);
+				convert(method, args, rawParams, ctx);
 			case "iron.system.Keyboard", "iron.system.Mouse":
 				// Safely ignore PC inputs on N64
-				return {
+				{
 					type: "input_call",
 					c_code: "0",
 					method: method
 				};
 			default:
-				return null;
-		}
-
-		// Fallback by name for expressions without a typed node
-		switch (obj.expr) {
-			case EConst(CIdent("gamepad")), EConst(CIdent("Input")):
-				return convert(method, args, rawParams, ctx);
-			case EConst(CIdent("keyboard")), EConst(CIdent("mouse")):
-				// Safely ignore PC inputs on N64
-				return {
-					type: "input_call",
-					c_code: "0",
-					method: method
-				};
-			default:
-				return null;
-		}
+				null;
+		};
 	}
 
 	function convert(method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {

@@ -15,7 +15,7 @@ import armory.n64.N64MacroBase;
 import armory.n64.TypedIndex;
 import armory.n64.mapping.Constants;
 import armory.n64.mapping.TypeMap;
-import armory.n64.mapping.SkipList;
+import armory.n64.mapping.EngineTypes;
 import armory.n64.converters.ICallConverter;
 import armory.n64.converters.VecCallConverter;
 import armory.n64.converters.MathCallConverter;
@@ -440,7 +440,8 @@ class AutoloadExtractor implements IExtractorContext {
     }
 
     function extractMember(name:String, t:ComplexType, e:Expr):MemberIR {
-        if (SkipList.shouldSkipMember(name)) return null;
+        // Engine-provided on N64 (gamepad, rigid body, ...): not stored
+        if (EngineTypes.isProvidedMember(cls, name)) return null;
 
         var haxeType = t != null ? N64MacroBase.complexTypeToString(t) : "Dynamic";
 
@@ -882,11 +883,9 @@ class AutoloadExtractor implements IExtractorContext {
     // IExtractorContext implementation
     // ========================================================================
 
-    // Types come from the compiler's typed AST; the name-based guesses below
-    // remain as a fallback for expressions without a typed node
+    // Types come from the compiler's typed AST; null if unknown
     public function getExprType(e:Expr):String {
-        var typed = e != null ? TypedIndex.typeOf(e) : null;
-        return typed != null ? typed : guessExprType(e);
+        return e != null ? TypedIndex.typeOf(e) : null;
     }
 
     public function inferExprType(e:Expr):String {
@@ -896,28 +895,7 @@ class AutoloadExtractor implements IExtractorContext {
             default:
         }
         var typed = TypedIndex.typeOf(e);
-        return typed != null ? typed : guessInferExprType(e);
-    }
-
-    function guessExprType(e:Expr):String {
-        return switch (e.expr) {
-            case EConst(CIdent(s)):
-                // Check local vars first, then members
-                if (localVarTypes.exists(s)) localVarTypes.get(s);
-                else memberTypes.get(s);
-            case EField(_, field): memberTypes.get(field);
-            case EArray(obj, _):
-                // For array access, get the element type
-                var objType = getExprType(obj);
-                if (TypeMap.isMapType(objType)) {
-                    var mapTypes = TypeMap.getMapTypes(objType);
-                    if (mapTypes != null) return mapTypes.value;
-                } else if (TypeMap.isArrayType(objType)) {
-                    return TypeMap.getArrayElementType(objType);
-                }
-                null;
-            default: null;
-        };
+        return typed != null ? typed : "Dynamic";
     }
 
     /**
@@ -980,27 +958,6 @@ class AutoloadExtractor implements IExtractorContext {
                 break;
             }
         }
-    }
-
-    function guessInferExprType(e:Expr):String {
-        // Return Haxe types (consistent with N64TraitMacro)
-        // Caller uses TypeMap.getCType() to convert to C types
-        return switch (e.expr) {
-            case EConst(CInt(_)): "Int";
-            case EConst(CFloat(_)): "Float";
-            case EConst(CString(_)): "String";
-            case EConst(CIdent(s)):
-                if (s == "true" || s == "false") "Bool";
-                else {
-                    var t = localVarTypes.get(s);
-                    if (t == null) t = memberTypes.get(s);
-                    t != null ? t : "Dynamic";
-                }
-            case EField(obj, field):
-                // Could be object.transform, etc. - simplified for now
-                "Dynamic";
-            default: "Dynamic";
-        };
     }
 
     public function getMeta():TraitMeta {

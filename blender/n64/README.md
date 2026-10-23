@@ -18,7 +18,7 @@ This document provides an architectural overview of the Armory3D N64 exporter, w
 
 ## Key Design Principles
 
-0. **Extraction runs after typing**: the build macros only capture each class's untyped fields; extraction runs in `onAfterTyping` (`N64MacroBase.deferExtraction`) so extractors can ask `TypedIndex` what an expression really is (e.g. which class an identifier refers to) instead of guessing from names. Resolve calls from their receiver's typed node: inlined calls (e.g. `Vec4.mult`) have no typed call node of their own. `getExprType()` returns the typed type (`TypedIndex.typeOf`) in the same short-name format `TypeMap` uses, and only falls back to the old name-based guesses when an expression has no typed node.
+0. **Extraction runs after typing**: the build macros only capture each class's untyped fields; extraction runs in `onAfterTyping` (`N64MacroBase.deferExtraction`) so extractors can ask `TypedIndex` what an expression really is (e.g. which class an identifier refers to) instead of guessing from names. Resolve calls from their receiver's typed node: inlined calls (e.g. `Vec4.mult`) have no typed call node of their own. `getExprType()` returns the typed type (`TypedIndex.typeOf`) in the same short-name format `TypeMap` uses. Nothing is matched by variable or class names: engine-provided values (gamepad, rigid body, transform) are recognized by type in `mapping/EngineTypes.hx`, and calls whose receiver has no typed node are reported as unsupported.
 
 1. **Clean IR Separation**: Haxe macros perform semantic analysis and emit JSON IR. Python does mechanical 1:1 translation to C without re-analyzing semantics.
 
@@ -89,7 +89,7 @@ Create `Sources/armory/n64/converters/MyCallConverter.hx`. Decide whether a call
 - `TypedIndex.isClassRef(obj, "iron.Scene")`: static calls (`Scene.x()`, `iron.Scene.x()`, aliases)
 - `TypedIndex.callOwner(obj, method)`: the class declaring the method
 
-They return null/false for expressions without a typed node; keep a name-based check only as that fallback.
+They return null/false for expressions without a typed node; don't add name-based fallbacks, `N64MacroBase.methodCall()` reports such calls.
 
 ```haxe
 class MyCallConverter implements ICallConverter {

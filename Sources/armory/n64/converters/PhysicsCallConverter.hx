@@ -24,10 +24,9 @@ class PhysicsCallConverter implements ICallConverter {
     public function new() {}
 
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
-        // The receiver's type decides when known: only Armory's RigidBody.
-        // The method names below are only a fallback without a typed node
+        // Only Armory's RigidBody, from the receiver's type
         var receiver = TypedIndex.receiverPath(obj);
-        if (receiver != null && !isRigidBody(receiver)) return null;
+        if (receiver == null || !isRigidBody(receiver)) return null;
 
         // Check for contact subscription first
         if (method == "notifyOnContact" || method == "removeContact") {
@@ -35,23 +34,10 @@ class PhysicsCallConverter implements ICallConverter {
             return convertContactSubscription(method, args, rawParams, ctx);
         }
 
-        // Check for physics methods on any object
         if (Lambda.has(physicsMethods, method)) {
             ctx.getMeta().uses_physics = true;
             // For N64, physics always applies to the current object
             return convertPhysicsCall(method, { type: "ident", value: "object" }, args);
-        }
-
-        // Check for object.physics.method() pattern
-        switch (obj.expr) {
-            case EField(innerObj, "physics"):
-                ctx.getMeta().uses_physics = true;
-                var objIR = ctx.exprToIR(innerObj);
-                return convertPhysicsCall(method, objIR, args);
-            case EConst(CIdent("physics")):
-                ctx.getMeta().uses_physics = true;
-                return convertPhysicsCall(method, { type: "ident", value: "object" }, args);
-            default:
         }
 
         return null;
