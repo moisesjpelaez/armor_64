@@ -4,6 +4,7 @@ package armory.n64.converters;
 import haxe.macro.Expr;
 import armory.n64.IRTypes;
 import armory.n64.N64MacroBase;
+import armory.n64.TypedIndex;
 import armory.n64.converters.ICallConverter;
 import armory.n64.util.ExprUtils;
 
@@ -23,6 +24,11 @@ class PhysicsCallConverter implements ICallConverter {
     public function new() {}
 
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
+        // The receiver's type decides when known: only Armory's RigidBody.
+        // The method names below are only a fallback without a typed node
+        var receiver = TypedIndex.receiverPath(obj);
+        if (receiver != null && !isRigidBody(receiver)) return null;
+
         // Check for contact subscription first
         if (method == "notifyOnContact" || method == "removeContact") {
             ctx.getMeta().uses_physics = true;
@@ -82,6 +88,11 @@ class PhysicsCallConverter implements ICallConverter {
             object: objIR,
             args: args
         };
+    }
+
+    // armory.trait.physics.oimo.RigidBody or armory.trait.physics.bullet.RigidBody
+    static function isRigidBody(path:String):Bool {
+        return StringTools.startsWith(path, "armory.trait.physics.") && StringTools.endsWith(path, ".RigidBody");
     }
 
     function convertContactSubscription(method:String, args:Array<IRNode>, params:Array<Expr>, ctx:IExtractorContext):IRNode {

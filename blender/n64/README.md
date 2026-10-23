@@ -18,7 +18,7 @@ This document provides an architectural overview of the Armory3D N64 exporter, w
 
 ## Key Design Principles
 
-0. **Extraction runs after typing**: the build macros only capture each class's untyped fields; extraction runs in `onAfterTyping` (`N64MacroBase.deferExtraction`) so extractors can ask `TypedIndex` what an expression really is (e.g. which class an identifier refers to) instead of guessing from names. Resolve calls from their receiver's typed node: inlined calls (e.g. `Vec4.mult`) have no typed call node of their own.
+0. **Extraction runs after typing**: the build macros only capture each class's untyped fields; extraction runs in `onAfterTyping` (`N64MacroBase.deferExtraction`) so extractors can ask `TypedIndex` what an expression really is (e.g. which class an identifier refers to) instead of guessing from names. Resolve calls from their receiver's typed node: inlined calls (e.g. `Vec4.mult`) have no typed call node of their own. `getExprType()` returns the typed type (`TypedIndex.typeOf`) in the same short-name format `TypeMap` uses, and only falls back to the old name-based guesses when an expression has no typed node.
 
 1. **Clean IR Separation**: Haxe macros perform semantic analysis and emit JSON IR. Python does mechanical 1:1 translation to C without re-analyzing semantics.
 
@@ -83,14 +83,20 @@ The IR (Intermediate Representation) is a JSON format that bridges Haxe semantic
 
 ### Step 1: Create a Converter (Haxe)
 
-Create `armory/Sources/armory/n64/converters/MyCallConverter.hx`:
+Create `Sources/armory/n64/converters/MyCallConverter.hx`. Decide whether a call is yours from the typed AST, not from variable or class names, so aliases, full paths and differently named variables all work:
+
+- `TypedIndex.receiverPath(obj)`: what the receiver is, e.g. `"iron.system.Gamepad"` for `pad` in `pad.started("a")`
+- `TypedIndex.isClassRef(obj, "iron.Scene")`: static calls (`Scene.x()`, `iron.Scene.x()`, aliases)
+- `TypedIndex.callOwner(obj, method)`: the class declaring the method
+
+They return null/false for expressions without a typed node; keep a name-based check only as that fallback.
 
 ```haxe
 class MyCallConverter implements ICallConverter {
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>,
                                rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         // Return null if not handling this call
-        if (!isMyApiCall(obj, method)) return null;
+        if (TypedIndex.receiverPath(obj) != "my.api.MyClass") return null;
 
         // Return IR node with c_code template
         return {
@@ -112,6 +118,8 @@ callConverters = [
     new MyCallConverter()
 ];
 ```
+
+Calls no converter handles become a generic `method_call`. When the typed AST knows the method's class, `N64MacroBase.methodCall()` reports it as unsupported unless the Python emitter translates it (`emitterMethods`); add an entry there if you handle a new method in `emit_method_call`.
 
 ### Step 3: Add Emitter (Python)
 

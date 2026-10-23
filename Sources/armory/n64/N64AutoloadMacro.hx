@@ -12,6 +12,7 @@ import sys.FileSystem;
 // Import shared components
 import armory.n64.IRTypes;
 import armory.n64.N64MacroBase;
+import armory.n64.TypedIndex;
 import armory.n64.mapping.Constants;
 import armory.n64.mapping.TypeMap;
 import armory.n64.mapping.SkipList;
@@ -621,7 +622,7 @@ class AutoloadExtractor implements IExtractorContext {
             case EField(obj, field):
                 // Check for Time.delta / Time.scale special cases
                 switch (obj.expr) {
-                    case EConst(CIdent("Time")):
+                    case _ if (TypedIndex.isClassRef(obj, "iron.system.Time")):
                         if (field == "delta") {
                             // Time.delta -> time_delta (global variable from system/time.h)
                             return { type: "ident", value: "time_delta" };
@@ -655,7 +656,7 @@ class AutoloadExtractor implements IExtractorContext {
                             switch (innerObj.expr) {
                                 case EField(sceneExpr, "active"):
                                     switch (sceneExpr.expr) {
-                                        case EConst(CIdent("Scene")):
+                                        case _ if (TypedIndex.isClassRef(sceneExpr, "iron.Scene")):
                                             return { type: "c_literal", c_code: "scene_get_name(scene_get_current_id())" };
                                         default:
                                     }
@@ -826,7 +827,7 @@ class AutoloadExtractor implements IExtractorContext {
             case EField(obj, method):
                 // Check for Time.time() special case
                 switch (obj.expr) {
-                    case EConst(CIdent("Time")):
+                    case _ if (TypedIndex.isClassRef(obj, "iron.system.Time")):
                         if (method == "time") {
                             // Time.time() -> time_get()
                             return { type: "call", value: "time_get", args: [] };
@@ -838,12 +839,7 @@ class AutoloadExtractor implements IExtractorContext {
                     if (result != null) return result;
                 }
                 // Default field call
-                return {
-                    type: "method_call",
-                    method: method,
-                    object: exprToIR(obj),
-                    args: args
-                };
+                return N64MacroBase.methodCall(obj, method, args, exprToIR);
 
             case EConst(CIdent(funcName)):
                 // Direct function call
@@ -886,7 +882,24 @@ class AutoloadExtractor implements IExtractorContext {
     // IExtractorContext implementation
     // ========================================================================
 
+    // Types come from the compiler's typed AST; the name-based guesses below
+    // remain as a fallback for expressions without a typed node
     public function getExprType(e:Expr):String {
+        var typed = e != null ? TypedIndex.typeOf(e) : null;
+        return typed != null ? typed : guessExprType(e);
+    }
+
+    public function inferExprType(e:Expr):String {
+        // `this` and `object` stand for the trait's object on N64
+        switch (e.expr) {
+            case EConst(CIdent("this")), EConst(CIdent("object")): return "ArmObject";
+            default:
+        }
+        var typed = TypedIndex.typeOf(e);
+        return typed != null ? typed : guessInferExprType(e);
+    }
+
+    function guessExprType(e:Expr):String {
         return switch (e.expr) {
             case EConst(CIdent(s)):
                 // Check local vars first, then members
@@ -969,7 +982,7 @@ class AutoloadExtractor implements IExtractorContext {
         }
     }
 
-    public function inferExprType(e:Expr):String {
+    function guessInferExprType(e:Expr):String {
         // Return Haxe types (consistent with N64TraitMacro)
         // Caller uses TypeMap.getCType() to convert to C types
         return switch (e.expr) {

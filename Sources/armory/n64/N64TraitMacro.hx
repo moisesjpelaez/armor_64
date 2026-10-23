@@ -11,6 +11,7 @@ import sys.FileSystem;
 // Import modular components
 import armory.n64.IRTypes;
 import armory.n64.N64MacroBase;
+import armory.n64.TypedIndex;
 import armory.n64.mapping.Constants;
 import armory.n64.mapping.TypeMap;
 import armory.n64.mapping.ButtonMap;
@@ -100,7 +101,8 @@ class N64TraitMacro {
 
         // Extract trait IR after typing, when the TypedIndex is available
         N64MacroBase.deferExtraction(localClass, function() {
-            var extractor = new TraitExtractor(className, modulePath, fields, parentName);
+            // Get the class again: the build-time snapshot has no typed fields yet
+            var extractor = new TraitExtractor(className, modulePath, fields, parentName, localClass.get());
             var traitIR = extractor.extract();
 
             if (traitIR != null) {
@@ -257,12 +259,14 @@ class TraitExtractor implements IExtractorContext {
 
     // Inheritance support
     var parentName:String;  // Parent trait name (null if none)
+    var cls:ClassType;  // Typed class (fields have their compiler types)
 
-    public function new(className:String, modulePath:String, fields:Array<Field>, parentName:String = null) {
+    public function new(className:String, modulePath:String, fields:Array<Field>, parentName:String, cls:ClassType) {
         this.className = className;
         this.modulePath = modulePath;
         this.fields = fields;
         this.parentName = parentName;
+        this.cls = cls;
         this.members = new Map();
         this.memberNames = [];
         this.methodMap = new Map();
@@ -573,8 +577,27 @@ class TraitExtractor implements IExtractorContext {
         };
     }
 
+    /**
+     * Whether a member (of this trait or a parent) holds an input device
+     * (Gamepad, Keyboard, Mouse), which the engine provides on N64.
+     */
+    function isInputDeviceMember(name:String):Bool {
+        var c = cls;
+        while (c != null) {
+            for (f in c.fields.get()) {
+                if (f.name != name) continue;
+                return switch (Context.follow(f.type)) {
+                    case TInst(t, _): InputCallConverter.isInputDeviceType(t.get().pack.concat([t.get().name]).join("."));
+                    default: false;
+                };
+            }
+            c = c.superClass != null ? c.superClass.t.get() : null;
+        }
+        return false;
+    }
+
     function extractMember(name:String, t:ComplexType, e:Expr):MemberIR {
-        if (SkipList.shouldSkipMember(name)) return null;
+        if (SkipList.shouldSkipMember(name) || isInputDeviceMember(name)) return null;
 
         var haxeType = t != null ? N64MacroBase.complexTypeToString(t) : "Dynamic";
         if (!TypeMap.isSupported(haxeType)) return null;
@@ -931,7 +954,7 @@ class TraitExtractor implements IExtractorContext {
                 switch (e.expr) {
                     case EField(obj, method):
                         switch (obj.expr) {
-                            case EConst(CIdent("gamepad")):
+                            case _ if (InputCallConverter.isGamepad(obj)):
                                 if (method == "started" || method == "released" || method == "down") {
                                     if (params.length > 0) {
                                         var rawButton = extractStringArg(params[0]);
@@ -1072,7 +1095,7 @@ class TraitExtractor implements IExtractorContext {
         return false;  // Traits are not autoloads
     }
 
-    public function inferExprType(e:Expr):String {
+    function guessInferExprType(e:Expr):String {
         // Infer the Haxe type of an expression for signal arg typing
         return switch (e.expr) {
             case EConst(CInt(_)): "Int";
@@ -1339,7 +1362,7 @@ class TraitExtractor implements IExtractorContext {
                 trait: className
             };
         }
-        if (SkipList.shouldSkipMember(name) || SkipList.shouldSkipClass(name)) {
+        if (SkipList.shouldSkipMember(name) || SkipList.shouldSkipClass(name) || isInputDeviceMember(name)) {
             return { type: "skip" };
         }
         // If we have a parent and this isn't a known local/member, it might be inherited
@@ -1526,7 +1549,7 @@ class TraitExtractor implements IExtractorContext {
 
         // Handle iron.App static field access -> C global
         switch (obj.expr) {
-            case EConst(CIdent("App")):
+            case _ if (TypedIndex.isClassRef(obj, "iron.App")):
                 if (field == "pauseUpdates") {
                     return { type: "c_literal", c_code: "app_pause_updates" };
                 }
@@ -1621,7 +1644,7 @@ class TraitExtractor implements IExtractorContext {
                     switch (innerObj.expr) {
                         case EField(sceneExpr, "active"):
                             switch (sceneExpr.expr) {
-                                case EConst(CIdent("Scene")):
+                                case _ if (TypedIndex.isClassRef(sceneExpr, "iron.Scene")):
                                     return { type: "c_literal", c_code: "scene_get_name(scene_get_current_id())" };
                                 default:
                             }
@@ -1642,7 +1665,7 @@ class TraitExtractor implements IExtractorContext {
                             switch (sceneActiveExpr.expr) {
                                 case EField(sceneExpr, "active"):
                                     switch (sceneExpr.expr) {
-                                        case EConst(CIdent("Scene")):
+                                        case _ if (TypedIndex.isClassRef(sceneExpr, "iron.Scene")):
                                             // Found Scene.active.getGroup(x).length
                                             if (params.length > 0) {
                                                 var groupArg = exprToIR(params[0]);
@@ -1660,7 +1683,7 @@ class TraitExtractor implements IExtractorContext {
 
         // Handle Color.Black, Color.White, etc. -> RGBA32 for N64
         switch (obj.expr) {
-            case EConst(CIdent("Color")):
+            case _ if (TypedIndex.isClassRef(obj, "kha.Color")):
                 var colorValue = switch (field) {
                     case "Black": "RGBA32(0, 0, 0, 255)";
                     case "White": "RGBA32(255, 255, 255, 255)";
@@ -1678,7 +1701,7 @@ class TraitExtractor implements IExtractorContext {
         switch (obj.expr) {
             case EField(innerObj, "sounds"):
                 switch (innerObj.expr) {
-                    case EConst(CIdent("Assets")):
+                    case _ if (TypedIndex.isClassRef(innerObj, "kha.Assets")):
                         var soundPath = 'rom:/${field}.wav64';
                         return { type: "string", value: soundPath, c_code: '"$soundPath"' };
                     default:
@@ -1703,7 +1726,7 @@ class TraitExtractor implements IExtractorContext {
             case EConst(CIdent("transform")):
                 meta.uses_transform = true;
                 return { type: "field_access", object: { type: "ident", value: "object" }, value: "transform." + field };
-            case EConst(CIdent("Time")):
+            case _ if (TypedIndex.isClassRef(obj, "iron.system.Time")):
                 if (field == "delta") {
                     meta.uses_time = true;
                     return { type: "ident", value: "dt" };
@@ -1714,7 +1737,7 @@ class TraitExtractor implements IExtractorContext {
                     meta.uses_time = true;
                     return { type: "ident", value: "time_fixed_step" };
                 }
-            case EConst(CIdent("gamepad")):
+            case _ if (InputCallConverter.isGamepad(obj)):
                 // gamepad.leftStick, gamepad.rightStick
                 meta.uses_input = true;
                 if (field == "leftStick" || field == "rightStick") {
@@ -1747,7 +1770,24 @@ class TraitExtractor implements IExtractorContext {
      * Unified type inference from Haxe expressions.
      * Returns the Haxe type name (Int, Float, String, Vec2, Label, Signal, etc.) or "Dynamic" if unknown.
      */
+    // Types come from the compiler's typed AST; the name-based guesses below
+    // remain as a fallback for expressions without a typed node
     public function getExprType(e:Expr):String {
+        var typed = e != null ? TypedIndex.typeOf(e) : null;
+        return typed != null ? typed : guessExprType(e);
+    }
+
+    public function inferExprType(e:Expr):String {
+        // `this` and `object` stand for the trait's object on N64
+        switch (e.expr) {
+            case EConst(CIdent("this")), EConst(CIdent("object")): return "ArmObject";
+            default:
+        }
+        var typed = TypedIndex.typeOf(e);
+        return typed != null ? typed : guessInferExprType(e);
+    }
+
+    function guessExprType(e:Expr):String {
         if (e == null) return "Dynamic";
 
         switch (e.expr) {
@@ -1806,7 +1846,7 @@ class TraitExtractor implements IExtractorContext {
                     case EField(obj, method):
                         // Std.string/int/parseFloat
                         switch (obj.expr) {
-                            case EConst(CIdent("Std")):
+                            case _ if (TypedIndex.isClassRef(obj, "Std")):
                                 if (method == "string") return "String";
                                 if (method == "int") return "Int";
                                 if (method == "parseFloat") return "Float";
@@ -1870,14 +1910,14 @@ class TraitExtractor implements IExtractorContext {
 
                 // Check for Time.time() special case
                 switch (obj.expr) {
-                    case EConst(CIdent("Time")):
+                    case _ if (TypedIndex.isClassRef(obj, "iron.system.Time")):
                         if (method == "time") {
                             meta.uses_time = true;
                             // Time.time() -> time_get()
                             return { type: "call", value: "time_get", args: [] };
                         }
                     // Handle Color.fromFloats(r, g, b, a) -> ARGB uint32 construction
-                    case EConst(CIdent("Color")):
+                    case _ if (TypedIndex.isClassRef(obj, "kha.Color")):
                         if (method == "fromFloats") {
                             // Color.fromFloats(r, g, b, a) -> RGBA32 macro inverted to ARGB for storage
                             // We'll emit a helper that constructs the uint32 at runtime
@@ -1925,7 +1965,7 @@ class TraitExtractor implements IExtractorContext {
                 switch (obj.expr) {
                     case EConst(CIdent(cls = "Audio" | "Tween" | "Network" | "Koui" | "System")):
                         return N64MacroBase.unsupported('$cls.$method() is not supported on N64');
-                    case EConst(CIdent("SceneManager")):
+                    case _ if (TypedIndex.isClassRef(obj, "koui.utils.SceneManager")):
                         if (method == "clearScenes") return { type: "canvas_clear_scenes" };
                         return N64MacroBase.unsupported('SceneManager.$method() is not supported on N64 yet');
                     default:
@@ -1937,13 +1977,7 @@ class TraitExtractor implements IExtractorContext {
                 }
 
                 // Fallback: generic call with object (for unknown method calls)
-                // Use method_call type to match autoload behavior and ensure proper handling
-                return {
-                    type: "method_call",
-                    method: method,
-                    object: exprToIR(obj),
-                    args: args
-                };
+                return N64MacroBase.methodCall(obj, method, args, exprToIR);
 
             default:
         }

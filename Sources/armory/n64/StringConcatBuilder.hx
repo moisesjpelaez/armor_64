@@ -77,7 +77,7 @@ class StringConcatBuilder {
                 switch (callExpr.expr) {
                     case EField(obj, method):
                         switch (obj.expr) {
-                            case EConst(CIdent("Std")):
+                            case _ if (TypedIndex.isClassRef(obj, "Std")):
                                 if (method == "string" && callArgs.length > 0) {
                                     var valueExpr = callArgs[0];
                                     // Std.string() just ensures string conversion - recurse into the expression

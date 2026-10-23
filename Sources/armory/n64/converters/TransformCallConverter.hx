@@ -4,6 +4,7 @@ package armory.n64.converters;
 import haxe.macro.Expr;
 import armory.n64.IRTypes;
 import armory.n64.N64MacroBase;
+import armory.n64.TypedIndex;
 import armory.n64.converters.ICallConverter;
 
 /**
@@ -20,21 +21,26 @@ class TransformCallConverter implements ICallConverter {
     public function new() {}
 
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
-        // Check for transform.method() or owner.transform.method() pattern
+        // The receiver's type decides when known; the `transform` name below is
+        // only a fallback for expressions without a typed node
+        var receiver = TypedIndex.receiverPath(obj);
+        if (receiver != null && receiver != "iron.object.Transform") return null;
+        if (!Lambda.has(transformMethods, method)) return null;
+
+        // The C code works on the owning object: owner.transform.method()
         switch (obj.expr) {
             case EField(owner, "transform"):
-                if (Lambda.has(transformMethods, method)) {
-                    // Extract owner expression for {obj} substitution
-                    var ownerNode = ctx.exprToIR(owner);
-                    return convert(method, args, ctx, ownerNode);
-                }
+                // Extract owner expression for {obj} substitution
+                var ownerNode = ctx.exprToIR(owner);
+                return convert(method, args, ctx, ownerNode);
             case EConst(CIdent("transform")):
-                if (Lambda.has(transformMethods, method)) {
-                    return convert(method, args, ctx, null);
-                }
+                return convert(method, args, ctx, null);
             default:
         }
 
+        if (receiver != null) {
+            return N64MacroBase.unsupported('Transform.$method() is only supported as `object.transform.$method()` (or `x.transform.$method()`) on N64');
+        }
         return null;
     }
 

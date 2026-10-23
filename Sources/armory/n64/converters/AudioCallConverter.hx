@@ -4,6 +4,7 @@ package armory.n64.converters;
 import haxe.macro.Expr;
 import haxe.macro.Context;
 import armory.n64.IRTypes;
+import armory.n64.TypedIndex;
 import armory.n64.N64MacroBase;
 import armory.n64.converters.ICallConverter;
 import armory.n64.util.ExprUtils;
@@ -32,7 +33,7 @@ class AudioCallConverter implements ICallConverter {
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         // Handle Aura.* calls
         switch (obj.expr) {
-            case EConst(CIdent("Aura")):
+            case _ if (TypedIndex.isClassRef(obj, "aura.Aura")):
                 return convertAuraCall(method, args, rawParams, ctx);
 
             // Handle Aura.mixChannels["name"].setVolume(v)
@@ -41,7 +42,7 @@ class AudioCallConverter implements ICallConverter {
                 switch (arrayObj.expr) {
                     case EField(auraObj, "mixChannels"):
                         switch (auraObj.expr) {
-                            case EConst(CIdent("Aura")):
+                            case _ if (TypedIndex.isClassRef(auraObj, "aura.Aura")):
                                 return convertMixChannelCall(indexExpr, method, args, ctx);
                             default:
                         }

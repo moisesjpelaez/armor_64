@@ -41,7 +41,12 @@ class N64MacroBase {
         registerAfterTyping();
         var c = cls.get();
         extractedClasses.set(c.pack.concat([c.name]).join("."), cls);
-        extractions.push(extract);
+        // `using` is only known in the class's own build context
+        var usings = Context.getLocalUsing();
+        extractions.push(function() {
+            TypedIndex.currentUsings = [for (u in usings) u.get()];
+            extract();
+        });
     }
 
     /**
@@ -86,6 +91,37 @@ class N64MacroBase {
             }
         }
         return { type: "skip", warn: msg };
+    }
+
+    // Methods the Python emitter translates from a generic method_call node
+    // (emit_method_call in trait_emitter.py), by declaring class
+    static var emitterMethods:Map<String, Array<String>> = [
+        "aura.channels.BaseChannelHandle" => ["play", "stop", "pause", "setVolume"],
+        "iron.object.Animation" => ["play", "pause", "resume", "setSpeed"],
+        "iron.object.Object" => ["getAnimation"],
+        "armory.system.Tween" => ["start", "pause", "stop"],
+    ];
+
+    /**
+     * Generic `obj.method(args)` call left over after the converters. When the
+     * typed AST names the method's class and nothing translates it, report it
+     * instead of emitting `obj.method()`, which isn't valid C.
+     */
+    public static function methodCall(obj:Expr, method:String, args:Array<IRNode>, exprToIR:Expr->IRNode):IRNode {
+        var owner = TypedIndex.callOwner(obj, method);
+        if (owner != null && !extractedClasses.exists(owner)) {
+            var methods = emitterMethods.get(owner);
+            if (methods == null || methods.indexOf(method) < 0) {
+                var shortName = owner.substr(owner.lastIndexOf(".") + 1);
+                return unsupported('$shortName.$method() is not supported on N64 yet');
+            }
+        }
+        return {
+            type: "method_call",
+            method: method,
+            object: exprToIR(obj),
+            args: args
+        };
     }
 
     /**

@@ -3,6 +3,7 @@ package armory.n64.converters;
 #if macro
 import haxe.macro.Expr;
 import armory.n64.IRTypes;
+import armory.n64.TypedIndex;
 import armory.n64.N64MacroBase;
 import armory.n64.converters.ICallConverter;
 
@@ -15,7 +16,7 @@ class StdCallConverter implements ICallConverter {
 
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         switch (obj.expr) {
-            case EConst(CIdent("Std")):
+            case _ if (TypedIndex.isClassRef(obj, "Std")):
                 return convert(method, args);
             default:
                 return null;

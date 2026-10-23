@@ -4,6 +4,7 @@ package armory.n64.converters;
 import haxe.macro.Expr;
 import armory.n64.IRTypes;
 import armory.n64.N64MacroBase;
+import armory.n64.TypedIndex;
 import armory.n64.converters.ICallConverter;
 
 /**
@@ -14,6 +15,13 @@ class Graphics2CallConverter implements ICallConverter {
     public function new() {}
 
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
+        // The receiver's type decides when known
+        var receiver = TypedIndex.receiverPath(obj);
+        if (receiver != null) {
+            return receiver == "kha.graphics2.Graphics" ? convertGraphics2Call(method, args, rawParams, ctx) : null;
+        }
+
+        // Fallback by name for expressions without a typed node
         switch (obj.expr) {
             case EConst(CIdent(name)):
                 var objType = ctx.getExprType(obj);

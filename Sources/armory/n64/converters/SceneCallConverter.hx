@@ -3,6 +3,7 @@ package armory.n64.converters;
 #if macro
 import haxe.macro.Expr;
 import armory.n64.IRTypes;
+import armory.n64.TypedIndex;
 import armory.n64.N64MacroBase;
 import armory.n64.converters.ICallConverter;
 
@@ -21,7 +22,7 @@ class SceneCallConverter implements ICallConverter {
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         // Only handle Scene.* calls
         switch (obj.expr) {
-            case EConst(CIdent("Scene")):
+            case _ if (TypedIndex.isClassRef(obj, "iron.Scene")):
                 return convertSceneCall(method, args, rawParams, ctx);
             default:
                 return null;
@@ -99,7 +100,7 @@ class SceneCallConverter implements ICallConverter {
                             switch (innerInner.expr) {
                                 case EField(sceneExpr, "active"):
                                     switch (sceneExpr.expr) {
-                                        case EConst(CIdent("Scene")):
+                                        case _ if (TypedIndex.isClassRef(sceneExpr, "iron.Scene")):
                                             return { kind: "current_scene", value: null };
                                         default:
                                     }

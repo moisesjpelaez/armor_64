@@ -5,6 +5,7 @@ import haxe.macro.Expr;
 import haxe.macro.Context;
 import armory.n64.IRTypes;
 import armory.n64.N64MacroBase;
+import armory.n64.TypedIndex;
 import armory.n64.mapping.TypeMap;
 import armory.n64.converters.ICallConverter;
 import armory.n64.util.ExprUtils;
@@ -25,6 +26,18 @@ class SignalCallConverter implements ICallConverter {
             return null;
         }
 
+        // Static signal on a class: ClassName.signalName.method(). Checked first
+        // because its type is also Signal; the class comes from the typed AST,
+        // so import aliases resolve to the real class name
+        switch (obj.expr) {
+            case EField(classExpr, signalName):
+                var classType = TypedIndex.classOf(classExpr);
+                if (classType != null) {
+                    return convertGlobalSignalCall(method, classType.name, signalName, args, rawParams, ctx);
+                }
+            default:
+        }
+
         // Check if object is a Signal type
         var objType = ctx.getExprType(obj);
         if (objType == "Signal") {
@@ -38,7 +51,7 @@ class SignalCallConverter implements ICallConverter {
             return convertSignalCall(method, obj, args, rawParams, ctx);
         }
 
-        // Check for global signal pattern: ClassName.signalName.method()
+        // Fallback for expressions without a typed node: ClassName.signalName.method()
         switch (obj.expr) {
             case EField(classExpr, signalName):
                 switch (classExpr.expr) {
