@@ -5,6 +5,7 @@ import haxe.macro.Expr;
 import haxe.macro.Context;
 import haxe.macro.Type;
 import armory.n64.IRTypes;
+import armory.n64.TypedIndex;
 import armory.n64.converters.ICallConverter;
 
 using haxe.macro.TypeTools;
@@ -21,17 +22,14 @@ using StringTools;
  * Autoload classes are detected by checking for @:n64Autoload metadata.
  */
 class AutoloadCallConverter implements ICallConverter {
-    // Cache of known autoload class names -> c_names
-    static var autoloadCache:Map<String, String> = new Map();
-
     public function new() {}
 
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         // Check if this is a static call on an autoload class: ClassName.method()
         switch (obj.expr) {
-            case EConst(CIdent(className)):
-                // Check if className is an autoload
-                var cName = getAutoloadCName(className);
+            case EConst(CIdent(_)):
+                // Check if the identifier refers to an autoload class
+                var cName = getAutoloadCName(obj);
                 if (cName != null) {
                     return convertAutoloadCall(cName, method, args, ctx);
                 }
@@ -55,50 +53,15 @@ class AutoloadCallConverter implements ICallConverter {
     }
 
     /**
-     * Check if a class name is an autoload and return its C name.
-     * Returns null if not an autoload.
+     * C name of the autoload class an expression refers to (e.g. `GameEvents`
+     * in `GameEvents.levelWon.emit()`), or null if it isn't an autoload.
      */
-    public static function getAutoloadCName(className:String):String {
-        // Check cache first
-        if (autoloadCache.exists(className)) {
-            return autoloadCache.get(className);
+    public static function getAutoloadCName(e:Expr):String {
+        var classType = TypedIndex.classOf(e);
+        if (classType == null) return null;
+        if (classType.meta.has(":n64Autoload") || classType.meta.has("n64Autoload")) {
+            return classType.name.toLowerCase();
         }
-
-        // Try to resolve the type and check for @:n64Autoload metadata
-        try {
-            var type = Context.getType(className);
-            if (type == null) {
-                // Try with common package prefixes
-                for (prefix in ["arm.", "arm.node.", ""]) {
-                    try {
-                        type = Context.getType(prefix + className);
-                        if (type != null) break;
-                    } catch (e:Dynamic) {}
-                }
-            }
-
-            if (type != null) {
-                var classType = type.getClass();
-                if (classType != null) {
-                    var meta = classType.meta.get();
-                    if (meta != null) {
-                        for (m in meta) {
-                            if (m.name == ":n64Autoload" || m.name == "n64Autoload") {
-                                // Found an autoload - compute c_name (just class name, lowercased)
-                                var cName = classType.name.toLowerCase();
-                                autoloadCache.set(className, cName);
-                                return cName;
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (e:Dynamic) {
-            // Type resolution failed, not an autoload
-        }
-
-        // Cache negative result
-        autoloadCache.set(className, null);
         return null;
     }
 }

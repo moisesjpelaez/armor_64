@@ -89,9 +89,7 @@ class N64AutoloadMacro {
 
         if (!initialized) {
             initialized = true;
-            Context.onAfterTyping(function(_) {
-                writeAutoloadJson();
-            });
+            N64MacroBase.addWriter(writeAutoloadJson);
         }
 
         var localClass = Context.getLocalClass();
@@ -114,13 +112,16 @@ class N64AutoloadMacro {
 
         var fields = Context.getBuildFields();
 
-        // Extract autoload IR
-        var extractor = new AutoloadExtractor(className, modulePath, fields, order);
-        var autoloadIR = extractor.extract();
+        // Extract autoload IR after typing, when the TypedIndex is available
+        N64MacroBase.deferExtraction(localClass, function() {
+            // Get the class again: the build-time snapshot has no typed fields yet
+            var extractor = new AutoloadExtractor(className, modulePath, fields, order, localClass.get());
+            var autoloadIR = extractor.extract();
 
-        if (autoloadIR != null) {
-            autoloadData.set(className, autoloadIR);
-        }
+            if (autoloadIR != null) {
+                autoloadData.set(className, autoloadIR);
+            }
+        });
 
         return null;
     }
@@ -240,6 +241,7 @@ class AutoloadExtractor implements IExtractorContext {
     var modulePath:String;
     var fields:Array<Field>;
     var order:Int;
+    var cls:ClassType;
     var members:Map<String, MemberIR>;
     var functions:Map<String, AutoloadFunctionIR>;
     var methodMap:Map<String, Function>;
@@ -255,11 +257,12 @@ class AutoloadExtractor implements IExtractorContext {
     // Add converters here if autoloads need to call those APIs in the future.
     var converters:Array<ICallConverter>;
 
-    public function new(className:String, modulePath:String, fields:Array<Field>, order:Int) {
+    public function new(className:String, modulePath:String, fields:Array<Field>, order:Int, cls:ClassType) {
         this.className = className;
         this.modulePath = modulePath;
         this.fields = fields;
         this.order = order;
+        this.cls = cls;
         this.members = new Map();
         this.functions = new Map();
         this.methodMap = new Map();
@@ -451,8 +454,7 @@ class AutoloadExtractor implements IExtractorContext {
         }
 
         // Check if it's a trait type (extends iron.Trait)
-        // Use ComplexType directly for better type resolution
-        var traitCType = resolveTraitCTypeFromComplexType(t);
+        var traitCType = resolveMemberTraitCType(name);
         if (traitCType != null) {
             var defaultNode:IRNode = memberDefaultToIR(e);
             return {
@@ -467,81 +469,33 @@ class AutoloadExtractor implements IExtractorContext {
     }
 
     /**
-     * Resolve trait C type from ComplexType - uses proper type resolution
-     */
-    function resolveTraitCTypeFromComplexType(ct:ComplexType):String {
-        if (ct == null) return null;
-
-        try {
-            // Convert ComplexType to Type using the compiler's type resolution
-            var type = Context.resolveType(ct, Context.currentPos());
-            if (type == null) return null;
-
-            var classType = type.getClass();
-            if (classType == null) return null;
-
-            if (extendsIronTrait(classType)) {
-                // Found a trait - compute c_name
-                var modulePath = classType.module;
-                var className = classType.name;
-                var moduleParts = modulePath.split(".");
-                var lastModulePart = moduleParts[moduleParts.length - 1];
-
-                var c_name:String;
-                if (lastModulePart.toLowerCase() == className.toLowerCase()) {
-                    c_name = modulePath.replace(".", "_").toLowerCase();
-                } else {
-                    c_name = (modulePath.replace(".", "_") + "_" + className).toLowerCase();
-                }
-                return c_name + "Data*";
-            }
-        } catch (e:Dynamic) {
-            // Type resolution failed
-        }
-        return null;
-    }
-
-    /**
-     * Check if a type name is a trait (extends iron.Trait) and return its C type.
-     * Returns null if not a trait.
+     * C type of a member whose type is a trait (extends iron.Trait), from the
+     * member's typed field. Returns null if it isn't a trait.
      *
-     * Example: "Player" or "arm.player.Player" -> "arm_player_playerData*"
+     * Example: `static var player:Player` -> "arm_player_playerData*"
      */
-    function resolveTraitCType(typeName:String):String {
-        try {
-            var type = Context.getType(typeName);
-            if (type == null) {
-                // Try with common package prefixes
-                for (prefix in ["arm.", "arm.node.", "arm.player.", "arm.level.", "arm.autoload.", ""]) {
-                    try {
-                        type = Context.getType(prefix + typeName);
-                        if (type != null) break;
-                    } catch (e:Dynamic) {}
-                }
-            }
+    function resolveMemberTraitCType(name:String):String {
+        var field = Lambda.find(cls.statics.get().concat(cls.fields.get()), f -> f.name == name);
+        if (field == null) return null;
 
-            if (type != null) {
-                var classType = type.getClass();
-                if (classType != null && extendsIronTrait(classType)) {
-                    // Found a trait - compute c_name
-                    var modulePath = classType.module;
-                    var className = classType.name;
-                    var moduleParts = modulePath.split(".");
-                    var lastModulePart = moduleParts[moduleParts.length - 1];
+        var classType = switch (Context.follow(field.type)) {
+            case TInst(c, _): c.get();
+            default: null;
+        };
+        if (classType == null || !extendsIronTrait(classType)) return null;
 
-                    var c_name:String;
-                    if (lastModulePart.toLowerCase() == className.toLowerCase()) {
-                        c_name = modulePath.replace(".", "_").toLowerCase();
-                    } else {
-                        c_name = (modulePath.replace(".", "_") + "_" + className).toLowerCase();
-                    }
-                    return c_name + "Data*";
-                }
-            }
-        } catch (e:Dynamic) {
-            // Type resolution failed
+        var modulePath = classType.module;
+        var className = classType.name;
+        var moduleParts = modulePath.split(".");
+        var lastModulePart = moduleParts[moduleParts.length - 1];
+
+        var c_name:String;
+        if (lastModulePart.toLowerCase() == className.toLowerCase()) {
+            c_name = modulePath.replace(".", "_").toLowerCase();
+        } else {
+            c_name = (modulePath.replace(".", "_") + "_" + className).toLowerCase();
         }
-        return null;
+        return c_name + "Data*";
     }
 
     /**

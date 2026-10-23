@@ -65,9 +65,7 @@ class N64TraitMacro {
 
         if (!initialized) {
             initialized = true;
-            Context.onAfterTyping(function(_) {
-                writeTraitJson();
-            });
+            N64MacroBase.addWriter(writeTraitJson);
         }
 
         var localClass = Context.getLocalClass();
@@ -100,13 +98,15 @@ class N64TraitMacro {
 
         var fields = Context.getBuildFields();
 
-        // Extract trait IR
-        var extractor = new TraitExtractor(className, modulePath, fields, parentName);
-        var traitIR = extractor.extract();
+        // Extract trait IR after typing, when the TypedIndex is available
+        N64MacroBase.deferExtraction(localClass, function() {
+            var extractor = new TraitExtractor(className, modulePath, fields, parentName);
+            var traitIR = extractor.extract();
 
-        if (traitIR != null) {
-            traitData.set(className, traitIR);
-        }
+            if (traitIR != null) {
+                traitData.set(className, traitIR);
+            }
+        });
 
         return null;
     }
@@ -1472,8 +1472,8 @@ class TraitExtractor implements IExtractorContext {
                 switch (lhs.expr) {
                     case EField(obj, _):
                         switch (obj.expr) {
-                            case EConst(CIdent(className)):
-                                return AutoloadCallConverter.getAutoloadCName(className) != null;
+                            case EConst(CIdent(_)):
+                                return AutoloadCallConverter.getAutoloadCName(obj) != null;
                             default:
                         }
                     default:
@@ -1488,8 +1488,8 @@ class TraitExtractor implements IExtractorContext {
         switch (expr.expr) {
             case EField(obj, field):
                 switch (obj.expr) {
-                    case EConst(CIdent(className)):
-                        var cName = AutoloadCallConverter.getAutoloadCName(className);
+                    case EConst(CIdent(_)):
+                        var cName = AutoloadCallConverter.getAutoloadCName(obj);
                         if (cName != null) {
                             return { c_name: cName, field: field.toLowerCase() };
                         }
@@ -1548,8 +1548,8 @@ class TraitExtractor implements IExtractorContext {
             switch (obj.expr) {
                 case EField(innerObj, memberName):
                     switch (innerObj.expr) {
-                        case EConst(CIdent(className)):
-                            var cName = AutoloadCallConverter.getAutoloadCName(className);
+                        case EConst(CIdent(_)):
+                            var cName = AutoloadCallConverter.getAutoloadCName(innerObj);
                             if (cName != null) {
                                 // Found AutoloadClass.traitMember.object pattern
                                 meta.uses_autoload = true;
@@ -1570,8 +1570,8 @@ class TraitExtractor implements IExtractorContext {
 
         // Handle AutoloadClass.member field access
         switch (obj.expr) {
-            case EConst(CIdent(className)):
-                var cName = AutoloadCallConverter.getAutoloadCName(className);
+            case EConst(CIdent(_)):
+                var cName = AutoloadCallConverter.getAutoloadCName(obj);
                 if (cName != null) {
                     meta.uses_autoload = true;
                     return {

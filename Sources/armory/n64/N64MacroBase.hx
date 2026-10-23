@@ -3,6 +3,7 @@ package armory.n64;
 #if macro
 import haxe.macro.Context;
 import haxe.macro.Expr;
+import haxe.macro.Type;
 import haxe.Json;
 import sys.io.File;
 import sys.FileSystem;
@@ -23,6 +24,43 @@ import armory.n64.IRTypes;
 class N64MacroBase {
     // Global audio configuration (set by AudioCallConverter when Aura.init() is found)
     public static var audioConfig:Dynamic = {};
+
+    // Extraction runs after typing so the extractors can use the TypedIndex.
+    // Jobs keep the build order of trait and autoload classes: generated
+    // callback names depend on it (static counters in the converters).
+    static var extractedClasses:Map<String, Ref<ClassType>> = new Map();
+    static var extractions:Array<Void->Void> = [];
+    static var writers:Array<Void->Void> = [];
+    static var afterTypingRegistered:Bool = false;
+
+    /**
+     * Queue extraction of a class (called from a build macro). Runs after
+     * typing, once the TypedIndex is available.
+     */
+    public static function deferExtraction(cls:Ref<ClassType>, extract:Void->Void):Void {
+        registerAfterTyping();
+        var c = cls.get();
+        extractedClasses.set(c.pack.concat([c.name]).join("."), cls);
+        extractions.push(extract);
+    }
+
+    /**
+     * Register a function writing IR output, run after all extractions.
+     */
+    public static function addWriter(write:Void->Void):Void {
+        registerAfterTyping();
+        writers.push(write);
+    }
+
+    static function registerAfterTyping():Void {
+        if (afterTypingRegistered) return;
+        afterTypingRegistered = true;
+        Context.onAfterTyping(function(_) {
+            for (cls in extractedClasses) TypedIndex.addClass(cls.get());
+            for (extract in extractions) extract();
+            for (write in writers) write();
+        });
+    }
 
     // Position of the expression being converted, set by the extractors' exprToIR()
     public static var currentPos:Null<Position> = null;

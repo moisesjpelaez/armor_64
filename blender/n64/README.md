@@ -18,6 +18,8 @@ This document provides an architectural overview of the Armory3D N64 exporter, w
 
 ## Key Design Principles
 
+0. **Extraction runs after typing**: the build macros only capture each class's untyped fields; extraction runs in `onAfterTyping` (`N64MacroBase.deferExtraction`) so extractors can ask `TypedIndex` what an expression really is (e.g. which class an identifier refers to) instead of guessing from names. Resolve calls from their receiver's typed node: inlined calls (e.g. `Vec4.mult`) have no typed call node of their own.
+
 1. **Clean IR Separation**: Haxe macros perform semantic analysis and emit JSON IR. Python does mechanical 1:1 translation to C without re-analyzing semantics.
 
 2. **Converter Plugin Pattern**: Each Haxe API domain (physics, audio, input, etc.) has a dedicated converter that can be extended independently.
@@ -50,6 +52,7 @@ This document provides an architectural overview of the Armory3D N64 exporter, w
 | `N64TraitMacro.hx` | Extracts trait code to IR at compile-time |
 | `N64AutoloadMacro.hx` | Extracts autoload code to IR |
 | `IRTypes.hx` | IR node type definitions and documentation |
+| `TypedIndex.hx` | Maps source positions to the compiler's typed AST |
 | `converters/*.hx` | Domain-specific call converters |
 | `mapping/TypeMap.hx` | Haxe → C type mapping |
 | `mapping/Constants.hx` | Shared constants (scale factors, limits) |
