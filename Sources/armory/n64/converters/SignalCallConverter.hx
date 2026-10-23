@@ -67,6 +67,16 @@ class SignalCallConverter implements ICallConverter {
     }
 
     function convertSignalCall(method:String, signalExpr:Expr, args:Array<IRNode>, params:Array<Expr>, ctx:IExtractorContext):IRNode {
+        var node = buildSignalCall(method, signalExpr, args, params, ctx);
+        // A signal declared in a parent trait lives in that trait's data struct
+        var owner = TypedIndex.fieldOwner(signalExpr);
+        if (node != null && node.type == "signal_call" && owner != null) {
+            Reflect.setField(node.props, "owner", owner.substr(owner.lastIndexOf(".") + 1));
+        }
+        return node;
+    }
+
+    function buildSignalCall(method:String, signalExpr:Expr, args:Array<IRNode>, params:Array<Expr>, ctx:IExtractorContext):IRNode {
         // Get the signal member name from the expression
         var signalName = ExprUtils.extractIdentName(signalExpr);
 

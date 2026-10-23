@@ -97,6 +97,9 @@ class N64TraitMacro {
             }
         }
 
+        // Traits are identified by class name in the IR
+        if (!N64MacroBase.claimExportedName("trait", className, cls)) return null;
+
         var fields = Context.getBuildFields();
 
         // Extract trait IR after typing, when the TypedIndex is available
@@ -188,8 +191,7 @@ class N64TraitMacro {
             // Generate preambles for signal handlers
             N64MacroBase.generateSignalHandlerPreambles(
                 ir.meta.signal_handlers,
-                ir.meta.signals,
-                '${ir.name}Data'
+                ir.meta.signals
             );
 
             // Build trait JSON object
@@ -627,7 +629,7 @@ class TraitExtractor implements IExtractorContext {
             var returnType = "void";
             if (method.ret != null) {
                 var retHaxeType = N64MacroBase.complexTypeToString(method.ret);
-                returnType = TypeMap.getCType(retHaxeType);
+                if (retHaxeType != "Void") returnType = TypeMap.getCType(retHaxeType);
             }
 
             // Convert method body to IR
@@ -1169,6 +1171,8 @@ class TraitExtractor implements IExtractorContext {
                     else if (isAutoloadTraitAssign(e1, e2)) {
                         var autoloadInfo = getAutoloadFieldInfo(e1);
                         meta.uses_autoload = true;
+                        // The stored pointer is this trait's data, which must exist
+                        meta.stores_self = true;
                         {
                             type: "autoload_trait_assign",
                             props: {

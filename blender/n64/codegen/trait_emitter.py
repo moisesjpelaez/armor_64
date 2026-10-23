@@ -61,7 +61,7 @@ class TraitEmitter:
 
     def __init__(self, trait_name: str, c_name: str, member_names: List[str],
                  is_trait: bool = True, parent_name: str = None, all_traits: Dict = None,
-                 methods: Dict = None, virtual_methods: Set[str] = None,
+                 methods: Dict = None, vtable_owners: Dict[str, str] = None,
                  member_map: Dict = None):
         self.trait_name = trait_name
         self.c_name = c_name
@@ -75,7 +75,9 @@ class TraitEmitter:
 
         # Virtual method support
         self.methods = methods or {}
-        self.virtual_methods = virtual_methods or set()  # Pre-computed set of virtual method names
+        # Virtual methods callable from this trait (own and inherited) -> trait
+        # whose struct holds their vtable pointer
+        self.vtable_owners = vtable_owners or {}
 
         # Member map with ctype info for pointer detection
         self.member_map = member_map or {}
@@ -1423,14 +1425,10 @@ class TraitEmitter:
                     arg_strs.append(emitted)
         args_part = ", ".join(arg_strs) if arg_strs else ""
 
-        # Check if this method is virtual (uses pre-computed set from generator)
-        is_virtual = method_name in self.virtual_methods
-
         # Build the method call
-        if is_virtual:
+        vtable_call = self._vtable_call(method_name)
+        if vtable_call:
             # Call through vtable for polymorphic dispatch
-            # The vtable pointer is in the data struct as _vfn_methodname
-            vtable_call = f"(({self.data_type}*)data)->_vfn_{method_name}"
             if args_part:
                 method_call = f"{vtable_call}(obj, data, {args_part})"
             else:
@@ -1512,8 +1510,8 @@ class TraitEmitter:
                     arg_strs.append(emitted)
         args_part = ", ".join(arg_strs) if arg_strs else ""
 
-        # Build function call
-        method_c_name = f"{owner_c_name}_{method.lower()}"
+        # Build function call: through the vtable if a descendant may override it
+        method_c_name = self._vtable_call(method) or f"{owner_c_name}_{method.lower()}"
         if args_part:
             method_call = f"{method_c_name}(obj, {data_ptr}, {args_part})"
         else:
@@ -1523,6 +1521,15 @@ class TraitEmitter:
         if capture_assignments:
             return "; ".join(capture_assignments) + "; " + method_call
         return method_call
+
+    def _vtable_call(self, method: str) -> str:
+        """`((OwnerData*)data)->_vfn_method` for virtual methods, through the struct
+        of the trait holding the pointer; empty for non-virtual methods."""
+        owner = self.vtable_owners.get(method)
+        if not owner:
+            return ""
+        owner_c_name = self.all_traits.get(owner, {}).get("c_name", owner.lower())
+        return f"(({owner_c_name}Data*)data)->_vfn_{method}"
 
     def _find_method_owner(self, method: str, parent_hint: str) -> tuple:
         """Find which ancestor trait owns a method.
@@ -1853,10 +1860,13 @@ class TraitEmitter:
         signal_name = props.get("signal_name", "")
         callback = props.get("callback", "")
 
-        # Build signal pointer
-        signal_ptr = f"&(({self.data_type}*)data)->{signal_name}"
+        # The signal lives in the struct of the trait declaring it (a parent
+        # for inherited signals), which also names its payload type
+        owner = props.get("owner")
+        owner_c_name = self.all_traits.get(owner, {}).get("c_name", self.c_name) if owner else self.c_name
+        signal_ptr = f"&(({owner_c_name}Data*)data)->{signal_name}"
         handler_name = f"{self.c_name}_{callback}" if callback else ""
-        struct_type = f"{self.c_name}_{signal_name}_payload_t"
+        struct_type = f"{owner_c_name}_{signal_name}_payload_t"
 
         return self._substitute_placeholders(
             c_code, node.get("args", []),

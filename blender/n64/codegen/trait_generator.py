@@ -15,6 +15,77 @@ from arm.n64.codegen import tween_helper
 
 
 # =============================================================================
+# Inheritance rules
+#
+# Shared by the struct layout, instance allocation (scene generator) and call
+# sites, so they can't disagree. `all_traits` maps trait name -> trait IR.
+# =============================================================================
+
+def _ancestors(all_traits: dict, name: str):
+    """Parent, grandparent, ... of a trait (exported traits only)."""
+    current = all_traits.get(name, {}).get("parent")
+    while current and current in all_traits:
+        yield current
+        current = all_traits[current].get("parent")
+
+
+def is_virtual_method(all_traits: dict, name: str, method: str) -> bool:
+    """A method of trait `name` needs vtable dispatch if it overrides an
+    ancestor's method or a descendant overrides it."""
+    if all_traits.get(name, {}).get("methods", {}).get(method, {}).get("isVirtual", False):
+        return True
+    if any(method in all_traits[a].get("methods", {}) for a in _ancestors(all_traits, name)):
+        return True
+    return any(method in ir.get("methods", {}) for other, ir in all_traits.items()
+               if name in _ancestors(all_traits, other))
+
+
+def vtable_owner(all_traits: dict, name: str, method: str) -> str:
+    """Trait whose struct holds the vtable pointer of a method: the topmost
+    ancestor (or `name` itself) declaring it. Overrides set that pointer."""
+    owner = name
+    for ancestor in _ancestors(all_traits, name):
+        if method in all_traits[ancestor].get("methods", {}):
+            owner = ancestor
+    return owner
+
+
+def declared_vtable_methods(all_traits: dict, name: str) -> list:
+    """Virtual methods whose vtable pointer lives in this trait's struct."""
+    return [m for m in all_traits.get(name, {}).get("methods", {})
+            if is_virtual_method(all_traits, name, m) and vtable_owner(all_traits, name, m) == name]
+
+
+def visible_vtable_owners(all_traits: dict, name: str) -> dict:
+    """Virtual methods callable from trait `name` (own and inherited) -> the
+    trait whose struct holds their vtable pointer."""
+    owners = {}
+    for trait in [name, *_ancestors(all_traits, name)]:
+        for method in all_traits.get(trait, {}).get("methods", {}):
+            if method not in owners and is_virtual_method(all_traits, trait, method):
+                owners[method] = vtable_owner(all_traits, trait, method)
+    return owners
+
+
+def chain_events(all_traits: dict, name: str) -> set:
+    """Events of a trait and its ancestors: a trait's handlers call its
+    parent's, so the runtime must call them when any ancestor has one."""
+    events = set(all_traits.get(name, {}).get("events", {}))
+    for ancestor in _ancestors(all_traits, name):
+        events |= set(all_traits[ancestor].get("events", {}))
+    return events
+
+
+def needs_data_struct(all_traits: dict, name: str) -> bool:
+    """Whether a trait has a data struct (and its instances get data)."""
+    ir = all_traits.get(name, {})
+    meta = ir.get("meta", {})
+    return bool(ir.get("members") or meta.get("signals") or meta.get("signal_handlers")
+                or ir.get("parent") or meta.get("stores_self")
+                or declared_vtable_methods(all_traits, name))
+
+
+# =============================================================================
 # JSON Loading Utilities
 # =============================================================================
 
@@ -119,6 +190,7 @@ class TraitCodeGenerator:
         # Pre-compute the set of virtual method names for this trait
         # (methods that are overridden by child classes)
         self.virtual_method_names = self._compute_virtual_methods()
+        vtable_owners = visible_vtable_owners(self.all_traits, self.name)
 
         # Create emitter with inheritance info
         self.emitter = TraitEmitter(
@@ -129,7 +201,7 @@ class TraitCodeGenerator:
             parent_name=self.parent_name,
             all_traits=self.all_traits,
             methods=self.methods,
-            virtual_methods=self.virtual_method_names,
+            vtable_owners=vtable_owners,
             member_map=self.member_map
         )
         self._tween_callbacks = []  # Collected tween callbacks from all events
@@ -201,110 +273,21 @@ class TraitCodeGenerator:
         return ctype
 
     def _find_vtable_owner(self, method_name: str) -> str:
-        """Find the trait that originally declares a virtual method.
-
-        The vtable function pointer is stored in the struct of the trait
-        that first declares the method. Child overrides set that same pointer.
-
-        Returns the trait name that owns the vtable pointer for this method.
-        """
-        # Walk up the inheritance chain to find the topmost definition
-        # (the trait that first declares this method)
-        owner = self.name
-        current_parent = self.parent_name
-
-        while current_parent and current_parent in self.all_traits:
-            parent_ir = self.all_traits[current_parent]
-            parent_methods = parent_ir.get("methods", {})
-
-            if method_name in parent_methods:
-                # Parent has this method - it might be the original definer
-                # or also an override. Keep walking up.
-                owner = current_parent
-
-            current_parent = parent_ir.get("parent")
-
-        return owner
+        """Trait whose struct holds the vtable pointer of a method (see vtable_owner)."""
+        return vtable_owner(self.all_traits, self.name, method_name)
 
     def _is_method_virtual(self, method_name: str) -> bool:
-        """Check if a method should be treated as virtual (needs vtable dispatch).
+        """Whether a method needs vtable dispatch (see is_virtual_method).
 
-        Virtual Method Detection System
-        ================================
-
-        A method needs vtable dispatch when it can be overridden by child classes
-        AND called polymorphically (e.g., through a parent class reference or callback).
-
-        Detection uses a dual approach:
-
-        1. **Haxe Macro Detection (preferred)**
-           The N64TraitMacro.hx sets `isVirtual: true` in the MethodIR for public methods.
-           This is the authoritative source when available.
-
-        2. **Python Fallback Detection**
-           When `isVirtual` isn't in the IR (older IR or clean rebuild needed), we detect
-           virtual methods by scanning the inheritance hierarchy:
-
-           a) **Overrides parent**: If this trait's method has the same name as a parent's
-              method, it's an override and needs virtual dispatch.
-
-           b) **Overridden by child**: If any child trait has a method with the same name,
-              the parent's method might be called polymorphically and needs vtable.
-
-        Vtable Implementation
-        ---------------------
-        - Each data struct has `_vfn_<methodname>` function pointers for virtual methods
-        - Parent classes set vtable pointers to their own implementations
-        - Child classes override these pointers in on_ready (after calling parent's on_ready)
-        - Virtual calls: `((DataType*)data)->_vfn_method(obj, data, args...)`
-        - Direct calls: `trait_methodname(obj, data, args...)`
-
-        Returns:
-            True if the method needs vtable dispatch, False otherwise.
+        Vtable implementation:
+        - The struct of the topmost trait declaring a virtual method holds its
+          `_vfn_<method>` function pointer
+        - Each trait sets the pointer to its own implementation in on_ready, after
+          calling its parent's on_ready, so the most derived override wins
+        - Calls (own and inherited methods): `((OwnerData*)data)->_vfn_method(obj, data, ...)`
+        - super.method() calls the parent's implementation directly
         """
-        method_ir = self.methods.get(method_name, {})
-
-        # Check explicit flag first (from Haxe macro)
-        if method_ir.get("isVirtual", False):
-            return True
-
-        # Check if this method overrides a parent's method
-        # Walk up the inheritance chain to see if any ancestor has this method
-        current_parent = self.parent_name
-        while current_parent and current_parent in self.all_traits:
-            parent_ir = self.all_traits[current_parent]
-            parent_methods = parent_ir.get("methods", {})
-            if method_name in parent_methods:
-                # This method overrides a parent's method - it's virtual
-                return True
-            current_parent = parent_ir.get("parent")
-
-        # Fallback: check if any child class overrides this method
-        # A method is virtual if it can be overridden
-        for trait_name, trait_ir in self.all_traits.items():
-            # Check if this trait is a child of the current trait (directly or indirectly)
-            if self._is_descendant_of(trait_name, self.name):
-                # Check if child has a method with the same name (override)
-                child_methods = trait_ir.get("methods", {})
-                if method_name in child_methods:
-                    return True
-
-        return False
-
-    def _is_descendant_of(self, trait_name: str, ancestor_name: str) -> bool:
-        """Check if trait_name is a descendant of ancestor_name."""
-        if trait_name == ancestor_name:
-            return False
-
-        current = trait_name
-        while current and current in self.all_traits:
-            current_ir = self.all_traits[current]
-            parent = current_ir.get("parent")
-            if parent == ancestor_name:
-                return True
-            current = parent
-
-        return False
+        return is_virtual_method(self.all_traits, self.name, method_name)
 
     def _get_object_access_path(self) -> str:
         """Get the path to access 'object' member from trait data struct.
@@ -344,19 +327,11 @@ class TraitCodeGenerator:
         signals = self.meta.get("signals", [])
         signal_handlers = self.meta.get("signal_handlers", [])
 
-        # Find virtual methods that are FIRST DECLARED in this trait (not overrides)
-        # Overrides use the parent's vtable pointer, so don't add duplicates
-        virtual_methods = []
-        for method_name, method_ir in self.methods.items():
-            if self._is_method_virtual(method_name):
-                # Check if this is the original declaration (not inherited from parent)
-                if self._find_vtable_owner(method_name) == self.name:
-                    virtual_methods.append(method_ir)
+        # Virtual methods FIRST DECLARED in this trait (overrides use the
+        # pointer in the declaring ancestor's struct)
+        virtual_methods = [self.methods[m] for m in declared_vtable_methods(self.all_traits, self.name)]
 
-        # Check if we need a struct at all
-        # Need struct if: has members, has signals, has signal_handlers, has parent, or has virtual methods
-        # Signal handlers need access to 'object' via data->object
-        if not self.members and not signals and not signal_handlers and not self.parent_name and not virtual_methods:
+        if not needs_data_struct(self.all_traits, self.name):
             return ""
 
         lines = [f"typedef struct {{"]
@@ -1014,6 +989,15 @@ class TraitCodeGenerator:
             return scan(nodes)
         return False
 
+    def _parent_event_call(self, event: str, with_dt: bool) -> list:
+        """Call the parent's handler first: callbacks a parent class registers
+        (e.g. in notifyOnUpdate) run for its children too, as in Armory."""
+        if not (self.parent_name and self.parent_name in self.all_traits):
+            return []
+        parent_c_name = self.all_traits[self.parent_name].get("c_name", self.parent_name.lower())
+        args = "obj, dt, data" if with_dt else "obj, data"
+        return [f"    {parent_c_name}_{event}({args});"]
+
     def generate_all_event_implementations(self) -> str:
         """Generate C implementations for all event handlers."""
         impl_lines = [f"// ========== {self.name} =========="]
@@ -1028,11 +1012,7 @@ class TraitCodeGenerator:
             impl_lines.append(f"    {parent_c_name}_on_add(obj, data);")
         else:
             # Base trait - initialize object pointer in data struct
-            # This must happen for all traits that have a data struct (check same conditions as generate_data_struct)
-            signal_handlers = self.meta.get("signal_handlers", [])
-            signals = self.meta.get("signals", [])
-            has_virtual = any(self._is_method_virtual(m) and self._find_vtable_owner(m) == self.name for m in self.methods)
-            if self.members or signals or signal_handlers or has_virtual:
+            if needs_data_struct(self.all_traits, self.name):
                 impl_lines.append(f"    (({self.c_name}Data*)data)->object = obj;")
         body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
         impl_lines.append(body)
@@ -1085,6 +1065,7 @@ class TraitCodeGenerator:
         if dynamic_fixed_updates and len(dynamic_fixed_updates) > 0:
             # Multiple fixed update functions - generate dispatcher that calls each enabled sub-update
             impl_lines.append(f"void {self.c_name}_on_fixed_update(void* obj, float dt, void* data) {{")
+            impl_lines += self._parent_event_call("on_fixed_update", True)
             impl_lines.append(f"    {self.c_name}Data* d = ({self.c_name}Data*)data;")
             for callback_name in dynamic_fixed_updates:
                 flag_name = f"_fixed_update_{callback_name}_enabled"
@@ -1107,6 +1088,7 @@ class TraitCodeGenerator:
             event_nodes = self.events.get("on_fixed_update", [])
             body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
             impl_lines.append(f"void {self.c_name}_on_fixed_update(void* obj, float dt, void* data) {{")
+            impl_lines += self._parent_event_call("on_fixed_update", True)
             # Add early return guard if trait uses removeFixedUpdate()
             if self.meta.get("has_remove_fixed_update", False):
                 impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_fixed_update_enabled) return;")
@@ -1121,6 +1103,7 @@ class TraitCodeGenerator:
         if dynamic_updates and len(dynamic_updates) > 0:
             # Multiple update functions - generate dispatcher that calls each enabled sub-update
             impl_lines.append(f"void {self.c_name}_on_update(void* obj, float dt, void* data) {{")
+            impl_lines += self._parent_event_call("on_update", True)
             impl_lines.append(f"    {self.c_name}Data* d = ({self.c_name}Data*)data;")
             for callback_name in dynamic_updates:
                 flag_name = f"_update_{callback_name}_enabled"
@@ -1143,6 +1126,7 @@ class TraitCodeGenerator:
             event_nodes = self.events.get("on_update", [])
             body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
             impl_lines.append(f"void {self.c_name}_on_update(void* obj, float dt, void* data) {{")
+            impl_lines += self._parent_event_call("on_update", True)
             # Add early return guard if trait uses removeUpdate()
             if self.meta.get("has_remove_update", False):
                 impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_update_enabled) return;")
@@ -1154,6 +1138,7 @@ class TraitCodeGenerator:
         event_nodes = self.events.get("on_late_update", [])
         body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
         impl_lines.append(f"void {self.c_name}_on_late_update(void* obj, float dt, void* data) {{")
+        impl_lines += self._parent_event_call("on_late_update", True)
         # Add early return guard if trait uses removeLateUpdate()
         if self.meta.get("has_remove_late_update", False):
             impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_late_update_enabled) return;")
@@ -1165,6 +1150,7 @@ class TraitCodeGenerator:
         event_nodes = self.events.get("on_remove", [])
         body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
         impl_lines.append(f"void {self.c_name}_on_remove(void* obj, void* data) {{")
+        impl_lines += self._parent_event_call("on_remove", False)
         impl_lines.append(body)
         # Call parent's on_remove LAST (cleanup in reverse order)
         # Pass full data pointer so virtual method calls work correctly
@@ -1230,17 +1216,17 @@ class TraitCodeGenerator:
                 body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
                 handler_name = event_name[7:]  # Strip "signal_" prefix
 
-                # Find preamble from signal_handlers meta
-                # Default includes data cast and obj extraction so handler body can use both.
-                # obj is needed for object.remove() and similar calls.
-                # Uses _get_object_access_path() to handle inheritance (data->_parent.object etc)
+                # Data cast and obj extraction so the handler body can use both
+                # (obj is needed for object.remove() and similar calls).
+                # _get_object_access_path() handles inheritance (data->_parent.object etc).
+                # The macro's preamble only unpacks the signal's payload.
                 obj_access = self._get_object_access_path()
-                default_preamble = f"{self.c_name}Data* data = ({self.c_name}Data*)ctx; (void)payload; ArmObject* obj = (ArmObject*){obj_access}; (void)obj;"
-                preamble = default_preamble
+                payload = "(void)payload;"
                 for sh in signal_handlers:
                     if sh.get("handler_name") == handler_name:
-                        preamble = sh.get("preamble", default_preamble)
+                        payload = sh.get("preamble", payload)
                         break
+                preamble = f"{self.c_name}Data* data = ({self.c_name}Data*)ctx; {payload} ArmObject* obj = (ArmObject*){obj_access}; (void)obj;"
 
                 impl_lines.append(f"void {self.c_name}_{handler_name}(void* ctx, void* payload) {{")
                 impl_lines.append(f"    {preamble}")

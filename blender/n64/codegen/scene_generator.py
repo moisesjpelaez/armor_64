@@ -118,8 +118,8 @@ def generate_trait_block(prefix: str, traits: List[Dict],
     lifecycle_flags = 0
     for trait in traits:
         trait_class = trait["class_name"]
-        trait_ir = n64_utils.get_trait(trait_info, trait_class)
-        events = trait_ir.get("events", {})
+        # Own and inherited events: handlers call their parent's
+        events = n64_utils.trait_chain_events(trait_info, trait_class)
 
         # Check for lifecycle events
         if "on_fixed_update" in events:

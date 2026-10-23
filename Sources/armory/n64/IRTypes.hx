@@ -164,6 +164,7 @@ typedef TraitMeta = {
     has_remove_fixed_update: Bool, // True if trait calls removeFixedUpdate() - adds _fixed_update_enabled guard
     has_remove_late_update: Bool,  // True if trait calls removeLateUpdate()
     has_remove_render2d: Bool,     // True if trait calls removeRender2D() - adds _render2d_enabled guard
+    ?stores_self: Bool,            // True if trait stores `this` elsewhere (e.g. MainInstances.player = this): needs a data struct
     ?dynamic_updates: Array<String>, // Names of dynamically registered update functions (e.g., ["update", "winUpdate"])
     ?dynamic_fixed_updates: Array<String> // Names of dynamically registered fixed update functions
 }

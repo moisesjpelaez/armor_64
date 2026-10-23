@@ -111,6 +111,10 @@ class N64AutoloadMacro {
             return null; // Not an autoload class
         }
 
+        // Autoloads are identified by class name in the IR, and their C names
+        // are the lowercase class name
+        if (!N64MacroBase.claimExportedName("autoload", className.toLowerCase(), cls)) return null;
+
         var fields = Context.getBuildFields();
 
         // Extract autoload IR after typing, when the TypedIndex is available
@@ -208,8 +212,7 @@ class N64AutoloadMacro {
             // Generate preambles for signal handlers
             N64MacroBase.generateSignalHandlerPreambles(
                 ir.meta.signal_handlers,
-                ir.meta.signals,
-                '${ir.name}Data'
+                ir.meta.signals
             );
 
             Reflect.setField(autoloads, name, {

@@ -49,6 +49,27 @@ class N64MacroBase {
         });
     }
 
+    // Exported names already used, by kind ("trait", "autoload") -> name -> full path
+    static var exportedNames:Map<String, Map<String, String>> = new Map();
+
+    /**
+     * Report a trait or autoload whose name is already used by another class
+     * in a different package: on N64 they are identified by name, so the
+     * second one would silently replace the first. Returns false on a clash.
+     */
+    public static function claimExportedName(kind:String, name:String, cls:ClassType):Bool {
+        var names = exportedNames.get(kind);
+        if (names == null) exportedNames.set(kind, names = new Map());
+        var path = cls.pack.concat([cls.name]).join(".");
+        var other = names.get(name);
+        if (other != null && other != path) {
+            Context.reportError('N64: $kind class names must be unique: $path and $other are both named "$name"', cls.pos);
+            return false;
+        }
+        names.set(name, path);
+        return true;
+    }
+
     /**
      * Whether a class (full path) is a trait or autoload being exported.
      */
@@ -385,8 +406,7 @@ class N64MacroBase {
      */
     public static function generateSignalHandlerPreambles(
         signalHandlers:Array<SignalHandlerMeta>,
-        signals:Array<SignalMeta>,
-        dataType:String
+        signals:Array<SignalMeta>
     ):Void {
         for (sh in signalHandlers) {
             // Find the signal this handler connects to
@@ -395,18 +415,16 @@ class N64MacroBase {
                     var argTypes = sig.arg_types;
                     var argCount = argTypes.length;
 
-                    // Cast ctx to data pointer so handler body can use 'data'
-                    var dataCast = '$dataType* data = ($dataType*)ctx;';
-
+                    // Only the payload: the C code generator adds the data
+                    // cast and obj, which depend on the struct layout
                     if (argCount == 0) {
-                        sh.preamble = '$dataCast (void)payload;';
+                        sh.preamble = '(void)payload;';
                     } else if (argCount == 1) {
-                        sh.preamble = '$dataCast ${argTypes[0]} arg0 = (${argTypes[0]})(uintptr_t)payload; (void)arg0;';
+                        sh.preamble = '${argTypes[0]} arg0 = (${argTypes[0]})(uintptr_t)payload; (void)arg0;';
                     } else {
                         // Multiple args - unpack from struct
                         var structType = sig.struct_type;
                         var lines:Array<String> = [];
-                        lines.push(dataCast);
                         lines.push('$structType* p = ($structType*)payload;');
                         for (i in 0...argCount) {
                             lines.push('${argTypes[i]} arg$i = p->arg$i; (void)arg$i;');

@@ -68,6 +68,18 @@ Templates use Python `.format()` placeholders (`{variable}`):
 | `ui/` | canvas.c/h, fonts.c/h |
 | `autoloads/` | Per-autoload C files |
 
+## Trait Inheritance
+
+Traits can extend other traits to any depth. In C, each trait's data struct embeds its parent's struct first (`_parent`), so a pointer to a child's data is also a valid pointer to every ancestor's data:
+
+- Members, signals and vtable pointers are accessed through the struct of the trait declaring them (`((OwnerData*)data)->field`), which costs nothing at runtime.
+- Virtual methods (overriding or overridden) are called through a `_vfn_<method>` pointer stored in the struct of the topmost trait declaring them; each trait sets it in `on_ready` after its parent, so the most derived override wins. `super.method()` calls the parent's implementation directly.
+- Every lifecycle handler calls its parent's first, so callbacks a parent registers (`notifyOnUpdate`, `notifyOnRemove`, ...) run for its children too.
+
+The rules deciding whether a trait has a data struct, which lifecycle events the runtime calls and where vtable pointers live are shared functions at the top of `codegen/trait_generator.py` (`needs_data_struct`, `chain_events`, `vtable_owner`, ...). The struct layout, the call sites and the scene generator all use them; don't duplicate them.
+
+Trait and autoload class names must be unique across packages: they identify classes in the IR, and a clash is reported as a compile error.
+
 ## IR Node Types
 
 The IR (Intermediate Representation) is a JSON format that bridges Haxe semantics to C code. See `IRTypes.hx` for complete documentation.
