@@ -14,6 +14,9 @@ typedef struct {
     bool finished;
 } ArmSoundHandle;
 
+// Haxe `null` handle: no channel, no sound
+#define ARM_SOUND_HANDLE_NULL ((ArmSoundHandle){-1, 0, -1, 1.0f, true})
+
 // Compare handles by sound_slot only (identifies the logical sound).
 // The channel field is a runtime assignment that changes, not part of identity.
 static inline bool arm_sound_handle_equals(ArmSoundHandle a, ArmSoundHandle b) {

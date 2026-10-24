@@ -117,15 +117,10 @@ class AudioCallConverter implements ICallConverter {
         switch (method) {
             case "setVolume":
                 if (args.length >= 1) {
-                    var volArg = args[0];
-                    var volCode = volArg.c_code != null ? volArg.c_code : (volArg.value != null ? Std.string(volArg.value) : "1.0f");
                     return {
                         type: "audio_mix_volume",
-                        c_code: 'arm_audio_set_mix_volume(' + cChannel + ', ' + volCode + ')',
-                        props: {
-                            channel: cChannel,
-                            volume: volCode
-                        }
+                        props: { channel: cChannel },
+                        args: [args[0]]
                     };
                 }
 
@@ -143,8 +138,8 @@ class AudioCallConverter implements ICallConverter {
     }
 
     function convertHandleCall(obj:Expr, method:String, args:Array<IRNode>, ctx:IExtractorContext):IRNode {
-        // Convert the handle expression to an IR node so the emitter can properly prefix it
-        var handleNode = ctx.exprToIR(obj);
+        // The handle as a pointer: the runtime updates its state in place
+        var handleNode = ctx.handlePointer(obj);
 
         switch (method) {
             case "play":

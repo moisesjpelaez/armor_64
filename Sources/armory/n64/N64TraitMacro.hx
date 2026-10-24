@@ -96,6 +96,9 @@ class N64TraitMacro {
                 if (m.setter != null) {
                     memberObj.setter = m.setter;
                 }
+                if (m.traitRef != null) {
+                    memberObj.trait_ref = m.traitRef;
+                }
                 membersArr.push(memberObj);
             }
 
@@ -396,6 +399,7 @@ class TraitExtractor extends N64Extractor {
             if (method == null || method.expr == null) continue;
 
             // Extract parameter info and add to localVarTypes for capture detection
+            beginScope();
             var params:Array<MethodParamIR> = [];
             if (method.args != null) {
                 for (arg in method.args) {
@@ -610,6 +614,7 @@ class TraitExtractor extends N64Extractor {
     // ========================================================================
 
     function extractEvents(baseEventName:String, body:Expr):Void {
+        beginScope();
         var eventNodes:Array<IRNode> = [];
 
         switch (body.expr) {
@@ -724,12 +729,12 @@ class TraitExtractor extends N64Extractor {
             meta.uses_transform = true;
             return { type: "ident", value: "object" };
         }
+        // Locals (and parameters) shadow members
+        if (localVarTypes.exists(name)) {
+            return localIdent(name);
+        }
         if (memberNames.indexOf(name) >= 0) {
             return { type: "member", value: name };
-        }
-        // Check for local variables (including method parameters)
-        if (localVarTypes.exists(name)) {
-            return { type: "ident", value: name };
         }
         // Check if this is a method reference (function pointer)
         // e.g., fadeOut(initTransitionDone) -> fadeOut(arm_gamescene_inittransitiondone)

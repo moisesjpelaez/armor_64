@@ -7,6 +7,7 @@ import haxe.macro.Type;
 import armory.n64.IRTypes;
 import armory.n64.N64MacroBase;
 import armory.n64.N64Extractor;
+import armory.n64.TypedIndex;
 import armory.n64.mapping.TypeMap;
 import armory.n64.converters.VecCallConverter;
 import armory.n64.converters.MathCallConverter;
@@ -110,12 +111,14 @@ class N64AutoloadMacro {
             var membersArr:Array<Dynamic> = [];
             for (memberName in ir.members.keys()) {
                 var m = ir.members.get(memberName);
-                membersArr.push({
+                var memberObj:Dynamic = {
                     name: memberName,
                     type: m.haxeType,
                     ctype: m.ctype,
                     default_value: N64MacroBase.serializeIRNode(m.defaultValue)
-                });
+                };
+                if (m.traitRef != null) memberObj.trait_ref = m.traitRef;
+                membersArr.push(memberObj);
             }
 
             // Convert functions
@@ -245,6 +248,7 @@ class AutoloadExtractor extends N64Extractor {
     }
 
     function extractFunction(name:String, func:Function, isPublic:Bool):AutoloadFunctionIR {
+        beginScope();
         var params:Array<AutoloadParamIR> = [];
         for (arg in func.args) {
             var haxeType = arg.type != null ? N64MacroBase.complexTypeToString(arg.type) : "Dynamic";
@@ -276,9 +280,30 @@ class AutoloadExtractor extends N64Extractor {
     // AST → IR hooks (see N64Extractor)
     // ========================================================================
 
-    // Assignments stay binops: the autoload emitter handles sound handles there
-    override function convertAssign(e1:Expr, e2:Expr):IRNode {
-        return { type: "binop", value: "=", children: [exprToIR(e1), exprToIR(e2)] };
+    // Locals, then this class's members (C globals) and functions
+    override function resolveIdent(name:String, e:Expr):IRNode {
+        if (localVarTypes.exists(name)) return localIdent(name);
+        if (members.exists(name)) return { type: "member", value: name };
+        if (methodMap.exists(name)) return { type: "method_ref", method: name, cName: '${cName}_$name' };
+        return super.resolveIdent(name, e);
+    }
+
+    // inst.x on the singleton instance: this class's member
+    override function convertFieldAccess(e:Expr, obj:Expr, field:String):IRNode {
+        var ref = TypedIndex.fieldRef(e);
+        if (ref != null && !ref.isStatic && ref.owner == cls.pack.concat([cls.name]).join(".") && members.exists(field)) {
+            return { type: "member", value: field };
+        }
+        return super.convertFieldAccess(e, obj, field);
+    }
+
+    // This class's functions: their C globals, with default arguments filled in
+    override function convertFunctionCall(callExpr:Expr, name:String, params:Array<Expr>, args:Array<IRNode>):IRNode {
+        var f = methodMap.get(name);
+        if (f != null && !localVarTypes.exists(name)) {
+            return { type: "call", value: '${cName}_$name', args: withDefaults(f, args) };
+        }
+        return super.convertFunctionCall(callExpr, name, params, args);
     }
 
     override public function isAutoload():Bool {

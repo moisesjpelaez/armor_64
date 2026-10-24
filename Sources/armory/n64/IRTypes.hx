@@ -53,6 +53,9 @@ package armory.n64;
  *   remove_object                    - Object removal
  *
  * AUDIO:
+ *   sound_handle_equals              - handle == / != (null: ARM_SOUND_HANDLE_NULL)
+ *   sound_handle_finished            - handle.finished: !arm_audio_is_playing(ptr)
+ *   address_of, deref                - A handle as a pointer / a pointer local's value
  *   audio_play, audio_mix_*          - Audio playback calls
  *   audio_handle_*                   - Audio handle operations
  *
@@ -97,7 +100,8 @@ typedef MemberIR = {
     haxeType: String,
     ctype: String,
     defaultValue: IRNode,
-    ?setter: String  // Setter method name (e.g., "set_paused") for FProp fields
+    ?setter: String,  // Setter method name (e.g., "set_paused") for FProp fields
+    ?traitRef: String // Typed as a trait (full path): ctype is a pointer to its data
 }
 
 typedef ButtonEventMeta = {

@@ -209,7 +209,8 @@ class TweenCallConverter implements ICallConverter {
                 return extractFunctionBody(func, callbackType, ctx);
             case EConst(CIdent(name)):
                 // Declared function reference: onUpdate
-                var direct = (args != null && index < args.length)
+                // Trait methods have the callback's signature; autoload functions don't
+                var direct = (!ctx.isAutoload() && args != null && index < args.length)
                     ? directMethodRef(args[index], callbackType) : null;
                 if (direct != null) return direct;
                 return extractMethodRef(name, callbackType, ctx, param.pos);

@@ -266,7 +266,7 @@ class N64MacroBase {
         };
     }
 
-    static function isNullLiteral(e:Expr):Bool {
+    public static function isNullLiteral(e:Expr):Bool {
         return switch (e.expr) {
             case EConst(CIdent("null")): true;
             default: false;

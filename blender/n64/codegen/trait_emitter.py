@@ -61,9 +61,6 @@ class TraitEmitter:
         # Member map with ctype info for pointer detection
         self.member_map = member_map or {}
 
-        # Track local variables that are pointers (for sound handle array access)
-        self.local_pointer_vars: Set[str] = set()
-
 
     # =========================================================================
     # Inheritance Chain Utilities
@@ -130,8 +127,10 @@ class TraitEmitter:
                 if node and node.get("type") == "skip" and node.get("warn"):
                     result.append(f"/* N64 unsupported: {node['warn']} */")
                 continue
-            # Add semicolon if line doesn't end with ; or } or {
-            if not line.rstrip().endswith((';', '}', '{')):
+            # Add the semicolon: an assignment's value may end with } (a
+            # compound literal), other statements ending with } or { are blocks
+            ends = line.rstrip()
+            if not ends.endswith(';') and (node.get("type") == "assign" or not ends.endswith(('}', '{'))):
                 line = line + ';'
             result.append(line)
         return result
@@ -411,12 +410,8 @@ class TraitEmitter:
                         c_field = self._camel_to_snake(field)
                         return f"canvas_get_button({obj})->{c_field}"
 
-                # Handle local pointer variables (e.g., sound handle from array_get_ptr)
-                if obj_type == "ident" and obj_value in self.local_pointer_vars:
-                    # Special case: .finished on ArmSoundHandle should check actual channel status
-                    # arm_audio_is_playing() returns true if playing, updates finished flag
-                    if field == "finished":
-                        return f"!arm_audio_is_playing({obj})"
+                # Through a pointer (Haxe marks it)
+                if node.get("props", {}).get("deref"):
                     return f"{obj}->{field}"
 
                 return f"({obj}).{field}"
@@ -524,7 +519,7 @@ class TraitEmitter:
 
         # Only emit if both target and value are non-empty
         if target and value:
-            return f"{target} = {value};"
+            return f"{target} = {value}"
         return ""
 
     def emit_binop(self, node: Dict) -> str:
@@ -616,13 +611,6 @@ class TraitEmitter:
         ctype = props.get("ctype", "float")
         init = children[0] if children else None
 
-        # A sound handle read from an array (channels[key][i]): a pointer, so
-        # the audio state is updated in place
-        if (ctype == "ArmSoundHandle" and init and init.get("type") == "array_get_nested"
-                and init.get("value") == "ArmSoundHandleArray"):
-            self.local_pointer_vars.add(name)
-            return f"{ctype}* {name} = {self.emit_array_get_nested_ptr(init)};"
-
         val = self.emit(init) if init else ""
         # Arrays start empty
         if ctype.endswith("Array") and val in ("", "[]", "NULL", "{0}"):
@@ -639,6 +627,14 @@ class TraitEmitter:
             if val:
                 return f"return {val};"
         return "return;"
+
+    def _emit_body(self, node: Optional[Dict]) -> str:
+        """A loop body: a block, or a single statement (with its semicolon)."""
+        if not node:
+            return ""
+        if node.get("type") == "block":
+            return self.emit(node)
+        return "\n".join(self._emit_statement_lines([node]))
 
     def emit_for_range(self, node: Dict) -> str:
         """For loop with integer range: for (int i = start; i < end; i++) { body }
@@ -657,7 +653,7 @@ class TraitEmitter:
 
         start = self.emit(children[0])
         end = self.emit(children[1])
-        body = self.emit(children[2])
+        body = self._emit_body(children[2])
 
         if not start or not end:
             return ""
@@ -688,7 +684,7 @@ class TraitEmitter:
             return ""
 
         cond = self.emit(children[0])
-        body = self.emit(children[1])
+        body = self._emit_body(children[1])
 
         if not cond:
             return ""
@@ -716,7 +712,7 @@ class TraitEmitter:
             return ""
 
         cond = self.emit(children[0])
-        body = self.emit(children[1])
+        body = self._emit_body(children[1])
 
         if not cond:
             return ""
@@ -1498,76 +1494,55 @@ class TraitEmitter:
         return f"arm_audio_load({sound_path}, {mix_channel}, {loop})"
 
     def emit_audio_mix_volume(self, node: Dict) -> str:
-        """Mix channel volume set - emit args through emitter for proper prefixing."""
-        props = node.get("props", {})
-        channel = props.get("channel", "AUDIO_MIX_MASTER")
-        volume_str = props.get("volume", "1.0f")
-
-        # If volume is an identifier, emit it to get proper prefixing
-        # Check if it looks like an identifier (no operators, quotes, or parens)
-        if volume_str and not any(c in volume_str for c in '"()+-*/=<>'):
-            # It's likely a variable name - emit through ident to get prefixing
-            if volume_str in self.member_names:
-                # For traits: data->volume, for autoloads: c_name_volume
-                volume_str = self.emit({"type": "ident", "value": volume_str})
-
-        return f"arm_audio_set_mix_volume({channel}, {volume_str})"
+        """Mix channel volume set: args[0] is the volume."""
+        channel = node.get("props", {}).get("channel", "AUDIO_MIX_MASTER")
+        args = node.get("args", [])
+        volume = self.emit(args[0]) if args else "1.0f"
+        return f"arm_audio_set_mix_volume({channel}, {volume})"
 
     def emit_audio_mix_volume_get(self, node: Dict) -> str:
         """Mix channel volume get."""
         return node.get("c_code", "")
 
-    def emit_audio_handle_play(self, node: Dict) -> str:
-        """Handle play - starts playback of a loaded handle."""
+    # Sound handles: Haxe gives the handle as a pointer (children[0]) to the
+    # functions updating it, and as a value to comparisons
+
+    def _handle_call(self, node: Dict, func: str, *extra: str) -> str:
         children = node.get("children", [])
-        if children:
-            handle_node = children[0]
-            handle = self.emit(handle_node)
-            # If handle is a local pointer var, don't add & (already a pointer)
-            if handle_node.get("type") == "ident" and handle_node.get("value") in self.local_pointer_vars:
-                return f"arm_audio_start({handle})"
-            return f"arm_audio_start(&{handle})"
-        return node.get("c_code", "")
+        if not children:
+            return node.get("c_code", "")
+        return f"{func}({', '.join([self.emit(children[0]), *extra])})"
+
+    def emit_audio_handle_play(self, node: Dict) -> str:
+        return self._handle_call(node, "arm_audio_start")
 
     def emit_audio_handle_stop(self, node: Dict) -> str:
-        """Handle stop - emit handle with proper prefixing."""
-        children = node.get("children", [])
-        if children:
-            handle_node = children[0]
-            handle = self.emit(handle_node)
-            # If handle is a local pointer var, don't add & (already a pointer)
-            if handle_node.get("type") == "ident" and handle_node.get("value") in self.local_pointer_vars:
-                return f"arm_audio_stop({handle})"
-            return f"arm_audio_stop(&{handle})"
-        return node.get("c_code", "")
+        return self._handle_call(node, "arm_audio_stop")
 
     def emit_audio_handle_pause(self, node: Dict) -> str:
-        """Handle pause - uses stop since libdragon lacks pause."""
-        children = node.get("children", [])
-        if children:
-            handle_node = children[0]
-            handle = self.emit(handle_node)
-            # If handle is a local pointer var, don't add & (already a pointer)
-            if handle_node.get("type") == "ident" and handle_node.get("value") in self.local_pointer_vars:
-                return f"arm_audio_stop({handle})"
-            return f"arm_audio_stop(&{handle})"
-        return node.get("c_code", "")
+        # libdragon has no pause
+        return self._handle_call(node, "arm_audio_stop")
 
     def emit_audio_handle_volume(self, node: Dict) -> str:
-        """Handle volume set - emit handle with proper prefixing."""
-        children = node.get("children", [])
         args = node.get("args", [])
-        if children:
-            handle_node = children[0]
-            handle = self.emit(handle_node)
-            vol = "1.0f"
-            if args:
-                vol = self.emit(args[0])
-            # If handle is a local pointer var, don't add & (already a pointer)
-            if handle_node.get("type") == "ident" and handle_node.get("value") in self.local_pointer_vars:
-                return f"arm_audio_set_volume({handle}, {vol})"
-            return f"arm_audio_set_volume(&{handle}, {vol})"
-        return node.get("c_code", "")
+        return self._handle_call(node, "arm_audio_set_volume", self.emit(args[0]) if args else "1.0f")
+
+    def emit_sound_handle_finished(self, node: Dict) -> str:
+        # The channel's state, not the cached flag
+        return f"!{self._handle_call(node, 'arm_audio_is_playing')}"
+
+    def emit_sound_handle_equals(self, node: Dict) -> str:
+        children = node.get("children", [])
+        if len(children) < 2:
+            return ""
+        equals = f"arm_sound_handle_equals({self.emit(children[0])}, {self.emit(children[1])})"
+        return equals if node.get("value") == "==" else f"!{equals}"
+
+    def emit_address_of(self, node: Dict) -> str:
+        return f"&{self.emit(node.get('children', [None])[0])}"
+
+    def emit_deref(self, node: Dict) -> str:
+        return f"(*{self.emit(node.get('children', [None])[0])})"
 
     # =========================================================================
     # Tween emit methods

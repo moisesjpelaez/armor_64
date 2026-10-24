@@ -40,6 +40,7 @@ class N64Extractor implements IExtractorContext {
     var memberNames:Array<String> = [];               // Members in declaration order
     var memberTypes:Map<String, String> = new Map();  // Every var field's Haxe type (signals and unsupported types too)
     var localVarTypes:Map<String, String> = new Map();
+    var pointerLocals:Map<String, Bool> = new Map();  // Locals holding a pointer (see convertVar)
     var methodMap:Map<String, Function> = new Map();
     var converters:Array<ICallConverter>;
 
@@ -137,9 +138,17 @@ class N64Extractor implements IExtractorContext {
         // Engine-provided on N64 (gamepad, rigid body, ...): not stored
         if (EngineTypes.isProvidedMember(cls, name)) return null;
 
-        var ctype = TypeMap.isSupported(haxeType) ? TypeMap.getCType(haxeType) : traitMemberCType(name);
-        if (ctype == null) return null;
-        return {haxeType: haxeType, ctype: ctype, defaultValue: memberDefault(e)};
+        if (TypeMap.isSupported(haxeType)) {
+            return {haxeType: haxeType, ctype: TypeMap.getCType(haxeType), defaultValue: memberDefault(e)};
+        }
+        var trait = traitMemberClass(name);
+        if (trait == null) return null;
+        return {
+            haxeType: haxeType,
+            ctype: traitCName(trait) + "Data*",
+            defaultValue: memberDefault(e),
+            traitRef: trait.pack.concat([trait.name]).join(".")
+        };
     }
 
     function memberDefault(e:Expr):IRNode {
@@ -152,17 +161,37 @@ class N64Extractor implements IExtractorContext {
     }
 
     /**
-     * C type of a member typed as a trait, from its typed field: a pointer to
-     * that trait's data (`var player:Player` → "arm_player_playerData*").
-     * Null if it isn't a trait.
+     * The trait a member is typed as, from its typed field (its C type is a
+     * pointer to that trait's data: `var player:Player` →
+     * "arm_player_playerData*"). Null if it isn't a trait.
      */
-    function traitMemberCType(name:String):String {
+    function traitMemberClass(name:String):ClassType {
         var field = Lambda.find(cls.statics.get().concat(cls.fields.get()), f -> f.name == name);
         if (field == null) return null;
         return switch (Context.follow(field.type)) {
-            case TInst(c, _) if (isTrait(c.get())): traitCName(c.get()) + "Data*";
+            case TInst(c, _) if (isTrait(c.get())): c.get();
             default: null;
         };
+    }
+
+    /** Start of a function body: locals of other functions are out of scope. */
+    function beginScope():Void {
+        localVarTypes = new Map();
+        pointerLocals = new Map();
+    }
+
+    /** A local variable, marked when it holds a pointer. */
+    function localIdent(name:String):IRNode {
+        return pointerLocals.exists(name) ? { type: "ident", value: name, props: { pointer: true } } : { type: "ident", value: name };
+    }
+
+    /** Arguments of a call to `f`, missing ones taking their default values. */
+    function withDefaults(f:Function, args:Array<IRNode>):Array<IRNode> {
+        var all = args.copy();
+        while (all.length < f.args.length && f.args[all.length].value != null) {
+            all.push(exprToIR(f.args[all.length].value));
+        }
+        return all;
     }
 
     /** A function body (block or single expression) as IR statements. */
@@ -202,8 +231,14 @@ class N64Extractor implements IExtractorContext {
             case EConst(c):
                 N64MacroBase.constToIR(c);
 
+            // handle = null: the runtime's "no sound" handle
+            case EBinop(OpAssign, e1, e2) if (isSoundHandle(e1) && N64MacroBase.isNullLiteral(e2)):
+                { type: "assign", children: [exprToIR(e1), SOUND_HANDLE_NULL] };
             case EBinop(OpAssign, e1, e2):
                 convertAssign(e1, e2);
+            // Sound handles are compared by sound (also with null)
+            case EBinop(op = OpEq | OpNotEq, e1, e2) if (isSoundHandle(e1) || isSoundHandle(e2)):
+                { type: "sound_handle_equals", value: op == OpEq ? "==" : "!=", children: [handleValue(e1), handleValue(e2)] };
             case EBinop(OpAdd, e1, e2) if (getExprType(e1) == "String" || getExprType(e2) == "String"):
                 new StringConcatBuilder(members, localVarTypes, exprToIR, getExprType).build(e1, e2);
             case EBinop(op, e1, e2):
@@ -270,7 +305,37 @@ class N64Extractor implements IExtractorContext {
 
     /** Hook: an identifier that isn't a literal. */
     function resolveIdent(name:String, e:Expr):IRNode {
+        if (localVarTypes.exists(name)) return localIdent(name);
         return { type: "ident", value: name };
+    }
+
+    // ========================================================================
+    // Sound handles (Aura channel handles → ArmSoundHandle)
+    // ========================================================================
+
+    static var SOUND_HANDLE_NULL:IRNode = { type: "c_literal", c_code: "ARM_SOUND_HANDLE_NULL" };
+
+    function isSoundHandle(e:Expr):Bool {
+        return TypeMap.getCType(getExprType(e)) == "ArmSoundHandle";
+    }
+
+    function isPointerLocal(e:Expr):Bool {
+        return switch (e.expr) {
+            case EConst(CIdent(name)): pointerLocals.exists(name);
+            default: false;
+        };
+    }
+
+    // A handle's value (null is the "no sound" handle)
+    function handleValue(e:Expr):IRNode {
+        if (N64MacroBase.isNullLiteral(e)) return SOUND_HANDLE_NULL;
+        if (isPointerLocal(e)) return { type: "deref", children: [exprToIR(e)] };
+        return exprToIR(e);
+    }
+
+    public function handlePointer(e:Expr):IRNode {
+        if (isPointerLocal(e)) return exprToIR(e);
+        return { type: "address_of", children: [exprToIR(e)] };
     }
 
     /** Hook: `this.name` (thisExpr is the `this`) as a member, null if it isn't one. */
@@ -316,12 +381,23 @@ class N64Extractor implements IExtractorContext {
         // Declared type, or the one the compiler inferred
         var haxeType = v.type != null ? N64MacroBase.complexTypeToString(v.type) : getExprType(v.expr);
         var ctype = TypeMap.getCType(haxeType);
+        if (ctype == null) ctype = "float";
         localVarTypes.set(v.name, haxeType);
+        pointerLocals.remove(v.name);
+        var init = v.expr != null ? exprToIR(v.expr) : null;
+
+        // A sound handle read from a handle array (channels[key][i]): a pointer
+        // to it, so the audio state is updated in place
+        if (ctype == "ArmSoundHandle" && init != null && init.type == "array_get_nested" && init.value == "ArmSoundHandleArray") {
+            pointerLocals.set(v.name, true);
+            ctype += "*";
+            init = { type: "array_get_nested_ptr", value: init.value, children: init.children };
+        }
         return {
             type: "var",
             value: v.name,
-            props: { ctype: ctype != null ? ctype : "float", haxeType: haxeType },
-            children: v.expr != null ? [exprToIR(v.expr)] : null
+            props: { ctype: ctype, haxeType: haxeType },
+            children: init != null ? [init] : null
         };
     }
 
@@ -366,6 +442,11 @@ class N64Extractor implements IExtractorContext {
     }
 
     function convertFieldAccess(e:Expr, obj:Expr, field:String):IRNode {
+        // handle.finished: whether the sound still plays (not a cached flag)
+        if (field == "finished" && isSoundHandle(obj)) {
+            return { type: "sound_handle_finished", children: [handlePointer(obj)] };
+        }
+
         // this.member: routed through the class's storage, not the object
         switch (obj.expr) {
             case EConst(CIdent("this")):
@@ -517,7 +598,10 @@ class N64Extractor implements IExtractorContext {
             return N64MacroBase.unsupported('$shortName.$field is not supported on N64 yet');
         }
 
-        return { type: "field_access", object: exprToIR(obj), value: field };
+        var objIR = exprToIR(obj);
+        // Through a pointer local: ->
+        return isPointerLocal(obj) ? { type: "field_access", object: objIR, value: field, props: { deref: true } }
+            : { type: "field_access", object: objIR, value: field };
     }
 
     function convertCall(callExpr:Expr, params:Array<Expr>):IRNode {

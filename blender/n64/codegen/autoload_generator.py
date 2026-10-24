@@ -61,18 +61,7 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict, signal_ctx: Si
     functions = autoload_ir.get("functions", [])
     meta = autoload_ir.get("meta", {})
 
-    # Build function info dict for default parameter handling
-    function_info = {}
-    for f in functions:
-        function_info[f["name"]] = {
-            "params": f.get("params", [])
-        }
-
-    # Create emitter for code generation - use AutoloadIREmitter for proper prefixing
-    member_names = [m["name"] for m in members]
-    member_types = {m["name"]: m.get("ctype", "int32_t") for m in members}
-    function_names = [f["name"] for f in functions]
-    emitter = AutoloadEmitter(name, c_name, member_names, function_names, member_types, function_info)
+    emitter = AutoloadEmitter(name, c_name, [m["name"] for m in members])
     emitter.signals = signal_ctx
 
     # Helper to emit default value
@@ -125,9 +114,6 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict, signal_ctx: Si
             prefix += "__attribute__((unused)) "
         lines = [f"{prefix}{decl} {{"]
 
-        # Clear local pointer vars from previous function
-        emitter.local_pointer_vars = set()
-
         body = func.get("body", [])
         for node in body:
             code = emitter.emit(node)
@@ -171,7 +157,7 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict, signal_ctx: Si
 
         # Use shared helper to collect captures
         found, _ = tween_helper.collect_callback_captures(
-            found, func_params, member_names, c_name
+            found, func_params, {m["name"] for m in members}, c_name
         )
         all_tween_callbacks.extend(found)
 
@@ -218,9 +204,8 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict, signal_ctx: Si
     seen_types = set()
     if members:
         for m in members:
-            ctype = m.get("ctype", "")
-            # Check if it's a trait data pointer type (ends with Data*)
-            if ctype.endswith("Data*"):
+            # Typed as a trait (Haxe says which)
+            if m.get("trait_ref"):
                 # This is a trait type - we need to include traits.h
                 needs_traits_include = True
                 # Don't forward-declare, traits.h has the full definition

@@ -59,6 +59,9 @@ interface IExtractorContext {
     // Infer expression type (for signal arg types)
     function inferExprType(e:Expr):String;
 
+    // A sound handle as a pointer (ArmSoundHandle*): &handle, or a pointer local itself
+    function handlePointer(e:Expr):IRNode;
+
     // Record a reference to an autoload (by C name): its header is included
     function useAutoload(cName:String):Void;
 

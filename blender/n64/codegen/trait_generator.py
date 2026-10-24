@@ -392,7 +392,7 @@ class TraitCodeGenerator:
             ctype = self._get_member_ctype(m)
             # Another trait's data (any trait, this one too): the structs are
             # anonymous typedefs declared in any order
-            if ctype.endswith("Data*"):
+            if m.get("trait_ref"):
                 ctype = "void*"
             name = m.get("name", "unknown")
             lines.append(f"    {ctype} {name};")
