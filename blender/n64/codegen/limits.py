@@ -31,6 +31,9 @@ at runtime, a string argument that isn't a literal) keeps the default, at least.
 """
 
 import math
+import os
+import re
+import subprocess
 from typing import Callable, Dict, List, Optional
 
 # name -> (default, what it limits). Documented in blender/n64/README.md (Engine limits).
@@ -176,7 +179,8 @@ def _physics_bounds(physics: List[tuple]) -> tuple:
 def compute(scenes: Optional[List[Dict]] = None, mesh_triangles: int = 0,
             ui_canvases: Optional[Dict] = None, spawn_templates: Optional[List[Dict]] = None,
             traits: Optional[Dict] = None, autoloads: Optional[Dict] = None,
-            signals: Optional[Dict] = None, facts: Optional[Dict] = None) -> Dict[str, int]:
+            signals: Optional[Dict] = None, facts: Optional[Dict] = None,
+            notes: Optional[Dict[str, str]] = None) -> Dict[str, int]:
     """Every limit's value.
 
     scenes: scene_counts() of each exported scene
@@ -185,24 +189,37 @@ def compute(scenes: Optional[List[Dict]] = None, mesh_triangles: int = 0,
     spawn_templates: scene_counts() of each object the game can spawn, with
         an optional max_alive (spawning isn't supported yet: none so far)
     traits, autoloads, signals: the IR (n64_traits/autoloads/signals.json)
-    facts: n64_limits.json (map keys)
+    facts: n64_limits.json (map keys, string lengths)
+    notes: filled with how each value was decided (see report_lines())
     """
     values = {name: default for name, (default, _) in DEFAULTS.items()}
+    notes = notes if notes is not None else {}
     traits, autoloads, signals = traits or {}, autoloads or {}, signals or {}
+
+    def update(new_values, how):
+        values.update(new_values)
+        for name in new_values:
+            notes.setdefault(name, how)
+
     if scenes:
         effective = [_with_spawns(s, spawn_templates or [], values["SPAWN_MAX_INSTANCES"]) for s in scenes]
-        values.update(_scene_limits(effective))
-        values.update(_code_limits(effective, traits, autoloads, signals))
+        update(_scene_limits(effective, notes), "largest scene")
+        update(_code_limits(effective, traits, autoloads, signals, notes), "code x instances")
     if facts:
-        values.update(_map_limits(facts))
+        update(_map_limits(facts), "literal map keys")
         if facts.get("concat_length") is not None:
-            values["STR_FMT_BUFFER_SIZE"] = facts["concat_length"] + 1  # with the terminator
+            # With the terminator
+            update({"STR_FMT_BUFFER_SIZE": facts["concat_length"] + 1}, "longest concatenation")
     if mesh_triangles:
         triangles = max(mesh_triangles, 4)
-        values["OIMO_BVH_MAX_TRIANGLES"] = triangles
-        values["OIMO_BVH_MAX_DEPTH"] = max(int(math.ceil(math.log2(max(triangles, 2)))) + 2, 4)
+        update({"OIMO_BVH_MAX_TRIANGLES": triangles,
+                "OIMO_BVH_MAX_DEPTH": max(int(math.ceil(math.log2(max(triangles, 2)))) + 2, 4)},
+               "largest mesh collider")
     if ui_canvases:
-        values.update(_ui_limits(ui_canvases, (facts or {}).get("label_text_length", None) if facts else None))
+        label_text = (facts or {}).get("label_text_length", None) if facts else None
+        if label_text is not None:
+            notes.setdefault("UI_LABEL_TEXT_SIZE", "canvas and runtime label text")
+        update(_ui_limits(ui_canvases, label_text), "largest canvas")
     return values
 
 
@@ -224,15 +241,21 @@ def _with_spawns(scene: Dict, templates: List[Dict], max_alive: int) -> Dict:
     return total
 
 
-def _scene_limits(scenes: List[Dict]) -> Dict[str, int]:
+def _scene_limits(scenes: List[Dict], notes: Dict[str, str]) -> Dict[str, int]:
     # The largest scene's count; at least 1 (C has no empty arrays)
     def need(key):
         return max(1, max(s.get(key, 0) for s in scenes))
 
     bodies = need("bodies")
     bounds = [_physics_bounds(s.get("physics", [])) for s in scenes]
-    pairs = min(DEFAULTS["OIMO_MAX_PROXY_PAIRS"][0], max(1, max(b[0] for b in bounds)))
-    contacts = min(DEFAULTS["OIMO_MAX_CONTACTS"][0], max(1, max(b[1] for b in bounds)))
+
+    def budget(name, bound):
+        default = DEFAULTS[name][0]
+        notes[name] = f"bound {bound}" if bound <= default else f"budget (bound {bound})"
+        return min(default, max(1, bound))
+    pairs = budget("OIMO_MAX_PROXY_PAIRS", max(b[0] for b in bounds))
+    contacts = budget("OIMO_MAX_CONTACTS", max(b[1] for b in bounds))
+    notes["OIMO_MAX_ISLAND_SOLVERS"] = "at most the contacts"
     return {
         "OIMO_MAX_PROXY_PAIRS": pairs,
         "OIMO_MAX_CONTACTS": contacts,
@@ -260,7 +283,8 @@ def _chain(traits: Dict, key: str) -> List[str]:
     return chain
 
 
-def _code_limits(scenes: List[Dict], traits: Dict, autoloads: Dict, signals: Dict) -> Dict[str, int]:
+def _code_limits(scenes: List[Dict], traits: Dict, autoloads: Dict, signals: Dict,
+                 notes: Dict[str, str]) -> Dict[str, int]:
     values = {}
 
     # Tweens: members allocate one each (traits in on_ready, autoloads at
@@ -272,9 +296,11 @@ def _code_limits(scenes: List[Dict], traits: Dict, autoloads: Dict, signals: Dic
     per_scene = [sum(n * sum(tween_members(traits[k]) for k in _chain(traits, key))
                      for key, n in s.get("instances", {}).items()) for s in scenes]
     tweens = max(1, persistent + max(per_scene, default=0))
+    notes["MAX_TWEENS"] = f"member tweens x instances ({persistent} in autoloads)"
     # new Tween() elsewhere can't be counted: the default at least
     if any(ir.get("meta", {}).get("allocates_tweens") for ir in list(traits.values()) + list(autoloads.values())):
         tweens = max(tweens, DEFAULTS["MAX_TWEENS"][0])
+        notes["MAX_TWEENS"] = "default (new Tween() in a function)"
     values["MAX_TWEENS"] = tweens
 
     # Signal subscribers: a connect() site subscribes once per instance of its
@@ -291,6 +317,7 @@ def _code_limits(scenes: List[Dict], traits: Dict, autoloads: Dict, signals: Dic
                     total += sum(n for key, n in scene.get("instances", {}).items() if site in _chain(traits, key))
             return total
         values["ARM_SIGNAL_MAX_SUBS"] = max(1, max(subscribers(sig, scene) for sig in signals.values() for scene in scenes))
+        notes["ARM_SIGNAL_MAX_SUBS"] = "connect() sites x instances"
     return values
 
 
@@ -344,6 +371,80 @@ def _ui_limits(canvases: Dict, label_text_set: Optional[int]) -> Dict[str, int]:
         "UI_MAX_GROUPS": largest("groups"),
         "UI_MAX_GROUP_CHILDREN": group_children,
     }
+
+
+def report_lines(values: Dict[str, int], notes: Dict[str, str]) -> List[str]:
+    """Each limit with its default and how its value was decided."""
+    lines = [f"{'Limit':32} {'Value':>6} {'Default':>8}  How"]
+    for name, (default, _) in DEFAULTS.items():
+        if name in PYTHON_ONLY:
+            continue
+        lines.append(f"{name:32} {values[name]:>6} {default:>8}  {notes.get(name, 'default')}")
+    return lines
+
+
+# Static symbols holding the pools, and the limits sizing them
+POOL_SYMBOLS = {
+    "g_world": "physics world: OIMO_MAX_PROXIES, OIMO_MAX_PROXY_PAIRS, OIMO_MAX_CONTACTS, OIMO_MAX_ISLAND_*",
+    "g_bodies": "MAX_PHYSICS_BODIES", "g_shapes": "MAX_PHYSICS_BODIES",
+    "g_geometries": "MAX_PHYSICS_BODIES", "g_free_list": "MAX_PHYSICS_BODIES",
+    "g_mesh_bodies": "MAX_MESH_COLLIDERS", "g_mesh_shapes": "MAX_MESH_COLLIDERS",
+    "g_mesh_geometries": "MAX_MESH_COLLIDERS", "g_mesh_used": "MAX_MESH_COLLIDERS",
+    "g_body_subs": "MAX_CONTACT_BODIES x MAX_CONTACT_SUBSCRIBERS",
+    "g_events": "MAX_BUTTON_SUBSCRIBERS",
+    "g_pending_removals": "MAX_PENDING_REMOVALS",
+    "tween_pool": "MAX_TWEENS",
+    "_str_fmt_buffers": "STR_FMT_BUFFER_COUNT x STR_FMT_BUFFER_SIZE (one per file using it)",
+    "g_label_pool": "UI_MAX_LABELS x UI_LABEL_TEXT_SIZE", "g_label_render_list": "UI_MAX_LABELS",
+    "g_image_pool": "UI_MAX_IMAGES", "g_image_render_list": "UI_MAX_IMAGES",
+    "g_buttons": "UI_MAX_BUTTONS x UI_BUTTON_TEXT_SIZE", "g_panel_pool": "UI_MAX_PANELS",
+    "g_group_pool": "UI_MAX_GROUPS x UI_MAX_GROUP_CHILDREN",
+}
+RDRAM = 4 * 1024 * 1024  # 8 MB with the Expansion Pak
+
+
+def _tool(tools_dir: str, name: str) -> Optional[str]:
+    for candidate in (os.path.join(tools_dir, "bin", name), os.path.join(tools_dir, name)):
+        for path in (candidate, candidate + ".exe"):
+            if os.path.isfile(path):
+                return path
+    return None
+
+
+def memory_lines(elf: str, toolchain: str, others: int = 10) -> List[str]:
+    """Static RAM of the built game (the whole ELF is loaded into RDRAM):
+    sections, the pools sized by the limits, the largest other symbols."""
+    size_tool, nm_tool = _tool(toolchain, "mips64-elf-size"), _tool(toolchain, "mips64-elf-nm")
+    if not (size_tool and nm_tool and os.path.isfile(elf)):
+        return [f"(no memory report: toolchain or {os.path.basename(elf)} not found)"]
+    sizes = subprocess.run([size_tool, "-B", elf], capture_output=True, text=True).stdout.splitlines()
+    text, data, bss = (int(v) for v in sizes[1].split()[:3])
+    total = text + data + bss
+
+    def kb(n):
+        return f"{n / 1024:.1f} KB"
+    lines = [f"Static RAM: {kb(total)} of 4 MB ({100 * total / RDRAM:.0f}%): "
+             f"code {kb(text)}, data {kb(data)}, bss {kb(bss)}", ""]
+
+    symbols = []
+    out = subprocess.run([nm_tool, "-S", "--size-sort", "-r", elf], capture_output=True, text=True).stdout
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 4 and parts[2] in "bBdD":
+            symbols.append((re.sub(r"\.\d+$", "", parts[3]), int(parts[1], 16)))
+    pools: Dict[str, int] = {}
+    for name, size in symbols:
+        if name in POOL_SYMBOLS:
+            pools[name] = pools.get(name, 0) + size
+    lines.append(f"{'Pool':22} {'Size':>10}  Sized by")
+    for name, size in sorted(pools.items(), key=lambda item: -item[1]):
+        lines.append(f"{name:22} {kb(size):>10}  {POOL_SYMBOLS[name]}")
+    lines += ["", f"{'Other large symbols':22} {'Size':>10}"]
+    rest = [(n, sz) for n, sz in symbols if n not in POOL_SYMBOLS][:others]
+    for name, size in rest:
+        note = "  (a scene's objects: every scene's array is allocated)" if name == "objects" else ""
+        lines.append(f"{name:22} {kb(size):>10}{note}")
+    return lines
 
 
 def header_data(values: Dict[str, int]) -> Dict[str, str]:

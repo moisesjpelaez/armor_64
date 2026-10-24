@@ -178,7 +178,24 @@ def run_make():
         log.error('MSYS2 Bash executable path is not set in Armory preferences.')
         return False
     log.info('Info: N64 make process completed successfully.')
+    _write_memory_report()
     return True
+
+
+def _write_memory_report():
+    """Complete build/n64/limits.txt with the RAM the built game uses, and print it."""
+    from arm.n64.codegen import limits
+    n64_dir = os.path.join(arm.utils.get_fp(), arm.utils.build_dir(), 'n64')
+    report_path = os.path.join(n64_dir, 'limits.txt')
+    elf = os.path.join(n64_dir, 'build', f'{arm.utils.safestr(bpy.data.worlds["Arm"].arm_project_name)}.elf')
+    try:
+        memory = limits.memory_lines(elf, arm.utils.get_n64_toolchain_path())
+        with open(report_path, 'a', encoding='utf-8') as f:
+            f.write('\n' + '\n'.join(memory) + '\n')
+        with open(report_path, 'r', encoding='utf-8') as f:
+            print(f.read())
+    except Exception as e:  # The report never fails the build
+        log.warn(f'N64 limits report: {e}')
 
 
 def run_emulator():

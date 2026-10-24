@@ -179,6 +179,8 @@ A full pool or container reports it once with `debugf` (`ARM_LIMIT_REACHED` in
 
 Values that can't be counted keep the default as a floor: a `new Tween()` inside a function, a map key built at runtime, a string argument that isn't a literal. Concatenated strings and label/button text report truncation with `ARM_LIMIT_REACHED` too.
 
+Each export writes `build/n64/limits.txt`: every limit with its default and how its value was decided. After a successful build, the RAM is appended from the built ELF (code, data, bss; the pools with the limits sizing them; the largest other symbols) and the whole report is printed to the console.
+
 | Limit | Default | What it limits | Where it's defined |
 |---|---|---|---|
 | `MAX_TWEENS` | 16 | Tweens allocated at once (tween pool) | `limits.h` |

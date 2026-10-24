@@ -43,6 +43,12 @@ def write_limits(exporter):
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(tmpl_content.format(**limits.header_data(exporter.limits)))
 
+    # The report: completed with the RAM once the game is built (build_runner)
+    report_path = os.path.join(arm.utils.build_dir(), 'n64', 'limits.txt')
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(['N64 engine limits (blender/n64/codegen/limits.py)', '']
+                          + limits.report_lines(exporter.limits, exporter.limit_notes)) + '\n')
+
 
 def write_traits(exporter):
     """Generate traits.h and traits.c files.

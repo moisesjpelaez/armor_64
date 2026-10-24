@@ -172,6 +172,7 @@ class N64Exporter:
 
             def trait_key(class_name):
                 return n64_utils.trait_key(self.trait_info, class_name)
+            self.limit_notes = {}
             self.limits = limits.compute(
                 scenes=[limits.scene_counts(scene, trait_key, traits) for scene in self.scene_data.values()],
                 mesh_triangles=self.max_mesh_triangles,
@@ -180,6 +181,7 @@ class N64Exporter:
                 autoloads=load_autoloads_json().get("autoloads", {}),
                 signals=load_signals_json().get("signals", {}),
                 facts=_load_ir_json("n64_limits.json", "map_keys"),
+                notes=self.limit_notes,
             )
 
             # Phase 5: Generate trait code (may set has_ui/has_physics from traits)
