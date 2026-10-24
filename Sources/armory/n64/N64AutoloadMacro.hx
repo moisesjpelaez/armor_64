@@ -239,7 +239,7 @@ class AutoloadExtractor extends N64Extractor {
             members: members,
             functions: functions,
             hasInit: hasInit,
-            meta: { order: order, uses_audio: meta.uses_audio }
+            meta: { order: order, uses_audio: meta.uses_audio, allocates_tweens: meta.allocates_tweens }
         };
     }
 

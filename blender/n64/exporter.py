@@ -166,12 +166,20 @@ class N64Exporter:
 
             # Engine limits for this project (codegen/limits.py)
             from arm.n64.codegen import limits
-            def trait_meta(class_name):
-                return n64_utils.get_trait(self.trait_info, class_name).get("meta", {})
+            from arm.n64.codegen.trait_generator import load_signals_json, _load_ir_json
+            from arm.n64.codegen.autoload_generator import load_autoloads_json
+            traits = self.trait_info.get("traits", {})
+
+            def trait_key(class_name):
+                return n64_utils.trait_key(self.trait_info, class_name)
             self.limits = limits.compute(
-                scenes=[limits.scene_counts(scene, trait_meta) for scene in self.scene_data.values()],
+                scenes=[limits.scene_counts(scene, trait_key, traits) for scene in self.scene_data.values()],
                 mesh_triangles=self.max_mesh_triangles,
                 ui_canvases=self.ui_canvas_data,
+                traits=traits,
+                autoloads=load_autoloads_json().get("autoloads", {}),
+                signals=load_signals_json().get("signals", {}),
+                facts=_load_ir_json("n64_limits.json", "map_keys"),
             )
 
             # Phase 5: Generate trait code (may set has_ui/has_physics from traits)

@@ -28,6 +28,7 @@ class MapCallConverter implements ICallConverter {
             return null;
         }
 
+        if (method != "clear" && args.length > 0) N64MacroBase.recordMapKey(TypeMap.getCType(objType), args[0], method == "set");
         return switch (method) {
             case "set", "get", "exists", "remove", "clear":
                 {

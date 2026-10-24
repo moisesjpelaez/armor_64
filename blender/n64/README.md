@@ -173,7 +173,10 @@ A full pool or container reports it once with `debugf` (`ARM_LIMIT_REACHED` in
 `compute()` replaces defaults with values worked out from the project:
 
 - scene counts (bodies, colliders, contact and button handlers, objects, animation clips): exact, for the largest scene, plus the copies spawnable templates may add (`SPAWN_MAX_INSTANCES` each)
+- code facts the macros record, times the instances in the scene: tweens (member tweens of each trait instance, plus autoload tweens, which survive scene changes), signal subscribers (one per `connect()` site and instance of its class or subclasses; one for an autoload), map keys (literal ones: length and distinct keys)
 - UI pools: exact, for the largest canvas (text sizes keep room for runtime text)
+
+Values that can't be counted keep the default as a floor: a `new Tween()` inside a function, a map key built at runtime.
 
 | Limit | Default | What it limits | Where it's defined |
 |---|---|---|---|

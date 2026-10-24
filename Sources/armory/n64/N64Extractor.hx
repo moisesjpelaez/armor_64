@@ -43,6 +43,7 @@ class N64Extractor implements IExtractorContext {
     var pointerLocals:Map<String, Bool> = new Map();  // Locals holding a pointer (see convertVar)
     var methodMap:Map<String, Function> = new Map();
     var converters:Array<ICallConverter>;
+    var inMemberDefault:Bool = false;  // Converting a member's default value
 
     // Static APIs without an N64 equivalent, checked before the converters
     // (the Tween converter would otherwise take iron.system.Tween's static calls)
@@ -156,7 +157,11 @@ class N64Extractor implements IExtractorContext {
         return switch (e.expr) {
             // Containers are zero-initialized in C
             case ENew({name: "Map" | "Array"}, _): { type: "skip" };
-            default: exprToIR(e);
+            default:
+                inMemberDefault = true;
+                var ir = exprToIR(e);
+                inMemberDefault = false;
+                ir;
         };
     }
 
@@ -417,7 +422,9 @@ class N64Extractor implements IExtractorContext {
                 return { type: "array_get_nested", value: ctype, children: [exprToIR(e1), exprToIR(e2)] };
             default:
         }
-        return { type: container, value: ctype, object: exprToIR(e1), children: [exprToIR(e2)] };
+        var key = exprToIR(e2);
+        if (container != "array_get") N64MacroBase.recordMapKey(ctype, key, false);
+        return { type: container, value: ctype, object: exprToIR(e1), children: [key] };
     }
 
     function convertIf(econd:Expr, eif:Expr, eelse:Expr):IRNode {
@@ -489,6 +496,8 @@ class N64Extractor implements IExtractorContext {
         // Tweens come from the runtime's pool
         if (TypedIndex.newClass(e) == "armory.system.Tween") {
             meta.uses_tween = true;
+            // Members' tweens are counted from the instances; others can't be
+            if (!inMemberDefault) meta.allocates_tweens = true;
             return { type: "tween_alloc" };
         }
 
@@ -809,6 +818,10 @@ class N64Extractor implements IExtractorContext {
 
     public function isAutoload():Bool {
         return false;
+    }
+
+    public function classPath():String {
+        return cls.pack.concat([cls.name]).join(".");
     }
 
     public function useAutoload(autoload:String):Void {

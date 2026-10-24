@@ -62,6 +62,9 @@ interface IExtractorContext {
     // A sound handle as a pointer (ArmSoundHandle*): &handle, or a pointer local itself
     function handlePointer(e:Expr):IRNode;
 
+    // Full path of the class being extracted
+    function classPath():String;
+
     // Record a reference to an autoload (by C name): its header is included
     function useAutoload(cName:String):Void;
 

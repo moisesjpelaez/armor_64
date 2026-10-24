@@ -103,6 +103,7 @@ class N64MacroBase {
             for (write in writers) write();
             writeSignalsJson();
             writeJsonFile("n64_audio.json", {ir_version: 1, channel_size: audioChannelSize, mix_channels: mixChannels});
+            writeLimitFactsJson();
         });
     }
 
@@ -117,10 +118,51 @@ class N64MacroBase {
         return 'AUDIO_MIX_$id';
     }
 
+    // ========================================================================
+    // Facts for the engine limits (n64_limits.json, read by codegen/limits.py)
+    // ========================================================================
+
+    // Longest literal Map key; null once a key isn't a literal
+    static var mapKeyLength:Null<Int> = 0;
+    // Literal keys set into maps, by map C type; a type is removed once a key
+    // set into one of its maps isn't a literal
+    static var mapKeys:Map<String, Map<String, Bool>> = new Map();
+    static var dynamicMapTypes:Map<String, Bool> = new Map();
+
+    /** A key used with a map (any operation); set: whether it's stored. */
+    public static function recordMapKey(mapType:String, key:IRNode, set:Bool):Void {
+        var literal = key != null && key.type == "string" ? Std.string(key.value) : null;
+        if (literal == null) {
+            mapKeyLength = null;
+            if (set) dynamicMapTypes.set(mapType, true);
+            return;
+        }
+        if (mapKeyLength != null && literal.length > mapKeyLength) mapKeyLength = literal.length;
+        if (set) {
+            if (!mapKeys.exists(mapType)) mapKeys.set(mapType, new Map());
+            mapKeys.get(mapType).set(literal, true);
+        }
+    }
+
+    static function writeLimitFactsJson():Void {
+        // Distinct keys per map type, null when not countable
+        var keys:Dynamic = {};
+        var types = [for (t in mapKeys.keys()) t].concat([for (t in dynamicMapTypes.keys()) t]);
+        for (t in types) {
+            Reflect.setField(keys, t, dynamicMapTypes.exists(t) ? null : Lambda.count(mapKeys.get(t)));
+        }
+        writeJsonFile("n64_limits.json", {ir_version: 1, map_key_length: mapKeyLength, map_keys: keys});
+    }
+
     // Signals used by the game, by "<declaring class>.<name>". Argument types
     // are collected from every trait and autoload using a signal (typed
     // handlers first, then emits), then written to n64_signals.json
     public static var signals:Map<String, SignalDef> = new Map();
+
+    /** A connect() call in class `site` (a trait or autoload, full path). */
+    public static function signalConnectSite(key:String, site:String):Void {
+        signals.get(key).connectSites.push(site);
+    }
 
     public static function useSignal(owner:String, name:String, isStatic:Bool):String {
         var key = '$owner.$name';
@@ -132,7 +174,8 @@ class N64MacroBase {
                 isStatic: isStatic,
                 cSymbol: isStatic ? 'g_${shortName.toLowerCase()}_$name' : null,
                 handlerTypes: [],
-                emitTypes: []
+                emitTypes: [],
+                connectSites: []
             });
         }
         return key;
@@ -161,7 +204,7 @@ class N64MacroBase {
                 if (t == null && i < def.emitTypes.length) t = def.emitTypes[i];
                 t != null ? t : "void*";
             }];
-            var entry:Dynamic = {owner: def.owner, name: def.name, is_static: def.isStatic, arg_types: argTypes};
+            var entry:Dynamic = {owner: def.owner, name: def.name, is_static: def.isStatic, arg_types: argTypes, connect_sites: def.connectSites};
             if (def.cSymbol != null) entry.c_symbol = def.cSymbol;
             Reflect.setField(out, key, entry);
         }

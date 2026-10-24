@@ -54,6 +54,13 @@ ArmTween* tween_alloc(void) {
     return NULL;
 }
 
+// A tween owned by an autoload: scene changes don't clear it
+ArmTween* tween_alloc_persistent(void) {
+    ArmTween* t = tween_alloc();
+    if (t) t->persistent = true;
+    return t;
+}
+
 // Free a tween back to the pool
 void tween_free(ArmTween* tween) {
     if (!tween) return;
@@ -253,6 +260,8 @@ void tween_update_all(float dt) {
 // from on_done callbacks that reference freed scene objects.
 void tween_clear_all(void) {
     for (int i = 0; i < MAX_TWEENS; i++) {
+        // Autoload tweens live on (their callbacks only use autoload globals)
+        if (tween_pool[i].persistent) continue;
         tween_pool[i].active = false;
         tween_pool[i].paused = false;
         tween_pool[i].pending_free = false;

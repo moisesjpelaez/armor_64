@@ -133,7 +133,8 @@ typedef SignalDef = {
     isStatic: Bool,          // Static (one global ArmSignal) or per-instance (in the owner's data)
     ?cSymbol: String,        // Global C symbol of a static signal, e.g., "g_gameevents_levelWon"
     handlerTypes: Array<Null<String>>, // Argument C types from typed handlers (preferred)
-    emitTypes: Array<Null<String>>     // Argument C types from emit() calls
+    emitTypes: Array<Null<String>>,    // Argument C types from emit() calls
+    connectSites: Array<String>        // Class of each connect() call (one subscriber per instance at most)
 }
 
 /**
@@ -173,6 +174,7 @@ typedef TraitMeta = {
     signals: Array<SignalMeta>, // per-instance signal declarations
     ?connects_signals: Bool,   // Connects handlers with its data as context: needs a data struct
     ?uses_audio: Bool,         // Calls the audio API
+    ?allocates_tweens: Bool,   // new Tween() outside member defaults: not countable (see limits.py)
     ?autoloads_used: Array<String>, // C names of the autoloads it refers to (their headers are included)
     has_remove_update: Bool,       // True if trait calls removeUpdate() - adds _update_enabled guard
     has_remove_fixed_update: Bool, // True if trait calls removeFixedUpdate() - adds _fixed_update_enabled guard
@@ -227,7 +229,8 @@ typedef AutoloadParamIR = {
 
 typedef AutoloadMeta = {
     order: Int,              // Initialization order (lower = earlier)
-    ?uses_audio: Bool        // Calls the audio API
+    ?uses_audio: Bool,       // Calls the audio API
+    ?allocates_tweens: Bool  // new Tween() outside member defaults
 }
 
 typedef AutoloadIR = {

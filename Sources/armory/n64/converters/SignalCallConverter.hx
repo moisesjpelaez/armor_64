@@ -65,6 +65,7 @@ class SignalCallConverter implements ICallConverter {
         }
         // Handlers of a trait are connected with its data as context
         if (!ctx.isAutoload() && handler.kind != "static") ctx.getMeta().connects_signals = true;
+        if (method == "connect") N64MacroBase.signalConnectSite(key, ctx.classPath());
 
         var node:IRNode = {
             type: 'signal_$method',

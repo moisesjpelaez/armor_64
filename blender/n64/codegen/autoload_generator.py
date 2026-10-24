@@ -256,7 +256,9 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict, signal_ctx: Si
         mtype = m.get("ctype", "")
         mname = m.get("name", "")
         if mtype == "ArmTween*":
-            init_body_lines.append(f"    {c_name}_{mname} = tween_alloc();")
+            # Kept across scene changes, like the autoload. A static
+            # initializer: allocated once, also when the game calls init() itself
+            init_body_lines.append(f"    if (!{c_name}_{mname}) {c_name}_{mname} = tween_alloc_persistent();")
 
     init_func = next((f for f in functions if f.get("name") == "init"), None)
     if init_func:

@@ -68,10 +68,12 @@ typedef struct ArmTween {
     bool active;
     bool paused;
     bool pending_free;  // Deferred cleanup flag
+    bool persistent;    // Autoload tween: kept across scene changes (tween_clear_all)
 } ArmTween;
 
 // Pool management
 ArmTween* tween_alloc(void);
+ArmTween* tween_alloc_persistent(void);
 void tween_free(ArmTween* tween);
 
 // Configuration (call before start)
