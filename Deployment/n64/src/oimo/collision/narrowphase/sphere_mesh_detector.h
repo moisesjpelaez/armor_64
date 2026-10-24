@@ -46,29 +46,17 @@ static inline void oimo_sphere_mesh_detector_detect(
     OimoMat3 mesh_rot_inv = oimo_mat3_transpose(&tf_mesh->rotation);
     OimoVec3 sphere_local = oimo_mat3_mul_vec3(&mesh_rot_inv, sphere_to_mesh);
 
-    // Build query AABB around sphere in mesh local space
-    OimoAabb query_aabb;
-    query_aabb.min.x = sphere_local.x - radius;
-    query_aabb.min.y = sphere_local.y - radius;
-    query_aabb.min.z = sphere_local.z - radius;
-    query_aabb.max.x = sphere_local.x + radius;
-    query_aabb.max.y = sphere_local.y + radius;
-    query_aabb.max.z = sphere_local.z + radius;
-
-    // Query BVH for overlapping triangles
-    OimoBvhQueryResult bvh_result;
-    oimo_static_mesh_query_triangles(mesh, &query_aabb, &bvh_result);
-
-    if (bvh_result.count == 0) return;
+    // Triangles near the sphere, in mesh local space
+    OimoStaticMeshQuery query;
+    oimo_static_mesh_query_sphere(&query, mesh, &sphere_local, radius);
 
     // Initialize contact storage
     OimoMeshContactStorage storage;
     oimo_mesh_contact_storage_init(&storage);
 
-    for (int i = 0; i < bvh_result.count; i++) {
-        int tri_idx = bvh_result.triangles[i];
-        const OimoTriangle* tri = oimo_static_mesh_get_triangle(mesh, tri_idx);
-        if (!tri) continue;
+    const OimoTriangle* tri;
+    while ((tri = oimo_static_mesh_query_next(&query)) != NULL) {
+        int tri_idx = query.index;
 
         // EARLY OUT: Quick plane distance check
         float plane_dist = oimo_point_plane_distance(&sphere_local, &tri->v0, &tri->normal);
@@ -119,7 +107,7 @@ static inline void oimo_sphere_mesh_detector_detect(
         OimoVec3 sphere_contact = oimo_vec3_add(sphere_world, sphere_contact_offset);
 
         oimo_detector_add_point(&detector->base, result, &sphere_contact, &mesh_contact,
-            c->depth, c->tri_idx);
+            c->depth, c->id);
     }
 }
 

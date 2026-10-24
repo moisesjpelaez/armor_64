@@ -26,81 +26,99 @@ static inline void oimo_capsule_mesh_detector_init(OimoCapsuleMeshDetector* dete
         swapped);
 }
 
-// Helper: Test capsule segment against a triangle edge, update contact if closer
+// Contact ids: a triangle's features each get their own, so the points of one
+// triangle keep their warm start between frames
+#define OIMO_CAPSULE_MESH_ID(tri_idx, feature) ((tri_idx) * 16 + (feature))
+enum {
+    OIMO_CAPSULE_MESH_EDGE = 0,      // + edge (0..2)
+    OIMO_CAPSULE_MESH_ENDPOINT = 3,  // + endpoint (0..1)
+    OIMO_CAPSULE_MESH_VERTEX = 5,    // + vertex (0..2)
+    OIMO_CAPSULE_MESH_AXIS = 8,
+};
+
+// Add a contact between a capsule axis point and a mesh point within the radius
+static inline void oimo_capsule_mesh_add(
+    const OimoVec3* axis_point, const OimoVec3* mesh_point,
+    float radius, float radius_sq, int id,
+    OimoMeshContactStorage* storage
+) {
+    OimoVec3 diff = oimo_vec3_sub(*axis_point, *mesh_point);
+    float dist_sq = oimo_vec3_dot(diff, diff);
+
+    if (dist_sq < radius_sq && dist_sq > 1e-8f) {
+        float inv_dist = oimo_fast_inv_sqrt(dist_sq);
+        float depth = radius - dist_sq * inv_dist;
+
+        if (depth > 0.0f) {
+            OimoVec3 normal_dir = oimo_vec3_scale(diff, inv_dist);
+            oimo_mesh_contact_storage_add_unique(storage, mesh_point, &normal_dir, depth, id);
+        }
+    }
+}
+
+// Capsule axis against a triangle edge
 static inline void oimo_test_capsule_vs_edge(
     const OimoVec3* cap_p1, const OimoVec3* cap_p2,
     const OimoVec3* edge_a, const OimoVec3* edge_b,
-    const OimoVec3* tri_normal,
-    float radius, float radius_sq, int tri_idx,
+    float radius, float radius_sq, int id,
     OimoMeshContactStorage* storage
 ) {
     OimoVec3 closest_cap, closest_edge;
     oimo_closest_points_segments(*cap_p1, *cap_p2, *edge_a, *edge_b, &closest_cap, &closest_edge);
-
-    OimoVec3 diff = oimo_vec3_sub(closest_cap, closest_edge);
-    float dist_sq = oimo_vec3_dot(diff, diff);
-
-    if (dist_sq < radius_sq && dist_sq > 1e-8f) {
-        float inv_dist = oimo_fast_inv_sqrt(dist_sq);
-        float dist = dist_sq * inv_dist;
-        float depth = radius - dist;
-
-        if (depth > 0.0f) {
-            OimoVec3 normal_dir = oimo_vec3_scale(diff, inv_dist);
-            oimo_mesh_contact_storage_add(storage, &closest_edge, &normal_dir, depth, tri_idx);
-        }
-    }
+    oimo_capsule_mesh_add(&closest_cap, &closest_edge, radius, radius_sq, id, storage);
 }
 
-// Helper: Test a point against a triangle face
+// A capsule endpoint against the triangle face
 static inline void oimo_test_point_vs_triangle(
-    const OimoVec3* point,
-    const OimoVec3* v0, const OimoVec3* v1, const OimoVec3* v2,
-    const OimoVec3* tri_normal,
-    float radius, float radius_sq, int tri_idx,
+    const OimoVec3* point, const OimoTriangle* tri,
+    float radius, float radius_sq, int id,
     OimoMeshContactStorage* storage
 ) {
-    OimoVec3 closest = oimo_closest_point_on_triangle(point, v0, v1, v2);
-    OimoVec3 diff = oimo_vec3_sub(*point, closest);
-    float dist_sq = oimo_vec3_dot(diff, diff);
-
-    if (dist_sq < radius_sq && dist_sq > 1e-8f) {
-        float inv_dist = oimo_fast_inv_sqrt(dist_sq);
-        float dist = dist_sq * inv_dist;
-        float depth = radius - dist;
-
-        if (depth > 0.0f) {
-            OimoVec3 normal_dir = oimo_vec3_scale(diff, inv_dist);
-            oimo_mesh_contact_storage_add(storage, &closest, &normal_dir, depth, tri_idx);
-        }
-    }
+    OimoVec3 closest = oimo_closest_point_on_triangle(point, &tri->v0, &tri->v1, &tri->v2);
+    oimo_capsule_mesh_add(point, &closest, radius, radius_sq, id, storage);
 }
 
-// Helper: Test triangle vertex against capsule axis
+// A triangle vertex against the capsule axis
 static inline void oimo_test_vertex_vs_capsule(
     const OimoVec3* vertex,
     const OimoVec3* cap_p1, const OimoVec3* cap_p2,
-    const OimoVec3* tri_normal,
-    float radius, float radius_sq, int tri_idx,
+    float radius, float radius_sq, int id,
     OimoMeshContactStorage* storage
 ) {
     OimoVec3 closest_cap = oimo_closest_point_on_segment(*vertex, *cap_p1, *cap_p2);
-    OimoVec3 diff = oimo_vec3_sub(closest_cap, *vertex);
-    float dist_sq = oimo_vec3_dot(diff, diff);
-
-    if (dist_sq < radius_sq && dist_sq > 1e-8f) {
-        float inv_dist = oimo_fast_inv_sqrt(dist_sq);
-        float dist = dist_sq * inv_dist;
-        float depth = radius - dist;
-
-        if (depth > 0.0f) {
-            OimoVec3 normal_dir = oimo_vec3_scale(diff, inv_dist);
-            oimo_mesh_contact_storage_add(storage, vertex, &normal_dir, depth, tri_idx);
-        }
-    }
+    oimo_capsule_mesh_add(&closest_cap, vertex, radius, radius_sq, id, storage);
 }
 
-// Detect capsule vs mesh collision (optimized single-pass with 4 contacts)
+// The capsule axis passing through the triangle face (a capsule sunk into a
+// large triangle, which the tests above can't see: no endpoint or edge is
+// near). Pushes it out on the side its farther endpoint is on. Returns true
+// when it does
+static inline bool oimo_test_axis_through_triangle(
+    const OimoVec3* cap_p1, const OimoVec3* cap_p2, const OimoTriangle* tri,
+    float radius, int id, OimoMeshContactStorage* storage
+) {
+    float d1 = oimo_point_plane_distance(cap_p1, &tri->v0, &tri->normal);
+    float d2 = oimo_point_plane_distance(cap_p2, &tri->v0, &tri->normal);
+    if (d1 * d2 > 0.0f || d1 == d2) return false;
+
+    // Where the axis crosses the plane, inside the triangle?
+    OimoVec3 x = oimo_vec3_add(*cap_p1, oimo_vec3_scale(oimo_vec3_sub(*cap_p2, *cap_p1), d1 / (d1 - d2)));
+    const OimoVec3* n = &tri->normal;
+    if (oimo_vec3_dot(oimo_vec3_cross(oimo_vec3_sub(tri->v1, tri->v0), oimo_vec3_sub(x, tri->v0)), *n) < 0.0f) return false;
+    if (oimo_vec3_dot(oimo_vec3_cross(oimo_vec3_sub(tri->v2, tri->v1), oimo_vec3_sub(x, tri->v1)), *n) < 0.0f) return false;
+    if (oimo_vec3_dot(oimo_vec3_cross(oimo_vec3_sub(tri->v0, tri->v2), oimo_vec3_sub(x, tri->v2)), *n) < 0.0f) return false;
+
+    // The endpoint that's in less deep sets the way out
+    bool p1_out = fabsf(d1) >= fabsf(d2);
+    float sunk = p1_out ? fabsf(d2) : fabsf(d1);
+    const OimoVec3* inner = p1_out ? cap_p2 : cap_p1;
+    OimoVec3 normal_dir = (p1_out ? d1 : d2) >= 0.0f ? *n : oimo_vec3_scale(*n, -1.0f);
+    OimoVec3 closest = oimo_closest_point_on_triangle(inner, &tri->v0, &tri->v1, &tri->v2);
+    oimo_mesh_contact_storage_add_unique(storage, &closest, &normal_dir, radius + sunk, id);
+    return true;
+}
+
+// Detect capsule vs mesh collision
 static inline void oimo_capsule_mesh_detector_detect(
     OimoCapsuleMeshDetector* detector,
     OimoDetectorResult* result,
@@ -139,30 +157,17 @@ static inline void oimo_capsule_mesh_detector_detect(
     OimoVec3 cap_p1_local = oimo_mat3_mul_vec3(&mesh_rot_inv, p1_to_mesh);
     OimoVec3 cap_p2_local = oimo_mat3_mul_vec3(&mesh_rot_inv, p2_to_mesh);
 
-    // Build query AABB in mesh local space
-    float query_extent = max_extent + 0.01f;
-    OimoAabb query_aabb;
-    query_aabb.min.x = capsule_local.x - query_extent;
-    query_aabb.min.y = capsule_local.y - query_extent;
-    query_aabb.min.z = capsule_local.z - query_extent;
-    query_aabb.max.x = capsule_local.x + query_extent;
-    query_aabb.max.y = capsule_local.y + query_extent;
-    query_aabb.max.z = capsule_local.z + query_extent;
-
-    // Query BVH for overlapping triangles
-    OimoBvhQueryResult bvh_result;
-    oimo_static_mesh_query_triangles(mesh, &query_aabb, &bvh_result);
-
-    if (bvh_result.count == 0) return;
+    // Triangles within the radius of the capsule's axis
+    OimoStaticMeshQuery query;
+    oimo_static_mesh_query_segment(&query, mesh, &cap_p1_local, &cap_p2_local, radius);
 
     // Initialize contact storage
     OimoMeshContactStorage storage;
     oimo_mesh_contact_storage_init(&storage);
 
-    for (int i = 0; i < bvh_result.count; i++) {
-        int tri_idx = bvh_result.triangles[i];
-        const OimoTriangle* tri = oimo_static_mesh_get_triangle(mesh, tri_idx);
-        if (!tri) continue;
+    const OimoTriangle* tri;
+    while ((tri = oimo_static_mesh_query_next(&query)) != NULL) {
+        int tri_idx = query.index;
 
         // EARLY OUT: Quick plane distance check using capsule center
         float plane_dist = oimo_point_plane_distance(&capsule_local, &tri->v0, &tri->normal);
@@ -170,27 +175,34 @@ static inline void oimo_capsule_mesh_detector_detect(
             continue;
         }
 
+        // Axis through the face: that's the contact (the others would push
+        // the sunk endpoint further in)
+        if (oimo_test_axis_through_triangle(&cap_p1_local, &cap_p2_local, tri, radius,
+                OIMO_CAPSULE_MESH_ID(tri_idx, OIMO_CAPSULE_MESH_AXIS), &storage)) {
+            continue;
+        }
+
         // Test capsule axis against all triangle edges
         oimo_test_capsule_vs_edge(&cap_p1_local, &cap_p2_local, &tri->v0, &tri->v1,
-            &tri->normal, radius, radius_sq, tri_idx, &storage);
+            radius, radius_sq, OIMO_CAPSULE_MESH_ID(tri_idx, OIMO_CAPSULE_MESH_EDGE + 0), &storage);
         oimo_test_capsule_vs_edge(&cap_p1_local, &cap_p2_local, &tri->v1, &tri->v2,
-            &tri->normal, radius, radius_sq, tri_idx, &storage);
+            radius, radius_sq, OIMO_CAPSULE_MESH_ID(tri_idx, OIMO_CAPSULE_MESH_EDGE + 1), &storage);
         oimo_test_capsule_vs_edge(&cap_p1_local, &cap_p2_local, &tri->v2, &tri->v0,
-            &tri->normal, radius, radius_sq, tri_idx, &storage);
+            radius, radius_sq, OIMO_CAPSULE_MESH_ID(tri_idx, OIMO_CAPSULE_MESH_EDGE + 2), &storage);
 
         // Test capsule endpoints against triangle face
-        oimo_test_point_vs_triangle(&cap_p1_local, &tri->v0, &tri->v1, &tri->v2,
-            &tri->normal, radius, radius_sq, tri_idx, &storage);
-        oimo_test_point_vs_triangle(&cap_p2_local, &tri->v0, &tri->v1, &tri->v2,
-            &tri->normal, radius, radius_sq, tri_idx, &storage);
+        oimo_test_point_vs_triangle(&cap_p1_local, tri,
+            radius, radius_sq, OIMO_CAPSULE_MESH_ID(tri_idx, OIMO_CAPSULE_MESH_ENDPOINT + 0), &storage);
+        oimo_test_point_vs_triangle(&cap_p2_local, tri,
+            radius, radius_sq, OIMO_CAPSULE_MESH_ID(tri_idx, OIMO_CAPSULE_MESH_ENDPOINT + 1), &storage);
 
         // Test triangle vertices against capsule axis
         oimo_test_vertex_vs_capsule(&tri->v0, &cap_p1_local, &cap_p2_local,
-            &tri->normal, radius, radius_sq, tri_idx, &storage);
+            radius, radius_sq, OIMO_CAPSULE_MESH_ID(tri_idx, OIMO_CAPSULE_MESH_VERTEX + 0), &storage);
         oimo_test_vertex_vs_capsule(&tri->v1, &cap_p1_local, &cap_p2_local,
-            &tri->normal, radius, radius_sq, tri_idx, &storage);
+            radius, radius_sq, OIMO_CAPSULE_MESH_ID(tri_idx, OIMO_CAPSULE_MESH_VERTEX + 1), &storage);
         oimo_test_vertex_vs_capsule(&tri->v2, &cap_p1_local, &cap_p2_local,
-            &tri->normal, radius, radius_sq, tri_idx, &storage);
+            radius, radius_sq, OIMO_CAPSULE_MESH_ID(tri_idx, OIMO_CAPSULE_MESH_VERTEX + 2), &storage);
     }
 
     // No collision
@@ -214,7 +226,7 @@ static inline void oimo_capsule_mesh_detector_detect(
             oimo_vec3_scale(normal_world, c->depth));
 
         oimo_detector_add_point(&detector->base, result, &cap_contact, &mesh_contact,
-            c->depth, c->tri_idx);
+            c->depth, c->id);
     }
 }
 

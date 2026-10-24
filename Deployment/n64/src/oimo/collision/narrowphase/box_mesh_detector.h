@@ -94,20 +94,17 @@ static inline void oimo_box_mesh_detector_detect(
     query_aabb.max.y = box_center_local.y + extent_y;
     query_aabb.max.z = box_center_local.z + extent_z;
 
-    // Query BVH for overlapping triangles
-    OimoBvhQueryResult bvh_result;
-    oimo_static_mesh_query_triangles(mesh, &query_aabb, &bvh_result);
-
-    if (bvh_result.count == 0) return;
+    // Triangles overlapping the box's bounds
+    OimoStaticMeshQuery query;
+    oimo_static_mesh_query_aabb(&query, mesh, &query_aabb);
 
     // Initialize contact storage
     OimoMeshContactStorage storage;
     oimo_mesh_contact_storage_init(&storage);
 
-    for (int t = 0; t < bvh_result.count; t++) {
-        int tri_idx = bvh_result.triangles[t];
-        const OimoTriangle* tri = oimo_static_mesh_get_triangle(mesh, tri_idx);
-        if (!tri) continue;
+    const OimoTriangle* tri;
+    while ((tri = oimo_static_mesh_query_next(&query)) != NULL) {
+        int tri_idx = query.index;
 
         // EARLY OUT: Quick plane distance check
         // If box center is too far from triangle plane, skip expensive closest point
@@ -173,7 +170,7 @@ static inline void oimo_box_mesh_detector_detect(
         box_contact = oimo_vec3_add(box_contact, tf_mesh->position);
 
         oimo_detector_add_point(&detector->base, result,
-            &box_contact, &closest_world, c->depth, c->tri_idx);
+            &box_contact, &closest_world, c->depth, c->id);
     }
 }
 

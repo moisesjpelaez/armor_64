@@ -19,20 +19,18 @@ extern "C" {
 typedef struct OimoTriangle {
     OimoVec3 v0, v1, v2;     // Vertices
     OimoVec3 normal;         // Face normal
-    OimoVec3 edge1, edge2;   // Precomputed edges for collision
 } OimoTriangle;
 
 // Static mesh geometry
 typedef struct OimoStaticMeshGeometry {
     OimoGeometry base;
 
-    // Mesh data
+    // Mesh data, in the BVH's leaf order (leaves index it directly)
     OimoTriangle* triangles;
     int16_t triangle_count;
 
-    // BVH for spatial queries
+    // BVH for spatial queries (build data freed once built)
     OimoBvhTree bvh;
-    OimoBvhTriangle* bvh_triangles;  // BVH triangle data (centroids + AABBs)
 
     // Overall bounds
     OimoAabb bounds;
@@ -84,21 +82,15 @@ static inline bool oimo_static_mesh_geometry_init(
         return false;
     }
 
-    // Allocate triangles
+    // Build data: triangles, their centroids and bounds (freed once built)
+    OimoTriangle* triangles = (OimoTriangle*)malloc(sizeof(OimoTriangle) * geom->triangle_count);
+    OimoBvhTriangle* bvh_triangles = (OimoBvhTriangle*)malloc(sizeof(OimoBvhTriangle) * geom->triangle_count);
     geom->triangles = (OimoTriangle*)malloc(sizeof(OimoTriangle) * geom->triangle_count);
-    if (!geom->triangles) return false;
-
-    // Allocate BVH triangle data
-    geom->bvh_triangles = (OimoBvhTriangle*)malloc(sizeof(OimoBvhTriangle) * geom->triangle_count);
-    if (!geom->bvh_triangles) {
+    if (!triangles || !bvh_triangles || !geom->triangles || !oimo_bvh_tree_init(&geom->bvh, geom->triangle_count)) {
+        free(triangles);
+        free(bvh_triangles);
         free(geom->triangles);
-        return false;
-    }
-
-    // Initialize BVH
-    if (!oimo_bvh_tree_init(&geom->bvh, geom->triangle_count)) {
-        free(geom->triangles);
-        free(geom->bvh_triangles);
+        geom->triangles = NULL;
         return false;
     }
 
@@ -111,28 +103,32 @@ static inline bool oimo_static_mesh_geometry_init(
         const OimoVec3* v1 = &vertices[indices[idx + 1]];
         const OimoVec3* v2 = &vertices[indices[idx + 2]];
 
-        // Store triangle data
-        geom->triangles[i].v0 = *v0;
-        geom->triangles[i].v1 = *v1;
-        geom->triangles[i].v2 = *v2;
-        geom->triangles[i].normal = oimo_compute_triangle_normal(v0, v1, v2);
-        geom->triangles[i].edge1 = oimo_vec3_sub(*v1, *v0);
-        geom->triangles[i].edge2 = oimo_vec3_sub(*v2, *v0);
+        triangles[i].v0 = *v0;
+        triangles[i].v1 = *v1;
+        triangles[i].v2 = *v2;
+        triangles[i].normal = oimo_compute_triangle_normal(v0, v1, v2);
 
-        // Build BVH data
-        geom->bvh_triangles[i].centroid = oimo_compute_triangle_centroid(v0, v1, v2);
-        oimo_compute_triangle_aabb(v0, v1, v2, &geom->bvh_triangles[i].aabb);
-        geom->bvh_triangles[i].original_index = (int16_t)i;
+        bvh_triangles[i].centroid = oimo_compute_triangle_centroid(v0, v1, v2);
+        oimo_compute_triangle_aabb(v0, v1, v2, &bvh_triangles[i].aabb);
+        bvh_triangles[i].original_index = (int16_t)i;
 
-        // Expand overall bounds
-        oimo_aabb_merge(&geom->bounds, &geom->bounds, &geom->bvh_triangles[i].aabb);
+        oimo_aabb_merge(&geom->bounds, &geom->bounds, &bvh_triangles[i].aabb);
     }
 
-    // Build BVH
-    if (!oimo_bvh_tree_build(&geom->bvh, geom->bvh_triangles, geom->triangle_count)) {
+    bool built = oimo_bvh_tree_build(&geom->bvh, bvh_triangles, geom->triangle_count);
+    if (built) {
+        // Triangles in leaf order, then the build data goes
+        for (int i = 0; i < geom->triangle_count; i++) {
+            geom->triangles[i] = triangles[geom->bvh.sorted_indices[i]];
+        }
+        oimo_bvh_tree_compact(&geom->bvh);
+    }
+    free(triangles);
+    free(bvh_triangles);
+    if (!built) {
         oimo_bvh_tree_free(&geom->bvh);
         free(geom->triangles);
-        free(geom->bvh_triangles);
+        geom->triangles = NULL;
         return false;
     }
 
@@ -158,20 +154,54 @@ static inline void oimo_static_mesh_geometry_free(OimoStaticMeshGeometry* geom) 
         free(geom->triangles);
         geom->triangles = NULL;
     }
-    if (geom->bvh_triangles) {
-        free(geom->bvh_triangles);
-        geom->bvh_triangles = NULL;
-    }
     geom->triangle_count = 0;
 }
 
-// Query triangles overlapping an AABB (in local space)
-static inline void oimo_static_mesh_query_triangles(
-    const OimoStaticMeshGeometry* geom,
-    const OimoAabb* aabb,
-    OimoBvhQueryResult* result
-) {
-    oimo_bvh_query(&geom->bvh, aabb, result);
+// A triangle query in mesh local space: the BVH leaves in range, then each
+// triangle's own bounds tested too
+typedef struct OimoStaticMeshQuery {
+    OimoBvhQuery bvh;
+    const OimoStaticMeshGeometry* mesh;
+    int index;  // Index of the triangle next() returned
+} OimoStaticMeshQuery;
+
+// Triangles whose bounds overlap a box
+static inline void oimo_static_mesh_query_aabb(OimoStaticMeshQuery* q, const OimoStaticMeshGeometry* geom,
+                                               const OimoAabb* aabb) {
+    q->mesh = geom;
+    oimo_bvh_query_begin(&q->bvh, &geom->bvh, &aabb->min, &aabb->max, 0.0f);
+}
+
+// Triangles whose bounds are within `radius` of a point (a sphere)
+static inline void oimo_static_mesh_query_sphere(OimoStaticMeshQuery* q, const OimoStaticMeshGeometry* geom,
+                                                 const OimoVec3* center, float radius) {
+    q->mesh = geom;
+    oimo_bvh_query_begin(&q->bvh, &geom->bvh, center, center, radius);
+}
+
+// Triangles whose bounds are within `radius` of a segment's box (a capsule):
+// tighter than a cube around the capsule, especially for one standing on a floor
+static inline void oimo_static_mesh_query_segment(OimoStaticMeshQuery* q, const OimoStaticMeshGeometry* geom,
+                                                  const OimoVec3* p0, const OimoVec3* p1, float radius) {
+    OimoVec3 min = oimo_vec3(fminf(p0->x, p1->x), fminf(p0->y, p1->y), fminf(p0->z, p1->z));
+    OimoVec3 max = oimo_vec3(fmaxf(p0->x, p1->x), fmaxf(p0->y, p1->y), fmaxf(p0->z, p1->z));
+    q->mesh = geom;
+    oimo_bvh_query_begin(&q->bvh, &geom->bvh, &min, &max, radius);
+}
+
+// Next triangle in range (its index in q->index), NULL when done
+static inline const OimoTriangle* oimo_static_mesh_query_next(OimoStaticMeshQuery* q) {
+    int i;
+    while ((i = oimo_bvh_query_next(&q->bvh)) >= 0) {
+        const OimoTriangle* tri = &q->mesh->triangles[i];
+        OimoAabb bounds;
+        oimo_compute_triangle_aabb(&tri->v0, &tri->v1, &tri->v2, &bounds);
+        if (oimo_bvh_box_distance_sq(&q->bvh.min, &q->bvh.max, &bounds) <= q->bvh.radius_sq) {
+            q->index = i;
+            return tri;
+        }
+    }
+    return NULL;
 }
 
 // Get triangle by index
@@ -240,18 +270,19 @@ static inline bool oimo_static_mesh_ray_cast(
     ray_aabb.max.z = fmaxf(begin->z, end->z);
 
     // Query overlapping triangles
-    OimoBvhQueryResult query;
-    oimo_static_mesh_query_triangles(geom, &ray_aabb, &query);
+    OimoStaticMeshQuery query;
+    oimo_static_mesh_query_aabb(&query, geom, &ray_aabb);
 
     float closest_t = 1e30f;
     int closest_tri = -1;
 
     // Möller–Trumbore ray-triangle intersection
-    for (int i = 0; i < query.count; i++) {
-        const OimoTriangle* tri = &geom->triangles[query.triangles[i]];
-
-        OimoVec3 h = oimo_vec3_cross(ray_dir, tri->edge2);
-        float a = oimo_vec3_dot(tri->edge1, h);
+    const OimoTriangle* tri;
+    while ((tri = oimo_static_mesh_query_next(&query)) != NULL) {
+        OimoVec3 edge1 = oimo_vec3_sub(tri->v1, tri->v0);
+        OimoVec3 edge2 = oimo_vec3_sub(tri->v2, tri->v0);
+        OimoVec3 h = oimo_vec3_cross(ray_dir, edge2);
+        float a = oimo_vec3_dot(edge1, h);
 
         if (a > -1e-6f && a < 1e-6f) continue;  // Parallel
 
@@ -261,16 +292,16 @@ static inline bool oimo_static_mesh_ray_cast(
 
         if (u < 0.0f || u > 1.0f) continue;
 
-        OimoVec3 q = oimo_vec3_cross(s, tri->edge1);
+        OimoVec3 q = oimo_vec3_cross(s, edge1);
         float v = f * oimo_vec3_dot(ray_dir, q);
 
         if (v < 0.0f || u + v > 1.0f) continue;
 
-        float t = f * oimo_vec3_dot(tri->edge2, q);
+        float t = f * oimo_vec3_dot(edge2, q);
 
         if (t > 1e-6f && t <= ray_length && t < closest_t) {
             closest_t = t;
-            closest_tri = query.triangles[i];
+            closest_tri = query.index;
         }
     }
 

@@ -44,12 +44,6 @@ typedef struct OimoBvhTriangle {
     int16_t original_index;  // Original triangle index in mesh
 } OimoBvhTriangle;
 
-// Query result - indices of triangles that overlap query AABB
-typedef struct OimoBvhQueryResult {
-    int16_t triangles[OIMO_BVH_MAX_TRIANGLES];
-    int16_t count;
-} OimoBvhQueryResult;
-
 // Initialize BVH tree (allocate memory)
 static inline bool oimo_bvh_tree_init(OimoBvhTree* tree, int max_triangles) {
     // Estimate max nodes: worst case is 2*n-1 for n leaves
@@ -66,6 +60,19 @@ static inline bool oimo_bvh_tree_init(OimoBvhTree* tree, int max_triangles) {
     tree->root = -1;
     tree->triangle_count = 0;
     return true;
+}
+
+// After the build: the node array shrunk to the nodes used, and the leaf
+// order (sorted_indices) freed, once the caller has stored its data in that
+// order (leaves then index the data directly)
+static inline void oimo_bvh_tree_compact(OimoBvhTree* tree) {
+    OimoBvhNode* nodes = (OimoBvhNode*)realloc(tree->nodes, sizeof(OimoBvhNode) * tree->node_count);
+    if (nodes) {
+        tree->nodes = nodes;
+        tree->max_nodes = tree->node_count;
+    }
+    free(tree->sorted_indices);
+    tree->sorted_indices = NULL;
 }
 
 // Free BVH tree
@@ -224,42 +231,53 @@ static inline bool oimo_bvh_tree_build(
     return tree->root >= 0;
 }
 
-// Query BVH for triangles overlapping an AABB
-static inline void oimo_bvh_query_recursive(
-    const OimoBvhTree* tree,
-    int16_t node_idx,
-    const OimoAabb* query_aabb,
-    OimoBvhQueryResult* result
-) {
-    if (node_idx < 0 || result->count >= OIMO_BVH_MAX_TRIANGLES) return;
-
-    const OimoBvhNode* node = &tree->nodes[node_idx];
-
-    // Check if query overlaps this node
-    if (!oimo_aabb_overlap(&node->aabb, query_aabb)) return;
-
-    // Leaf node - add triangles from sorted_indices
-    if (node->left_child < 0) {
-        for (int i = 0; i < node->triangle_count && result->count < OIMO_BVH_MAX_TRIANGLES; i++) {
-            int16_t tri_idx = tree->sorted_indices[node->first_triangle + i];
-            result->triangles[result->count++] = tri_idx;
-        }
-        return;
-    }
-
-    // Internal node - recurse
-    oimo_bvh_query_recursive(tree, node->left_child, query_aabb, result);
-    oimo_bvh_query_recursive(tree, node->right_child, query_aabb, result);
+// Squared distance between a query box and a node box (0 when they overlap)
+static inline float oimo_bvh_box_distance_sq(const OimoVec3* qmin, const OimoVec3* qmax, const OimoAabb* b) {
+    float dx = qmax->x < b->min.x ? b->min.x - qmax->x : (b->max.x < qmin->x ? qmin->x - b->max.x : 0.0f);
+    float dy = qmax->y < b->min.y ? b->min.y - qmax->y : (b->max.y < qmin->y ? qmin->y - b->max.y : 0.0f);
+    float dz = qmax->z < b->min.z ? b->min.z - qmax->z : (b->max.z < qmin->z ? qmin->z - b->max.z : 0.0f);
+    return dx * dx + dy * dy + dz * dz;
 }
 
-// Query BVH for triangles overlapping an AABB
-static inline void oimo_bvh_query(
-    const OimoBvhTree* tree,
-    const OimoAabb* query_aabb,
-    OimoBvhQueryResult* result
-) {
-    result->count = 0;
-    oimo_bvh_query_recursive(tree, tree->root, query_aabb, result);
+// A query: the leaves whose bounds are within `radius` of a box. A box with
+// radius 0 is an overlap query; a point (min == max) with a radius, a sphere;
+// a segment's box with a radius, a capsule (as OimoPhysics' StaticMeshBvh).
+// Walked with an explicit stack: no recursion, no result array
+typedef struct OimoBvhQuery {
+    const OimoBvhTree* tree;
+    OimoVec3 min, max;
+    float radius_sq;
+    int16_t stack[OIMO_BVH_MAX_DEPTH + 2];  // A pending sibling per level, plus the root
+    int sp;
+    int pos, end;  // Leaf positions left in the current leaf
+} OimoBvhQuery;
+
+static inline void oimo_bvh_query_begin(OimoBvhQuery* q, const OimoBvhTree* tree,
+                                        const OimoVec3* min, const OimoVec3* max, float radius) {
+    q->tree = tree;
+    q->min = *min;
+    q->max = *max;
+    q->radius_sq = radius * radius;
+    q->sp = 0;
+    q->pos = q->end = 0;
+    if (tree->root >= 0) q->stack[q->sp++] = tree->root;
+}
+
+// Next leaf position (an index in the leaf order), -1 when done
+static inline int oimo_bvh_query_next(OimoBvhQuery* q) {
+    while (q->pos >= q->end) {
+        if (q->sp == 0) return -1;
+        const OimoBvhNode* node = &q->tree->nodes[q->stack[--q->sp]];
+        if (oimo_bvh_box_distance_sq(&q->min, &q->max, &node->aabb) > q->radius_sq) continue;
+        if (node->left_child < 0) {
+            q->pos = node->first_triangle;
+            q->end = node->first_triangle + node->triangle_count;
+        } else {
+            q->stack[q->sp++] = node->right_child;
+            q->stack[q->sp++] = node->left_child;
+        }
+    }
+    return q->pos++;
 }
 
 #ifdef __cplusplus
