@@ -248,17 +248,16 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict, signal_ctx: Si
         impl = generate_function_implementation(func, is_static=False)
         public_func_lines.append(impl)
 
-    # Build init body
-    init_body_lines = []
-
-    # Allocate tweens first (they were declared as NULL globals)
+    # Static initializers that need the runtime, run once at boot
+    # (autoloads_init): tweens (declared as NULL globals), kept across scene
+    # changes like the autoload
+    static_init_lines = []
     for m in members:
-        mtype = m.get("ctype", "")
-        mname = m.get("name", "")
-        if mtype == "ArmTween*":
-            # Kept across scene changes, like the autoload. A static
-            # initializer: allocated once, also when the game calls init() itself
-            init_body_lines.append(f"    if (!{c_name}_{mname}) {c_name}_{mname} = tween_alloc_persistent();")
+        if m.get("ctype", "") == "ArmTween*":
+            static_init_lines.append(f"    {c_name}_{m.get('name', '')} = tween_alloc_persistent();")
+
+    # init(): the game calls it, as in Armory (the engine doesn't)
+    init_body_lines = []
 
     init_func = next((f for f in functions if f.get("name") == "init"), None)
     if init_func:
@@ -287,6 +286,7 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict, signal_ctx: Si
         'private_functions': '\n\n'.join(private_func_lines),
         'signal_handlers': '\n\n'.join(handler_lines),
         'public_functions': '\n\n'.join(public_func_lines),
+        'static_init_body': '\n'.join(static_init_lines),
         'init_body': '\n'.join(init_body_lines),
     }
 
@@ -332,7 +332,7 @@ def prepare_autoload_template_data():
     # Prepare master autoloads.h data
     master_data = {
         'includes': '\n'.join(f'#include "{c_name}.h"' for c_name in autoload_names),
-        'init_calls': '\n'.join(f'    {c_name}_init();' for c_name in autoload_names),
+        'init_calls': '\n'.join(f'    {c_name}_static_init();' for c_name in autoload_names),
     }
 
     return autoload_data, master_data, features

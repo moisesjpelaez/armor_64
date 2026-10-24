@@ -220,7 +220,7 @@ Values that can't be counted keep the default as a floor: a `new Tween()` inside
 
 ### Haxe Metadata
 
-- `@:n64Autoload(order=N)` - Set autoload initialization order
+- `@:n64Autoload(order=N)` - Set autoload initialization order (the order of their static initializers at boot; their `init()` is called by the game, as in Armory)
 
 ## Coordinate System
 

@@ -6,6 +6,7 @@
 #pragma once
 
 {includes}
-// Initialize all autoloads in order
+// Static initializers of all autoloads, in order (once, at boot). Their
+// init() is the game's to call, as in Armory
 static inline void autoloads_init(void) {{
 {init_calls}}}

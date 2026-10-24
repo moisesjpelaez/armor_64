@@ -12,5 +12,10 @@
 {private_functions}
 {signal_handlers}
 {public_functions}
+// Static initializers needing the runtime: once, at boot (autoloads_init)
+void {c_name}_static_init(void) {{
+{static_init_body}}}
+
+// The class's init(): called by the game, as in Armory
 void {c_name}_init(void) {{
 {init_body}}}
