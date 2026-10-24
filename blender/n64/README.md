@@ -172,8 +172,8 @@ A full pool or container reports it once with `debugf` (`ARM_LIMIT_REACHED` in
 `DEFAULTS` holds each limit's value when nothing more precise is known.
 `compute()` replaces defaults with values worked out from the project:
 
-- physics: from the scene export, the largest scene's counts
-- UI: from the canvas data, the largest canvas's counts
+- scene counts (bodies, colliders, contact and button handlers, objects, animation clips): exact, for the largest scene, plus the copies spawnable templates may add (`SPAWN_MAX_INSTANCES` each)
+- UI pools: exact, for the largest canvas (text sizes keep room for runtime text)
 
 | Limit | Default | What it limits | Where it's defined |
 |---|---|---|---|
@@ -193,7 +193,6 @@ A full pool or container reports it once with `debugf` (`ARM_LIMIT_REACHED` in
 | `OIMO_MAX_ISLAND_BODIES` | 32 | Bodies in one simulation island | `limits.h` |
 | `OIMO_MAX_ISLAND_SOLVERS` | 64 | Contact solvers in one simulation island | `limits.h` |
 | `OIMO_MAX_RIGID_BODIES` | 32 | Bodies visited while building one island | `limits.h` |
-| `OIMO_MAX_SHAPES` | 64 | Shapes (unused by the runtime) | `limits.h` |
 | `OIMO_MESH_MAX_CONTACTS` | 4 | Contacts kept per mesh collision (the shallowest is replaced) | `limits.h` |
 | `OIMO_BVH_MAX_TRIANGLES` | 4 | Triangles of the largest mesh collider (its BVH) | `limits.h` |
 | `OIMO_BVH_MAX_DEPTH` | 4 | Depth of the largest mesh collider's BVH | `limits.h` |

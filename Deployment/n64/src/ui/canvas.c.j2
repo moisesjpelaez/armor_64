@@ -92,6 +92,7 @@ static int g_current_ui_scene = -1;
 #if UI_GROUP_COUNT > 0
 // Internal: load groups from static definition array
 static void load_groups(const UIGroupDef *defs, int count) {{
+    if (g_group_pool_used + count > UI_MAX_GROUPS) ARM_LIMIT_REACHED(UI_MAX_GROUPS);
     for (int i = 0; i < count && g_group_pool_used < UI_MAX_GROUPS; i++) {{
         const UIGroupDef *def = &defs[i];
         UIGroup *group = &g_group_pool[g_group_pool_used++];

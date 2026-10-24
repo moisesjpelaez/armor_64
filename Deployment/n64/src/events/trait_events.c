@@ -73,10 +73,8 @@ static void remove_sub_by_obj(TraitEventSub* subs, uint8_t* count, void* obj)
 {
     for (int i = 0; i < *count; ) {
         if (subs[i].obj == obj) {
-            // Shift remaining elements down
-            for (int j = i; j < *count - 1; j++) {
-                subs[j] = subs[j + 1];
-            }
+            // Shift remaining elements down (memmove: the pool may hold a single one)
+            memmove(&subs[i], &subs[i + 1], (size_t)(*count - i - 1) * sizeof(subs[0]));
             (*count)--;
         } else {
             i++;

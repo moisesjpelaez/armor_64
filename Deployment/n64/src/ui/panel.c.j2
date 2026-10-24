@@ -49,7 +49,10 @@ typedef struct {{
 static void load_panels(const UIPanelDef *defs, int count) {{
     for (int i = 0; i < count; i++) {{
         const UIPanelDef *def = &defs[i];
-        if (g_panel_pool_used >= UI_MAX_PANELS) break;
+        if (g_panel_pool_used >= UI_MAX_PANELS) {{
+            ARM_LIMIT_REACHED(UI_MAX_PANELS);
+            break;
+        }}
         UIPanel *panel = &g_panel_pool[g_panel_pool_used++];
         panel->pos_x       = ui_anchor_x(def->pos_x, def->width, def->anchor, CANVAS_WIDTH);
         panel->pos_y       = ui_anchor_y(def->pos_y, def->height, def->anchor, CANVAS_HEIGHT);

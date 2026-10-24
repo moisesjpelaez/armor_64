@@ -166,13 +166,11 @@ class N64Exporter:
 
             # Engine limits for this project (codegen/limits.py)
             from arm.n64.codegen import limits
+            def trait_meta(class_name):
+                return n64_utils.get_trait(self.trait_info, class_name).get("meta", {})
             self.limits = limits.compute(
-                physics={
-                    "bodies": self.max_physics_bodies,
-                    "mesh_colliders": self.max_mesh_colliders,
-                    "contact_bodies": self.max_contact_bodies,
-                    "mesh_triangles": self.max_mesh_triangles,
-                },
+                scenes=[limits.scene_counts(scene, trait_meta) for scene in self.scene_data.values()],
+                mesh_triangles=self.max_mesh_triangles,
                 ui_canvases=self.ui_canvas_data,
             )
 

@@ -77,10 +77,8 @@ void physics_contact_unsubscribe(OimoRigidBody* rb, PhysicsContactHandler handle
     // Find and remove matching subscription
     for (int i = 0; i < subs->count; ) {
         if (subs->subs[i].handler == handler && subs->subs[i].obj == obj) {
-            // Shift remaining elements
-            for (int j = i; j < subs->count - 1; j++) {
-                subs->subs[j] = subs->subs[j + 1];
-            }
+            // Shift remaining elements (memmove: the pool may hold a single one)
+            memmove(&subs->subs[i], &subs->subs[i + 1], (size_t)(subs->count - i - 1) * sizeof(subs->subs[0]));
             subs->count--;
         } else {
             i++;
@@ -94,10 +92,8 @@ void physics_contact_unsubscribe_all(void* obj)
         BodyContactSubs* subs = &g_body_subs[b];
         for (int i = 0; i < subs->count; ) {
             if (subs->subs[i].obj == obj) {
-                // Shift remaining elements
-                for (int j = i; j < subs->count - 1; j++) {
-                    subs->subs[j] = subs->subs[j + 1];
-                }
+                // Shift remaining elements (memmove: the pool may hold a single one)
+                memmove(&subs->subs[i], &subs->subs[i + 1], (size_t)(subs->count - i - 1) * sizeof(subs->subs[0]));
                 subs->count--;
             } else {
                 i++;

@@ -82,6 +82,7 @@ typedef struct {{
 // ============================================================================
 
 static void load_buttons(const UIButtonDef *defs, int count) {{
+    if (g_button_count + count > UI_MAX_BUTTONS) ARM_LIMIT_REACHED(UI_MAX_BUTTONS);
     for (int i = 0; i < count && g_button_count < UI_MAX_BUTTONS; i++) {{
         const UIButtonDef *def = &defs[i];
         UIButton *btn = &g_buttons[g_button_count++];

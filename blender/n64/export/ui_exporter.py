@@ -1407,7 +1407,8 @@ def write_canvas_c(exporter):
             btn_indices = group.get('child_button_indices', [])
             pnl_indices = group.get('child_panel_indices', [])
             grp_indices = group.get('child_group_indices', [])
-            max_ch = max(8, len(img_indices), len(lbl_indices), len(btn_indices), len(pnl_indices), len(grp_indices))
+            # Padded to the arrays' size (UI_MAX_GROUP_CHILDREN, codegen/limits.py)
+            max_ch = exporter.limits['UI_MAX_GROUP_CHILDREN']
             img_padded = list(img_indices[:max_ch]) + [0] * (max_ch - min(len(img_indices), max_ch))
             lbl_padded = list(lbl_indices[:max_ch]) + [0] * (max_ch - min(len(lbl_indices), max_ch))
             btn_padded = list(btn_indices[:max_ch]) + [0] * (max_ch - min(len(btn_indices), max_ch))

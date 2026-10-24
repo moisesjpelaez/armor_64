@@ -50,9 +50,8 @@ static void signal_remove_at(ArmSignal *signal, uint8_t i)
         signal->removed++;
         return;
     }
-    for (uint8_t j = i; j < signal->count - 1; j++) {
-        signal->entries[j] = signal->entries[j + 1];
-    }
+    // memmove: a signal may have a single slot
+    memmove(&signal->entries[i], &signal->entries[i + 1], (size_t)(signal->count - i - 1) * sizeof(signal->entries[0]));
     signal->count--;
 }
 

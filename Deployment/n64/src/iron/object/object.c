@@ -19,7 +19,7 @@ typedef struct {
 } PendingRemoval;
 
 static PendingRemoval g_pending_removals[MAX_PENDING_REMOVALS];
-static uint8_t g_pending_count = 0;
+static uint16_t g_pending_count = 0;
 
 static void object_remove_internal(ArmObject* obj, SceneId scene_id, bool recycle)
 {

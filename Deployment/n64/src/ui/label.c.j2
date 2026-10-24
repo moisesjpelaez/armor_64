@@ -112,7 +112,10 @@ void label_clear(void) {{
 }}
 
 UILabel* ui_label_create(const char *text) {{
-    if (g_label_pool_used >= UI_MAX_LABELS) return NULL;
+    if (g_label_pool_used >= UI_MAX_LABELS) {{
+        ARM_LIMIT_REACHED(UI_MAX_LABELS);
+        return NULL;
+    }}
     UILabel *label = &g_label_pool[g_label_pool_used++];
     if (text) {{
         strncpy(label->text, text, UI_LABEL_TEXT_SIZE - 1);

@@ -102,7 +102,10 @@ void image_clear(void) {{
 }}
 
 UIImage* ui_image_create(sprite_t *sprite) {{
-    if (g_image_pool_used >= UI_MAX_IMAGES) return NULL;
+    if (g_image_pool_used >= UI_MAX_IMAGES) {{
+        ARM_LIMIT_REACHED(UI_MAX_IMAGES);
+        return NULL;
+    }}
     UIImage *image     = &g_image_pool[g_image_pool_used++];
     image->sprite      = sprite;
     image->pos_x       = 0;
