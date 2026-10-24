@@ -38,7 +38,8 @@ package armory.n64;
  *   ternary                          - Ternary operator a ? b : c
  *
  * CALLS:
- *   call, method_call                - Generic function/method calls
+ *   call, method_call                - Generic function/method calls (method_call.owner: class declaring the method)
+ *   super_call                       - super.method(): cName of the declaring ancestor's C function
  *   scene_call, transform_call       - Domain-specific calls
  *   math_call, input_call            - Domain-specific calls
  *   physics_call, vec_call           - Domain-specific calls
@@ -167,6 +168,8 @@ typedef TraitMeta = {
     contact_events: Array<ContactEventMeta>, // physics contact subscriptions
     signals: Array<SignalMeta>, // per-instance signal declarations
     ?connects_signals: Bool,   // Connects handlers with its data as context: needs a data struct
+    ?uses_audio: Bool,         // Calls the audio API
+    ?autoloads_used: Array<String>, // C names of the autoloads it refers to (their headers are included)
     has_remove_update: Bool,       // True if trait calls removeUpdate() - adds _update_enabled guard
     has_remove_fixed_update: Bool, // True if trait calls removeFixedUpdate() - adds _fixed_update_enabled guard
     has_remove_late_update: Bool,  // True if trait calls removeLateUpdate()
@@ -219,7 +222,8 @@ typedef AutoloadParamIR = {
 }
 
 typedef AutoloadMeta = {
-    order: Int               // Initialization order (lower = earlier)
+    order: Int,              // Initialization order (lower = earlier)
+    ?uses_audio: Bool        // Calls the audio API
 }
 
 typedef AutoloadIR = {

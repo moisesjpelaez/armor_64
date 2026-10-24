@@ -77,6 +77,18 @@ def chain_events(all_traits: dict, name: str) -> set:
     return events
 
 
+def walk_ir(value):
+    """Every IR node in a tree (any depth: children, args, bodies, props...)."""
+    if isinstance(value, dict):
+        if "type" in value:
+            yield value
+        for v in value.values():
+            yield from walk_ir(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from walk_ir(v)
+
+
 def needs_data_struct(all_traits: dict, name: str) -> bool:
     """Whether a trait has a data struct (and its instances get data)."""
     ir = all_traits.get(name, {})
@@ -736,23 +748,23 @@ class TraitCodeGenerator:
         # ArmTraitRender2DFn: (void *entity, void *data) - no dt, for 2D overlay rendering
         decls.append(f"void {self.c_name}_on_add(void* obj, void* data);")
         decls.append(f"void {self.c_name}_on_ready(void* obj, void* data);")
-        decls.append(f"void {self.c_name}_on_fixed_update(void* obj, float dt, void* data);")
+        decls.append(f"void {self.c_name}_on_fixed_update(void* obj, float _dt, void* data);")
 
         # Add declarations for individual fixed update functions if trait has multiple dynamic fixed updates
         dynamic_fixed_updates = self.meta.get("dynamic_fixed_updates", [])
         for callback_name in dynamic_fixed_updates:
             func_name = f"on_fixed_update_{callback_name}"
-            decls.append(f"void {self.c_name}_{func_name}(void* obj, float dt, void* data);")
+            decls.append(f"void {self.c_name}_{func_name}(void* obj, float _dt, void* data);")
 
-        decls.append(f"void {self.c_name}_on_update(void* obj, float dt, void* data);")
+        decls.append(f"void {self.c_name}_on_update(void* obj, float _dt, void* data);")
 
         # Add declarations for individual update functions if trait has multiple dynamic updates
         dynamic_updates = self.meta.get("dynamic_updates", [])
         for callback_name in dynamic_updates:
             func_name = f"on_update_{callback_name}"
-            decls.append(f"void {self.c_name}_{func_name}(void* obj, float dt, void* data);")
+            decls.append(f"void {self.c_name}_{func_name}(void* obj, float _dt, void* data);")
 
-        decls.append(f"void {self.c_name}_on_late_update(void* obj, float dt, void* data);")
+        decls.append(f"void {self.c_name}_on_late_update(void* obj, float _dt, void* data);")
         decls.append(f"void {self.c_name}_on_remove(void* obj, void* data);")
         decls.append(f"void {self.c_name}_on_render2d(void* obj, void* data);")
         return decls
@@ -763,7 +775,7 @@ class TraitCodeGenerator:
         for event_name in self.events.keys():
             if event_name.startswith("btn_"):
                 # Button events use TraitEventHandler signature: (obj, data, dt)
-                decls.append(f"void {self.c_name}_{event_name}(void* obj, void* data, float dt);")
+                decls.append(f"void {self.c_name}_{event_name}(void* obj, void* data, float _dt);")
         return decls
 
     def generate_contact_event_declarations(self) -> List[str]:
@@ -841,32 +853,8 @@ class TraitCodeGenerator:
         return "\n".join(impl_lines)
 
     def _method_uses_render2d(self, nodes: list) -> bool:
-        """Check if method body uses render2D features (graphics2d calls, set_color, etc.)."""
-        def scan(node):
-            if not node or not isinstance(node, dict):
-                return False
-            node_type = node.get("type", "")
-            # Check for graphics2d-related node types
-            if node_type in ("render2d_set_color", "render2d_fill_rect"):
-                return True
-            # Recursively scan children and args
-            for child in node.get("children", []):
-                if scan(child):
-                    return True
-            for arg in node.get("args", []):
-                if scan(arg):
-                    return True
-            if node.get("object") and scan(node["object"]):
-                return True
-            return False
-
-        if isinstance(nodes, list):
-            for n in nodes:
-                if scan(n):
-                    return True
-        elif isinstance(nodes, dict):
-            return scan(nodes)
-        return False
+        """Whether a method sets or uses the 2D drawing color (needs _g2_color)."""
+        return any(n.get("type") in ("render2d_set_color", "render2d_fill_rect") for n in walk_ir(nodes))
 
     def _parent_event_call(self, event: str, with_dt: bool) -> list:
         """Call the parent's handler first: callbacks a parent class registers
@@ -874,7 +862,7 @@ class TraitCodeGenerator:
         if not (self.parent_name and self.parent_name in self.all_traits):
             return []
         parent_c_name = self.all_traits[self.parent_name].get("c_name", self.parent_name.lower())
-        args = "obj, dt, data" if with_dt else "obj, data"
+        args = "obj, _dt, data" if with_dt else "obj, data"
         return [f"    {parent_c_name}_{event}({args});"]
 
     def generate_signal_handlers(self) -> list:
@@ -958,13 +946,13 @@ class TraitCodeGenerator:
 
         if dynamic_fixed_updates and len(dynamic_fixed_updates) > 0:
             # Multiple fixed update functions - generate dispatcher that calls each enabled sub-update
-            impl_lines.append(f"void {self.c_name}_on_fixed_update(void* obj, float dt, void* data) {{")
+            impl_lines.append(f"void {self.c_name}_on_fixed_update(void* obj, float _dt, void* data) {{")
             impl_lines += self._parent_event_call("on_fixed_update", True)
             impl_lines.append(f"    {self.c_name}Data* d = ({self.c_name}Data*)data;")
             for callback_name in dynamic_fixed_updates:
                 flag_name = f"_fixed_update_{callback_name}_enabled"
                 func_name = f"on_fixed_update_{callback_name}"
-                impl_lines.append(f"    if (d->{flag_name}) {self.c_name}_{func_name}(obj, dt, data);")
+                impl_lines.append(f"    if (d->{flag_name}) {self.c_name}_{func_name}(obj, _dt, data);")
             impl_lines.append("}")
             impl_lines.append("")
 
@@ -973,7 +961,7 @@ class TraitCodeGenerator:
                 func_name = f"on_fixed_update_{callback_name}"
                 event_nodes = self.events.get(func_name, [])
                 body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-                impl_lines.append(f"void {self.c_name}_{func_name}(void* obj, float dt, void* data) {{")
+                impl_lines.append(f"void {self.c_name}_{func_name}(void* obj, float _dt, void* data) {{")
                 impl_lines.append(body)
                 impl_lines.append("}")
                 impl_lines.append("")
@@ -981,7 +969,7 @@ class TraitCodeGenerator:
             # Single/no fixed update - original behavior
             event_nodes = self.events.get("on_fixed_update", [])
             body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-            impl_lines.append(f"void {self.c_name}_on_fixed_update(void* obj, float dt, void* data) {{")
+            impl_lines.append(f"void {self.c_name}_on_fixed_update(void* obj, float _dt, void* data) {{")
             impl_lines += self._parent_event_call("on_fixed_update", True)
             # Add early return guard if trait uses removeFixedUpdate()
             if self.meta.get("has_remove_fixed_update", False):
@@ -996,13 +984,13 @@ class TraitCodeGenerator:
 
         if dynamic_updates and len(dynamic_updates) > 0:
             # Multiple update functions - generate dispatcher that calls each enabled sub-update
-            impl_lines.append(f"void {self.c_name}_on_update(void* obj, float dt, void* data) {{")
+            impl_lines.append(f"void {self.c_name}_on_update(void* obj, float _dt, void* data) {{")
             impl_lines += self._parent_event_call("on_update", True)
             impl_lines.append(f"    {self.c_name}Data* d = ({self.c_name}Data*)data;")
             for callback_name in dynamic_updates:
                 flag_name = f"_update_{callback_name}_enabled"
                 func_name = f"on_update_{callback_name}"
-                impl_lines.append(f"    if (d->{flag_name}) {self.c_name}_{func_name}(obj, dt, data);")
+                impl_lines.append(f"    if (d->{flag_name}) {self.c_name}_{func_name}(obj, _dt, data);")
             impl_lines.append("}")
             impl_lines.append("")
 
@@ -1011,7 +999,7 @@ class TraitCodeGenerator:
                 func_name = f"on_update_{callback_name}"
                 event_nodes = self.events.get(func_name, [])
                 body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-                impl_lines.append(f"void {self.c_name}_{func_name}(void* obj, float dt, void* data) {{")
+                impl_lines.append(f"void {self.c_name}_{func_name}(void* obj, float _dt, void* data) {{")
                 impl_lines.append(body)
                 impl_lines.append("}")
                 impl_lines.append("")
@@ -1019,7 +1007,7 @@ class TraitCodeGenerator:
             # Single/no update - original behavior
             event_nodes = self.events.get("on_update", [])
             body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-            impl_lines.append(f"void {self.c_name}_on_update(void* obj, float dt, void* data) {{")
+            impl_lines.append(f"void {self.c_name}_on_update(void* obj, float _dt, void* data) {{")
             impl_lines += self._parent_event_call("on_update", True)
             # Add early return guard if trait uses removeUpdate()
             if self.meta.get("has_remove_update", False):
@@ -1031,7 +1019,7 @@ class TraitCodeGenerator:
         # on_late_update - dt before data (ArmTraitLateUpdateFn)
         event_nodes = self.events.get("on_late_update", [])
         body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-        impl_lines.append(f"void {self.c_name}_on_late_update(void* obj, float dt, void* data) {{")
+        impl_lines.append(f"void {self.c_name}_on_late_update(void* obj, float _dt, void* data) {{")
         impl_lines += self._parent_event_call("on_late_update", True)
         # Add early return guard if trait uses removeLateUpdate()
         if self.meta.get("has_remove_late_update", False):
@@ -1046,12 +1034,6 @@ class TraitCodeGenerator:
         impl_lines.append(f"void {self.c_name}_on_remove(void* obj, void* data) {{")
         impl_lines += self._parent_event_call("on_remove", False)
         impl_lines.append(body)
-        # Call parent's on_remove LAST (cleanup in reverse order)
-        # Pass full data pointer so virtual method calls work correctly
-        if self.parent_name and self.parent_name in self.all_traits:
-            parent_ir = self.all_traits[self.parent_name]
-            parent_c_name = parent_ir.get("c_name", self.parent_name.lower())
-            impl_lines.append(f"    {parent_c_name}_on_remove(obj, data);")
         impl_lines.append("}")
         impl_lines.append("")
 
@@ -1085,7 +1067,7 @@ class TraitCodeGenerator:
             if event_name.startswith("btn_"):
                 event_nodes = self.events.get(event_name, [])
                 body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-                impl_lines.append(f"void {self.c_name}_{event_name}(void* obj, void* data, float dt) {{")
+                impl_lines.append(f"void {self.c_name}_{event_name}(void* obj, void* data, float _dt) {{")
                 impl_lines.append(body)
                 impl_lines.append("}")
                 impl_lines.append("")
@@ -1131,53 +1113,6 @@ def prepare_traits_template_data(type_overrides: dict = None):
 
     # Generate template substitution data and detect features
     return _prepare_traits_template_data(traits, type_overrides)
-
-
-def _detect_features_in_nodes(nodes) -> dict:
-    """Recursively scan IR nodes for feature usage (physics, autoloads, etc.)."""
-    features = {'has_physics': False, 'autoloads': set()}
-
-    def scan(node):
-        if not node or not isinstance(node, dict):
-            return
-        node_type = node.get("type", "")
-        if node_type == "physics_call":
-            features['has_physics'] = True
-        elif node_type == "autoload_call":
-            # Extract autoload c_name from the call
-            props = node.get("props", {})
-            c_name = props.get("c_name", "")
-            if c_name:
-                features['autoloads'].add(c_name)
-        elif node_type in ("autoload_field", "autoload_trait_object", "autoload_trait_assign"):
-            # Extract autoload c_name from field/trait object access/assignment
-            props = node.get("props", {})
-            c_name = props.get("autoload", "")
-            if c_name:
-                features['autoloads'].add(c_name)
-
-        elif node_type in ("signal_connect", "signal_disconnect"):
-            handler = node.get("props", {}).get("handler", {})
-            for statement in handler.get("body", []):
-                scan(statement)
-            if handler.get("instance"):
-                scan(handler["instance"])
-
-        # Recursively scan children and args
-        for child in node.get("children", []):
-            scan(child)
-        for arg in node.get("args", []):
-            scan(arg)
-        if node.get("object"):
-            scan(node["object"])
-
-    if isinstance(nodes, list):
-        for n in nodes:
-            scan(n)
-    elif isinstance(nodes, dict):
-        scan(nodes)
-
-    return features
 
 
 def _validate_ancestor_chain(traits: dict) -> None:
@@ -1327,15 +1262,11 @@ def _prepare_traits_template_data(traits: dict, type_overrides: dict = None) -> 
         if meta.get("uses_ui"):
             all_features['has_ui'] = True
 
-        # Check if this trait uses Tween (from meta flag or member type)
         if meta.get("uses_tween"):
             all_features['has_tween'] = True
-
-        # Also check if any member is of type ArmTween*
-        for member in trait_ir.get("members", []):
-            if member.get("ctype") == "ArmTween*":
-                all_features['has_tween'] = True
-                break
+        if meta.get("uses_physics"):
+            all_features['has_physics'] = True
+        all_features.setdefault('autoloads', set()).update(meta.get("autoloads_used", []))
 
         # Generate tween callbacks (must come before implementations that reference them)
         tween_cb_code = gen.generate_tween_callbacks()
@@ -1361,15 +1292,6 @@ def _prepare_traits_template_data(traits: dict, type_overrides: dict = None) -> 
             trait_implementations.append(f"// Methods for {trait_name}")
             trait_implementations.append(method_impls)
         trait_implementations.append(gen.generate_all_event_implementations())
-
-        # Detect features in events
-        events = trait_ir.get("events", {})
-        for event_name, event_nodes in events.items():
-            node_features = _detect_features_in_nodes(event_nodes)
-            if node_features['has_physics']:
-                all_features['has_physics'] = True
-            # Collect autoloads used by this trait
-            all_features.setdefault('autoloads', set()).update(node_features.get('autoloads', set()))
 
     # Generate autoload include directives
     autoloads_used = all_features.get('autoloads', set())

@@ -65,6 +65,9 @@ interface IExtractorContext {
     // Infer expression type (for signal arg types)
     function inferExprType(e:Expr):String;
 
+    // Record a reference to an autoload (by C name): its header is included
+    function useAutoload(cName:String):Void;
+
     // Check if this is an autoload context (vs trait context)
     // Autoloads use global variables prefixed with c_name, not data->member
     function isAutoload():Bool;}

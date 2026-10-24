@@ -73,143 +73,21 @@ def scan_and_copy_audio(exporter):
     # Copy audio module source files
     n64_utils.copy_dir('audio', 'src')
 
-    # Generate audio_config.h from template
-    write_audio_config(exporter)
-
 
 def write_audio_config(exporter):
-    """Generate audio_config.h from template with mix channel configuration.
+    """Generate audio_config.h: mix channels and mixer channel count from the
+    macros' n64_audio.json (see codegen/audio_codegen.py)."""
+    from arm.n64.codegen import audio_codegen
 
-    Parses trait IR files to find Aura.mixChannels usage and generates
-    the appropriate AUDIO_MIX_* constants. Falls back to default channels
-    if no audio usage is detected.
-
-    Args:
-        exporter: N64Exporter instance (used for IR access)
-    """
     tmpl_path = os.path.join(arm.utils.get_n64_deployment_path(), 'src', 'audio', 'audio_config.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'audio', 'audio_config.h')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl_content = f.read()
 
-    # Collect mix channel names from trait IR
-    mix_channel_names = collect_mix_channels_from_ir()
-
-    # Ensure we have at least the default Aura channels
-    default_channels = ['master', 'music', 'fx']
-    for ch in default_channels:
-        if ch not in mix_channel_names:
-            mix_channel_names.append(ch)
-
-    # Generate mix channel defines: AUDIO_MIX_MASTER, AUDIO_MIX_MUSIC, etc.
-    mix_channel_defines = []
-    for i, name in enumerate(mix_channel_names):
-        const_name = f'AUDIO_MIX_{name.upper()}'
-        mix_channel_defines.append(f'#define {const_name} {i}')
-
-    # Detect Aura channel size from source files (default 32 - N64 mixer supports up to 32)
-    channel_size = detect_aura_channel_size()
-
-    output = tmpl_content.format(
-        audio_mixer_channels=channel_size,
-        audio_mix_channel_count=len(mix_channel_names),
-        mix_channel_defines='\n'.join(mix_channel_defines)
-    )
-
+    data = audio_codegen.audio_config_data(audio_codegen.load_audio_json())
     with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
-
-
-def detect_aura_channel_size():
-    """Read Aura channel size from n64_autoloads.json.
-
-    The channel size is extracted from Aura.init() calls during macro
-    processing and stored in the audio_config section of the JSON.
-
-    Returns:
-        int: The detected channel size, or 32 if not found
-    """
-    autoloads_path = os.path.join(arm.utils.build_dir(), 'n64', 'n64_autoloads.json')
-
-    if os.path.exists(autoloads_path):
-        try:
-            with open(autoloads_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                audio_config = data.get('audio_config', {})
-                channel_size = audio_config.get('channel_size')
-                if channel_size is not None:
-                    log.info(f'Detected Aura channel size from macro: {channel_size}')
-                    return int(channel_size)
-        except (json.JSONDecodeError, IOError) as e:
-            log.warn(f'Failed to read audio config from n64_autoloads.json: {e}')
-
-    log.info('Aura channel size not found in JSON, using default: 32')
-    return 32  # Default to N64 max
-
-
-def collect_mix_channels_from_ir():
-    """Scan trait and autoload IR files to find Aura.mixChannels usage.
-
-    Returns:
-        list: List of mix channel names found (e.g., ['music', 'sfx'])
-    """
-    mix_channels = []
-    build_dir = arm.utils.build_dir()
-
-    # Scan both trait_ir and autoload_ir directories
-    ir_dirs = [
-        os.path.join(build_dir, 'n64', 'trait_ir'),
-        os.path.join(build_dir, 'n64', 'autoload_ir'),
-    ]
-
-    for ir_dir in ir_dirs:
-        if not os.path.exists(ir_dir):
-            continue
-
-        # Scan all IR JSON files for audio_mix_volume nodes
-        for filename in os.listdir(ir_dir):
-            if not filename.endswith('.json'):
-                continue
-
-            ir_path = os.path.join(ir_dir, filename)
-            try:
-                with open(ir_path, 'r', encoding='utf-8') as f:
-                    ir_data = json.load(f)
-
-                # Recursively search for audio-related IR nodes
-                _find_mix_channels_in_ir(ir_data, mix_channels)
-            except (json.JSONDecodeError, IOError):
-                continue
-
-    return mix_channels
-
-
-def _find_mix_channels_in_ir(node, channels):
-    """Recursively search IR for mix channel references.
-
-    Args:
-        node: IR node (dict or list) to search
-        channels: List to append found channel names to
-    """
-    if isinstance(node, dict):
-        # Check for audio_mix_volume type with channel prop
-        if node.get('type') == 'audio_mix_volume':
-            props = node.get('props', {})
-            channel = props.get('channel', '')
-            # Extract channel name from AUDIO_MIX_NAME format
-            if channel.startswith('AUDIO_MIX_'):
-                name = channel[10:].lower()  # Remove prefix and lowercase
-                if name and name not in channels:
-                    channels.append(name)
-
-        # Recurse into all values
-        for v in node.values():
-            _find_mix_channels_in_ir(v, channels)
-
-    elif isinstance(node, list):
-        for item in node:
-            _find_mix_channels_in_ir(item, channels)
+        f.write(tmpl_content.format(**data))
 
 
 def generate_audio_makefile_entries(exported_audio):

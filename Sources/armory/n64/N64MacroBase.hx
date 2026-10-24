@@ -23,7 +23,10 @@ import armory.n64.IRTypes;
  */
 class N64MacroBase {
     // Global audio configuration (set by AudioCallConverter when Aura.init() is found)
-    public static var audioConfig:Dynamic = {};
+    // Audio facts for audio_config.h (n64_audio.json): the mixer channel
+    // count from Aura.init(), and the mix channels the game uses
+    public static var audioChannelSize:Null<Int> = null;
+    static var mixChannels:Array<String> = [];
 
     // Extraction runs after typing so the extractors can use the TypedIndex.
     // Jobs keep the build order of trait and autoload classes: generated
@@ -77,6 +80,12 @@ class N64MacroBase {
         return extractedClasses.exists(path);
     }
 
+    /** A trait or autoload class being exported (full path), null otherwise. */
+    public static function extractedClass(path:Null<String>):Null<ClassType> {
+        var c = path != null ? extractedClasses.get(path) : null;
+        return c != null ? c.get() : null;
+    }
+
     /**
      * Register a function writing IR output, run after all extractions.
      */
@@ -93,7 +102,19 @@ class N64MacroBase {
             for (extract in extractions) extract();
             for (write in writers) write();
             writeSignalsJson();
+            writeJsonFile("n64_audio.json", {ir_version: 1, channel_size: audioChannelSize, mix_channels: mixChannels});
         });
+    }
+
+    /**
+     * C constant of an Aura mix channel ("music" -> AUDIO_MIX_MUSIC), recorded
+     * so audio_config.h defines it. Characters C doesn't allow become "_".
+     */
+    public static function mixChannelConstant(name:Null<String>):String {
+        if (name == null || name == "") name = "master";
+        var id = ~/[^A-Z0-9_]/g.replace(name.toUpperCase(), "_");
+        if (mixChannels.indexOf(id) < 0) mixChannels.push(id);
+        return 'AUDIO_MIX_$id';
     }
 
     // Signals used by the game, by "<declaring class>.<name>". Argument types
@@ -202,6 +223,7 @@ class N64MacroBase {
         return {
             type: "method_call",
             method: method,
+            owner: owner,  // Class declaring the method: the emitter translates by it
             object: exprToIR(obj),
             args: args
         };

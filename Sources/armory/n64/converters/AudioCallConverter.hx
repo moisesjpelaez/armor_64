@@ -31,6 +31,12 @@ class AudioCallConverter implements ICallConverter {
     public function new() {}
 
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
+        var node = convert(obj, method, args, rawParams, ctx);
+        if (node != null && node.type.startsWith("audio_")) ctx.getMeta().uses_audio = true;
+        return node;
+    }
+
+    function convert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         // Handle Aura.* calls
         switch (obj.expr) {
             case _ if (TypedIndex.isClassRef(obj, "aura.Aura")):
@@ -93,26 +99,8 @@ class AudioCallConverter implements ICallConverter {
                 // Fallback with fewer args - likely missing parameters
                 return N64MacroBase.unsupported("Aura.createUncompBufferChannel() requires 3 arguments on N64");
 
+            // Configuration, read by scanConfig()
             case "init":
-                // Aura.init({channelSize: N}) - extract channelSize and store in global config
-                if (rawParams.length >= 1) {
-                    switch (rawParams[0].expr) {
-                        case EObjectDecl(fields):
-                            for (field in fields) {
-                                if (field.field == "channelSize") {
-                                    switch (field.expr.expr) {
-                                        case EConst(CInt(v)):
-                                            var channelSize = Std.parseInt(v);
-                                            // Clamp to N64 max of 32 channels
-                                            if (channelSize > 32) channelSize = 32;
-                                            N64MacroBase.audioConfig.channel_size = channelSize;
-                                        default:
-                                    }
-                                }
-                            }
-                        default:
-                    }
-                }
                 return { type: "skip" };
 
             default:
@@ -210,7 +198,7 @@ class AudioCallConverter implements ICallConverter {
                 }
             default:
         }
-        return "AUDIO_MIX_MASTER";
+        return getMixChannelConstant(null);
     }
 
     /**
@@ -226,13 +214,28 @@ class AudioCallConverter implements ICallConverter {
     }
 
     /**
-     * Convert a mix channel name to a C constant.
-     * Follows Aura.mixChannels naming: "music" -> AUDIO_MIX_MUSIC
+     * Audio configuration in a function body: Aura.init({channelSize: N}) sets
+     * the mixer channel count (clamped to the N64's 32). Scanned in every
+     * function, constructors included, since it isn't runtime code.
      */
+    public static function scanConfig(e:Expr):Void {
+        if (e == null) return;
+        switch (e.expr) {
+            case ECall({expr: EField(auraObj, "init")}, [{expr: EObjectDecl(fields)}]) if (TypedIndex.isClassRef(auraObj, "aura.Aura")):
+                for (field in fields) {
+                    switch (field.expr.expr) {
+                        case EConst(CInt(v)) if (field.field == "channelSize"):
+                            N64MacroBase.audioChannelSize = Std.int(Math.min(Std.parseInt(v), 32));
+                        default:
+                    }
+                }
+            default:
+        }
+        haxe.macro.ExprTools.iter(e, scanConfig);
+    }
+
     static function getMixChannelConstant(name:String):String {
-        if (name == null || name == "") return "AUDIO_MIX_MASTER";
-        // Convert channel name to uppercase C constant: "music" -> "AUDIO_MIX_MUSIC"
-        return 'AUDIO_MIX_' + name.toUpperCase();
+        return N64MacroBase.mixChannelConstant(name);
     }
 
     // Helper methods now available in ExprUtils:

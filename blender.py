@@ -95,7 +95,7 @@ def _register_n64_namespace():
     _load_module('arm.n64.utils', os.path.join(n64_pkg_dir, 'utils.py'))
 
     # Codegen leaves (order: no-deps first, then modules that depend on them)
-    for fname in ['signal_codegen', 'trait_emitter', 'tween_helper', 'autoload_emitter', 'trait_generator', 'autoload_generator', 'scene_generator']:
+    for fname in ['signal_codegen', 'trait_emitter', 'tween_helper', 'autoload_emitter', 'trait_generator', 'autoload_generator', 'audio_codegen', 'scene_generator']:
         fpath = os.path.join(codegen_dir, f'{fname}.py')
         if os.path.isfile(fpath):
             _load_module(f'arm.n64.codegen.{fname}', fpath)

@@ -349,10 +349,9 @@ def to_c_literal(value, ctype: str) -> str:
 
 def compute_static_flags(scene_data: dict, trait_info: dict) -> None:
     """Mark objects as static if no dynamic physics and no transform-mutating traits."""
-    traits_data = trait_info.get('traits', {})
-
     def trait_mutates_transform(trait_class: str) -> bool:
-        return traits_data.get(trait_class, {}).get('meta', {}).get('mutates_transform', False)
+        # Scenes store package-relative class names (see trait_key)
+        return get_trait(trait_info, trait_class).get('meta', {}).get('mutates_transform', False)
 
     for scene in scene_data.values():
         for obj in scene.get("objects", []):

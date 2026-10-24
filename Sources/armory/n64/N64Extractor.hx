@@ -75,8 +75,17 @@ class N64Extractor implements IExtractorContext {
             has_remove_late_update: false,
             has_remove_render2d: false,
             dynamic_updates: [],
-            dynamic_fixed_updates: []
+            dynamic_fixed_updates: [],
+            autoloads_used: []
         };
+
+        // Project configuration written in code (e.g. in a constructor)
+        for (field in fields) {
+            switch (field.kind) {
+                case FFun(f): AudioCallConverter.scanConfig(f.expr);
+                default:
+            }
+        }
     }
 
     // ========================================================================
@@ -343,7 +352,10 @@ class N64Extractor implements IExtractorContext {
         if (vector != null) return vector;
 
         // Tweens come from the runtime's pool
-        if (TypedIndex.newClass(e) == "armory.system.Tween") return { type: "tween_alloc" };
+        if (TypedIndex.newClass(e) == "armory.system.Tween") {
+            meta.uses_tween = true;
+            return { type: "tween_alloc" };
+        }
 
         return N64MacroBase.unsupported('new ${tp.name}() is not supported on N64 yet');
     }
@@ -374,7 +386,7 @@ class N64Extractor implements IExtractorContext {
                 case EField(innerObj, memberName):
                     var autoload = AutoloadCallConverter.getAutoloadCName(innerObj);
                     if (autoload != null) {
-                        meta.uses_autoload = true;
+                        useAutoload(autoload);
                         return {
                             type: "autoload_trait_object",
                             value: field,
@@ -388,7 +400,7 @@ class N64Extractor implements IExtractorContext {
         // AutoloadClass.member
         var autoload = AutoloadCallConverter.getAutoloadCName(obj);
         if (autoload != null) {
-            meta.uses_autoload = true;
+            useAutoload(autoload);
             return {
                 type: "autoload_field",
                 value: field,
@@ -457,7 +469,7 @@ class N64Extractor implements IExtractorContext {
             case _ if (TypedIndex.isClassRef(obj, "iron.system.Time")):
                 if (field == "delta") {
                     meta.uses_time = true;
-                    return { type: "ident", value: "dt" };
+                    return { type: "ident", value: "time_delta" };
                 } else if (field == "scale") {
                     meta.uses_time = true;
                     return { type: "ident", value: "time_scale" };
@@ -509,7 +521,7 @@ class N64Extractor implements IExtractorContext {
 
         switch (callExpr.expr) {
             case EField(obj, method):
-                var special = convertSpecialMethodCall(obj, method, params, args);
+                var special = convertSpecialMethodCall(callExpr, obj, method, params, args);
                 if (special != null) return special;
 
                 // Time.time() -> time_get()
@@ -537,7 +549,25 @@ class N64Extractor implements IExtractorContext {
                     if (result != null) return result;
                 }
 
-                // Methods of extracted classes, and the ones the emitters translate
+                // A method of an extracted class, called on an instance
+                var owner = N64MacroBase.extractedClass(TypedIndex.callOwner(obj, method));
+                if (owner != null) {
+                    // Autoloads are singletons: their functions are C globals
+                    var autoload = owner.meta.has(":n64Autoload") || owner.meta.has("n64Autoload") ? owner.name.toLowerCase() : null;
+                    if (autoload != null) {
+                        useAutoload(autoload);
+                        return {
+                            type: "autoload_call",
+                            value: method,
+                            c_code: '${autoload}_$method',
+                            args: args,
+                            props: { c_name: autoload, method: method }
+                        };
+                    }
+                    return N64MacroBase.unsupported('calling $method() on another trait instance is not supported on N64 yet');
+                }
+
+                // The methods the emitters translate
                 return N64MacroBase.methodCall(obj, method, args, exprToIR);
 
             // trace() -> debugf() for N64 debug output
@@ -552,8 +582,8 @@ class N64Extractor implements IExtractorContext {
         }
     }
 
-    /** Hook: `obj.method(...)` handled before the shared rules (null if not). */
-    function convertSpecialMethodCall(obj:Expr, method:String, params:Array<Expr>, args:Array<IRNode>):IRNode {
+    /** Hook: `obj.method(...)` (callExpr is `obj.method`) handled before the shared rules (null if not). */
+    function convertSpecialMethodCall(callExpr:Expr, obj:Expr, method:String, params:Array<Expr>, args:Array<IRNode>):IRNode {
         return null;
     }
 
@@ -629,6 +659,11 @@ class N64Extractor implements IExtractorContext {
 
     public function isAutoload():Bool {
         return false;
+    }
+
+    public function useAutoload(autoload:String):Void {
+        meta.uses_autoload = true;
+        if (autoload != cName && meta.autoloads_used.indexOf(autoload) < 0) meta.autoloads_used.push(autoload);
     }
 }
 #end

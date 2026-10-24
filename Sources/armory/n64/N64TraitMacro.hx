@@ -742,10 +742,6 @@ class TraitExtractor extends N64Extractor {
             meta.uses_transform = true;
             return { type: "ident", value: "object" };
         }
-        if (name == "dt") {
-            meta.uses_time = true;
-            return { type: "ident", value: "dt" };
-        }
         if (memberNames.indexOf(name) >= 0) {
             return { type: "member", value: name };
         }
@@ -781,9 +777,9 @@ class TraitExtractor extends N64Extractor {
         return { type: "ident", value: name };
     }
 
-    // C function of one of this trait's methods: arm_<trait>_<method>
+    // C function of one of this trait's methods: <trait C name>_<method>
     function methodCName(name:String):String {
-        return "arm_" + cName.substring(4) + "_" + name.toLowerCase();  // cName already starts with "arm_"
+        return cName + "_" + name.toLowerCase();
     }
 
     override function convertAssign(e1:Expr, e2:Expr):IRNode {
@@ -823,7 +819,7 @@ class TraitExtractor extends N64Extractor {
         // e.g., MainInstances.player = this -> maininstances_player = data
         if (isAutoloadTraitAssign(e1, e2)) {
             var autoloadInfo = getAutoloadFieldInfo(e1);
-            meta.uses_autoload = true;
+            useAutoload(autoloadInfo.c_name);
             // The stored pointer is this trait's data, which must exist
             meta.stores_self = true;
             return {
@@ -874,15 +870,19 @@ class TraitExtractor extends N64Extractor {
         };
     }
 
-    override function convertSpecialMethodCall(obj:Expr, method:String, params:Array<Expr>, args:Array<IRNode>):IRNode {
-        // super.method()
+    override function convertSpecialMethodCall(callExpr:Expr, obj:Expr, method:String, params:Array<Expr>, args:Array<IRNode>):IRNode {
+        // super.method(): the implementation of the ancestor declaring it
         if (isSuperExpr(obj)) {
             // No parent - skip (shouldn't happen in valid Haxe code)
             if (parentName == null) return { type: "skip" };
+            var ref = TypedIndex.fieldRef(callExpr);
+            var owner = ref != null ? N64MacroBase.extractedClass(ref.owner) : null;
+            if (owner == null) return N64MacroBase.unsupported("super." + method + "() of a class that is not exported is not supported on N64");
             return {
                 type: "super_call",
                 value: parentName,    // Parent trait name
-                method: method,       // Method name (e.g., "onReady", "onUpdate")
+                method: method,
+                cName: N64Extractor.traitCName(owner) + "_" + method.toLowerCase(),
                 args: args
             };
         }
@@ -1267,7 +1267,7 @@ class TraitExtractor extends N64Extractor {
         switch (node.type) {
             case "ident":
                 var name = Std.string(node.value);
-                if (name != excludeParam && name != "null" && name != "true" && name != "false" && name != "object" && name != "dt") {
+                if (name != excludeParam && name != "null" && name != "true" && name != "false" && name != "object" && name != "time_delta") {
                     // First check if it's a class member
                     var memberType = memberTypes.get(name);
                     if (memberType != null && !captures.exists(name)) {

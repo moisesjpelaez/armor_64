@@ -155,8 +155,7 @@ class N64AutoloadMacro {
 
         var output:Dynamic = {
             ir_version: 1,
-            autoloads: autoloads,
-            audio_config: N64MacroBase.audioConfig
+            autoloads: autoloads
         };
 
         N64MacroBase.writeJsonFile("n64_autoloads.json", output);
@@ -237,7 +236,7 @@ class AutoloadExtractor extends N64Extractor {
             members: members,
             functions: functions,
             hasInit: hasInit,
-            meta: { order: order }
+            meta: { order: order, uses_audio: meta.uses_audio }
         };
     }
 

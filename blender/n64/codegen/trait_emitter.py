@@ -21,30 +21,6 @@ from typing import Dict, List, Optional, Set
 
 log = logging.getLogger(__name__)
 
-# Lifecycle method name mappings: Haxe method name -> (C function suffix, has_dt_param)
-# Used by emit_super_call and generate_all_event_implementations to avoid hardcoded strings
-LIFECYCLE_MAP = {
-    # Constructor/init variants
-    "new": ("on_ready", False),
-    "onReady": ("on_ready", False),
-    "init": ("on_ready", False),
-    # Update variants
-    "onUpdate": ("on_update", True),
-    "update": ("on_update", True),
-    # Fixed update variants
-    "onFixedUpdate": ("on_fixed_update", True),
-    "fixedUpdate": ("on_fixed_update", True),
-    # Late update variants
-    "onLateUpdate": ("on_late_update", True),
-    "lateUpdate": ("on_late_update", True),
-    # Remove variants
-    "onRemove": ("on_remove", False),
-    "remove": ("on_remove", False),
-    # Render2D variants
-    "onRender2D": ("on_render2d", False),
-    "render2D": ("on_render2d", False),
-}
-
 
 class TraitEmitter:
     """Emits C code from IR nodes. No semantic analysis, just translation.
@@ -469,9 +445,6 @@ class TraitEmitter:
         name = node.get("value", "")
         if name == "object":
             return "((ArmObject*)obj)"
-        if name == "dt":
-            # Time.delta in Haxe -> time_delta global variable in C
-            return "time_delta"
         return name
 
     def emit_method_ref(self, node: Dict) -> str:
@@ -1054,21 +1027,12 @@ class TraitEmitter:
         parent_ir = self.all_traits[parent_name]
         parent_c_name = parent_ir.get("c_name", parent_name.lower())
 
-        # Map method to lifecycle function using LIFECYCLE_MAP
-        if method in LIFECYCLE_MAP:
-            c_suffix, has_dt = LIFECYCLE_MAP[method]
-            if has_dt:
-                return f"{parent_c_name}_{c_suffix}(obj, dt, data)"
-            else:
-                return f"{parent_c_name}_{c_suffix}(obj, data)"
-        else:
-            # Generic parent method call
-            arg_strs = [self.emit(a) for a in args if self.emit(a)]
-            args_part = ", ".join(arg_strs) if arg_strs else ""
-            if args_part:
-                return f"{parent_c_name}_{method}(obj, data, {args_part})"
-            else:
-                return f"{parent_c_name}_{method}(obj, data)"
+        # super(): the parent's constructor, i.e. its on_ready
+        if method == "new":
+            return f"{parent_c_name}_on_ready(obj, data)"
+        # super.method(): the C function of the ancestor declaring it (Haxe gives its name)
+        arg_strs = ["obj", "data"] + [a for a in (self.emit(a) for a in args) if a]
+        return f"{node.get('cName', '')}({', '.join(arg_strs)})"
 
     def emit_trait_method_call(self, node: Dict) -> str:
         """Emit call to this trait's own method (generated as C function).
@@ -1317,18 +1281,15 @@ class TraitEmitter:
         if not obj:
             return ""
 
-        # Determine receiver type for method routing
-        receiver_ctype = ""
-        receiver_name = obj_node.get("value", "")
-        if obj_node.get("type") == "member":
-            receiver_ctype = self._get_member_ctype(receiver_name)
+        # Routed by the class declaring the method (see emitterMethods in N64MacroBase.hx)
+        owner = node.get("owner", "")
 
         # getAnimation() call on ArmObject -> o->animation
-        if method == "getAnimation":
+        if owner == "iron.object.Object" and method == "getAnimation":
             return f"((ArmObject*){obj})->animation"
 
         # Animation methods: play(name), pause(), resume()
-        if receiver_ctype == "ArmAnimation*":
+        if owner == "iron.object.Animation":
             if method == "play":
                 anim_name = self.emit(args[0]) if args else '""'
                 return f"animation_play({obj}, {anim_name})"
@@ -1341,7 +1302,9 @@ class TraitEmitter:
                 return f"animation_set_speed({obj}, {spd})"
 
         # Audio handle methods
-        if method == "play":
+        if owner != "aura.channels.BaseChannelHandle":
+            pass
+        elif method == "play":
             return f"arm_audio_start(&{obj})"
         elif method == "stop":
             return f"arm_audio_stop(&{obj})"

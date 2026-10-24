@@ -39,6 +39,7 @@ class AutoloadCallConverter implements ICallConverter {
     }
 
     function convertAutoloadCall(cName:String, method:String, args:Array<IRNode>, ctx:IExtractorContext):IRNode {
+        ctx.useAutoload(cName);
         // Generate: autoload_method(args...)
         return {
             type: "autoload_call",

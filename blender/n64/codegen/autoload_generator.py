@@ -343,11 +343,8 @@ def prepare_autoload_template_data():
         c_name = autoload_ir.get("c_name", name.lower())
         autoload_names.append(c_name)
 
-        # Detect audio usage in functions
-        for func in autoload_ir.get("functions", []):
-            if _detect_audio_in_nodes(func.get("body", [])):
-                features['has_audio'] = True
-                break
+        if autoload_ir.get("meta", {}).get("uses_audio"):
+            features['has_audio'] = True
 
         # Prepare template data for this autoload
         tmpl_data = _prepare_autoload_template_data(name, autoload_ir, signals)
@@ -360,21 +357,3 @@ def prepare_autoload_template_data():
     }
 
     return autoload_data, master_data, features
-
-
-def _detect_audio_in_nodes(nodes: list) -> bool:
-    """Recursively detect audio-related IR nodes."""
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        node_type = node.get("type", "")
-        if node_type.startswith("audio_"):
-            return True
-        # Check children recursively
-        if _detect_audio_in_nodes(node.get("children", [])):
-            return True
-        if _detect_audio_in_nodes(node.get("args", [])):
-            return True
-        if _detect_audio_in_nodes(node.get("body", [])):
-            return True
-    return False
