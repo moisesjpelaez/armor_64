@@ -394,7 +394,9 @@ class N64Extractor implements IExtractorContext {
                 }
             case EField(obj, "text") if (ctypeOf(obj) == "UILabel*"):
                 meta.uses_ui = true;
-                return { type: "label_set_text", args: [exprToIR(obj), exprToIR(e2)] };
+                var text = exprToIR(e2);
+                N64MacroBase.recordLabelText(text);
+                return { type: "label_set_text", args: [exprToIR(obj), text] };
             default:
         }
         return null;

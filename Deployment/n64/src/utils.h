@@ -49,7 +49,8 @@ static inline char* _str_get_buffer(void) {
 
 #define _str_concat(fmt, ...) ({ \
     char* _buf = _str_get_buffer(); \
-    snprintf(_buf, STR_FMT_BUFFER_SIZE, fmt, ##__VA_ARGS__); \
+    if (snprintf(_buf, STR_FMT_BUFFER_SIZE, fmt, ##__VA_ARGS__) >= STR_FMT_BUFFER_SIZE) \
+        ARM_LIMIT_REACHED(STR_FMT_BUFFER_SIZE); \
     _buf; \
 })
 

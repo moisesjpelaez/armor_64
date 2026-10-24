@@ -72,6 +72,7 @@ package armory.n64;
  */
 
 typedef IRNode = {
+    ?maxLength: Null<Int>,  // Strings: most characters the value can have (null: unknown), not written to the IR
     type: String,
     ?value: Dynamic,
     ?children: Array<IRNode>,

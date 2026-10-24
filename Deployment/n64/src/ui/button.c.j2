@@ -429,6 +429,7 @@ void button_on_focus(int index, ButtonCallback cb, void* user_data) {{
 void button_set_text(int index, const char *text) {{
     if (index < 0 || index >= g_button_count) return;
     if (text) {{
+        if (strlen(text) >= UI_BUTTON_TEXT_SIZE) ARM_LIMIT_REACHED(UI_BUTTON_TEXT_SIZE);
         strncpy(g_buttons[index].text, text, UI_BUTTON_TEXT_SIZE - 1);
         g_buttons[index].text[UI_BUTTON_TEXT_SIZE - 1] = '\0';
     }} else {{

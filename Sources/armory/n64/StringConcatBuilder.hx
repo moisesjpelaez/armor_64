@@ -42,11 +42,38 @@ class StringConcatBuilder {
         collectParts(e1, formatParts, args);
         collectParts(e2, formatParts, args);
 
-        return {
+        var node:IRNode = {
             type: "sprintf",
             value: formatParts.join(""),
             args: args
         };
+        node.maxLength = maxLength(formatParts, args);
+        N64MacroBase.recordConcatLength(node.maxLength);
+        return node;
+    }
+
+    // Most characters the formatted string can have, null if unknown (a
+    // string argument that isn't a literal)
+    static function maxLength(formatParts:Array<String>, args:Array<IRNode>):Null<Int> {
+        var length = 0;
+        var arg = 0;
+        for (part in formatParts) {
+            switch (part) {
+                case "%ld": length += 11;  // -2147483648
+                case "%.2f": length += 43; // -3.4e38 with 2 decimals
+                case "%d": length += 1;    // Bool: 0 or 1
+                case "%s":
+                    var a = args[arg];
+                    var known = a != null ? a.maxLength != null ? a.maxLength : (a.type == "string" ? Std.string(a.value).length : null) : null;
+                    if (known == null) return null;
+                    length += known;
+                default:
+                    length += part.length;
+                    continue;
+            }
+            arg++;
+        }
+        return length;
     }
 
     /**

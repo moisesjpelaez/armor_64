@@ -174,9 +174,10 @@ A full pool or container reports it once with `debugf` (`ARM_LIMIT_REACHED` in
 
 - scene counts (bodies, colliders, contact and button handlers, objects, animation clips): exact, for the largest scene, plus the copies spawnable templates may add (`SPAWN_MAX_INSTANCES` each)
 - code facts the macros record, times the instances in the scene: tweens (member tweens of each trait instance, plus autoload tweens, which survive scene changes), signal subscribers (one per `connect()` site and instance of its class or subclasses; one for an autoload), map keys (literal ones: length and distinct keys)
-- UI pools: exact, for the largest canvas (text sizes keep room for runtime text)
+- UI pools: exact, for the largest canvas; label text also fits the text the code sets at runtime
+- derived bounds: physics pairs and contacts (the body pairs that can overlap / collide; a budget: used only when below the default, since the worst case is far above what overlaps at once), string concatenations and label text (the longest value the code can build)
 
-Values that can't be counted keep the default as a floor: a `new Tween()` inside a function, a map key built at runtime.
+Values that can't be counted keep the default as a floor: a `new Tween()` inside a function, a map key built at runtime, a string argument that isn't a literal. Concatenated strings and label/button text report truncation with `ARM_LIMIT_REACHED` too.
 
 | Limit | Default | What it limits | Where it's defined |
 |---|---|---|---|
@@ -191,10 +192,10 @@ Values that can't be counted keep the default as a floor: a `new Tween()` inside
 | `MAX_CONTACT_BODIES` | 16 | Bodies with contact handlers | `limits.h` |
 | `MAX_CONTACT_SUBSCRIBERS` | 4 | Contact handlers of one body | `limits.h` |
 | `OIMO_MAX_PROXIES` | 128 | Broadphase proxies (one per shape) | `limits.h` |
-| `OIMO_MAX_PROXY_PAIRS` | 256 | Broadphase overlapping pairs | `limits.h` |
-| `OIMO_MAX_CONTACTS` | 64 | Contacts between shapes | `limits.h` |
+| `OIMO_MAX_PROXY_PAIRS` | 256 | Broadphase overlapping pairs (budget: the bound is used when lower) | `limits.h` |
+| `OIMO_MAX_CONTACTS` | 64 | Contacts between shapes (budget: the bound is used when lower) | `limits.h` |
 | `OIMO_MAX_ISLAND_BODIES` | 32 | Bodies in one simulation island | `limits.h` |
-| `OIMO_MAX_ISLAND_SOLVERS` | 64 | Contact solvers in one simulation island | `limits.h` |
+| `OIMO_MAX_ISLAND_SOLVERS` | 64 | Contact solvers in one simulation island (at most the contacts) | `limits.h` |
 | `OIMO_MAX_RIGID_BODIES` | 32 | Bodies visited while building one island | `limits.h` |
 | `OIMO_MESH_MAX_CONTACTS` | 4 | Contacts kept per mesh collision (the shallowest is replaced) | `limits.h` |
 | `OIMO_BVH_MAX_TRIANGLES` | 4 | Triangles of the largest mesh collider (its BVH) | `limits.h` |

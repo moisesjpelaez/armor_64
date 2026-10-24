@@ -21,8 +21,13 @@ compute() replaces defaults with values worked out from the project:
   instance), map keys (literal ones)
 - UI canvas data: exact, for the largest canvas (one is loaded at a time)
 
+- derived bounds: physics pairs and contacts (the body pairs that can
+  overlap / collide, at most the default: worst cases are far above what
+  overlaps at once), string concatenations and label text (the longest value
+  the code can build)
+
 A value that can't be counted (a `new Tween()` in a function, a map key built
-at runtime) keeps the default, at least.
+at runtime, a string argument that isn't a literal) keeps the default, at least.
 """
 
 import math
@@ -44,10 +49,10 @@ DEFAULTS = {
     "MAX_CONTACT_BODIES": (16, "Bodies with contact handlers"),
     "MAX_CONTACT_SUBSCRIBERS": (4, "Contact handlers of one body"),
     "OIMO_MAX_PROXIES": (128, "Broadphase proxies (one per shape)"),
-    "OIMO_MAX_PROXY_PAIRS": (256, "Broadphase overlapping pairs"),
-    "OIMO_MAX_CONTACTS": (64, "Contacts between shapes"),
+    "OIMO_MAX_PROXY_PAIRS": (256, "Broadphase overlapping pairs (budget: the bound is used when lower)"),
+    "OIMO_MAX_CONTACTS": (64, "Contacts between shapes (budget: the bound is used when lower)"),
     "OIMO_MAX_ISLAND_BODIES": (32, "Bodies in one simulation island"),
-    "OIMO_MAX_ISLAND_SOLVERS": (64, "Contact solvers in one simulation island"),
+    "OIMO_MAX_ISLAND_SOLVERS": (64, "Contact solvers in one simulation island (at most the contacts)"),
     "OIMO_MAX_RIGID_BODIES": (32, "Bodies visited while building one island"),
     "OIMO_MESH_MAX_CONTACTS": (4, "Contacts kept per mesh collision (the shallowest is replaced)"),
     "OIMO_BVH_MAX_TRIANGLES": (4, "Triangles of the largest mesh collider (its BVH)"),
@@ -107,6 +112,7 @@ def scene_counts(scene: Dict, trait_key: Callable[[str], str], traits: Dict) -> 
                 button = (event.get("c_button"), event.get("event_type"))
                 button_subscribers[button] = button_subscribers.get(button, 0) + 1
 
+    physics = []
     for obj in objects:
         rigid_body = obj.get("rigid_body")
         if rigid_body:
@@ -114,6 +120,7 @@ def scene_counts(scene: Dict, trait_key: Callable[[str], str], traits: Dict) -> 
                 mesh_colliders += 1
             else:
                 bodies += 1
+            physics.append((_body_kind(rigid_body), rigid_body.get("collision_group", 1), rigid_body.get("collision_mask", 1)))
             # Contact handlers subscribed when the scene loads (scene_generator)
             handlers = sum(1 for trait in obj.get("traits", [])
                            for event in meta(trait).get("contact_events", [])
@@ -135,7 +142,36 @@ def scene_counts(scene: Dict, trait_key: Callable[[str], str], traits: Dict) -> 
         "button_subscribers": max(button_subscribers.values(), default=0),
         "anim_clips": anim_clips,
         "instances": instances,
+        "physics": physics,
     }
+
+
+def _body_kind(rigid_body: Dict) -> str:
+    """Oimo body type, as scene_generator creates it."""
+    if rigid_body.get("shape") == "mesh":
+        return "static"
+    animated = rigid_body.get("is_animated", False)
+    if rigid_body.get("rb_type", "ACTIVE") == "PASSIVE":
+        return "kinematic" if animated else "static"
+    return "dynamic" if rigid_body.get("is_dynamic", True) and not animated else "kinematic"
+
+
+def _physics_bounds(physics: List[tuple]) -> tuple:
+    """(pairs, contacts) the bodies of a scene can make in one step.
+
+    Broadphase pairs: every two bodies but two static ones. Contacts: pairs
+    with a dynamic body whose collision filters accept each other
+    (ContactManager.shouldCollide).
+    """
+    movable = [b for b in physics if b[0] != "static"]
+    static = len(physics) - len(movable)
+    pairs = len(movable) * (len(movable) - 1) // 2 + len(movable) * static
+    contacts = 0
+    for i, (kind1, group1, mask1) in enumerate(physics):
+        for kind2, group2, mask2 in physics[i + 1:]:
+            if "dynamic" in (kind1, kind2) and (group1 & mask2) and (group2 & mask1):
+                contacts += 1
+    return pairs, contacts
 
 
 def compute(scenes: Optional[List[Dict]] = None, mesh_triangles: int = 0,
@@ -160,12 +196,14 @@ def compute(scenes: Optional[List[Dict]] = None, mesh_triangles: int = 0,
         values.update(_code_limits(effective, traits, autoloads, signals))
     if facts:
         values.update(_map_limits(facts))
+        if facts.get("concat_length") is not None:
+            values["STR_FMT_BUFFER_SIZE"] = facts["concat_length"] + 1  # with the terminator
     if mesh_triangles:
         triangles = max(mesh_triangles, 4)
         values["OIMO_BVH_MAX_TRIANGLES"] = triangles
         values["OIMO_BVH_MAX_DEPTH"] = max(int(math.ceil(math.log2(max(triangles, 2)))) + 2, 4)
     if ui_canvases:
-        values.update(_ui_limits(ui_canvases))
+        values.update(_ui_limits(ui_canvases, (facts or {}).get("label_text_length", None) if facts else None))
     return values
 
 
@@ -178,6 +216,8 @@ def _with_spawns(scene: Dict, templates: List[Dict], max_alive: int) -> Dict:
             if key == "instances":
                 for trait, n in value.items():
                     total["instances"][trait] = total["instances"].get(trait, 0) + n * copies
+            elif key == "physics":
+                total["physics"] = list(total.get("physics", [])) + list(value) * copies
             elif key in ("contact_subscribers", "anim_clips"):
                 total[key] = max(total.get(key, 0), value)  # per object, not a total
             elif isinstance(value, int) and key != "max_alive":
@@ -191,7 +231,13 @@ def _scene_limits(scenes: List[Dict]) -> Dict[str, int]:
         return max(1, max(s.get(key, 0) for s in scenes))
 
     bodies = need("bodies")
+    bounds = [_physics_bounds(s.get("physics", [])) for s in scenes]
+    pairs = min(DEFAULTS["OIMO_MAX_PROXY_PAIRS"][0], max(1, max(b[0] for b in bounds)))
+    contacts = min(DEFAULTS["OIMO_MAX_CONTACTS"][0], max(1, max(b[1] for b in bounds)))
     return {
+        "OIMO_MAX_PROXY_PAIRS": pairs,
+        "OIMO_MAX_CONTACTS": contacts,
+        "OIMO_MAX_ISLAND_SOLVERS": min(DEFAULTS["OIMO_MAX_ISLAND_SOLVERS"][0], contacts),
         "MAX_PHYSICS_BODIES": bodies,
         "MAX_MESH_COLLIDERS": need("mesh_colliders"),
         "OIMO_MAX_PROXIES": max(1, bodies + need("mesh_colliders")),
@@ -267,28 +313,34 @@ def _map_limits(facts: Dict) -> Dict[str, int]:
     return values
 
 
-def _ui_limits(canvases: Dict) -> Dict[str, int]:
+def _ui_limits(canvases: Dict, label_text_set: Optional[int]) -> Dict[str, int]:
     # The largest canvas's counts: canvas_clear() empties the pools and the
     # canvas fills them from its definitions
     def largest(key):
         return max(1, max((len(c.get(key, [])) for c in canvases.values()), default=0))
 
-    # Text can change at runtime (ui_label_set_text, button_set_text)
-    label_text = 32
+    # Label text: the canvas's, and what the code sets at runtime
+    # (label_set_text; null: unbounded, so room as before). Button text only
+    # comes from the canvas
+    label_text = 1
+    button_text = 1
     group_children = 1
     for canvas in canvases.values():
         for label in canvas.get("labels", []):
             label_text = max(label_text, len(label.get("text", "")) + 1)
+        for button in canvas.get("buttons", []):
+            button_text = max(button_text, len(button.get("text", "")) + 1)
         for group in canvas.get("groups", []):
             # Children of each kind are listed separately
             group_children = max(group_children, *(len(group.get(f"child_{kind}_indices", []))
                                                    for kind in ("image", "label", "button", "panel", "group")))
     return {
         "UI_MAX_LABELS": largest("labels"),
-        "UI_LABEL_TEXT_SIZE": 1 << (label_text - 1).bit_length(),
+        "UI_LABEL_TEXT_SIZE": max(label_text, label_text_set + 1) if label_text_set is not None
+            else 1 << (max(label_text, DEFAULTS["UI_LABEL_TEXT_SIZE"][0]) - 1).bit_length(),
         "UI_MAX_IMAGES": largest("images"),
         "UI_MAX_BUTTONS": largest("buttons"),
-        "UI_BUTTON_TEXT_SIZE": DEFAULTS["UI_BUTTON_TEXT_SIZE"][0],
+        "UI_BUTTON_TEXT_SIZE": button_text,
         "UI_MAX_PANELS": largest("panels"),
         "UI_MAX_GROUPS": largest("groups"),
         "UI_MAX_GROUP_CHILDREN": group_children,

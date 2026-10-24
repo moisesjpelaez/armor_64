@@ -144,6 +144,22 @@ class N64MacroBase {
         }
     }
 
+    // Longest string a concatenation builds / a label is set to at runtime;
+    // null once one can't be bounded
+    static var concatLength:Null<Int> = 0;
+    static var labelTextLength:Null<Int> = 0;
+
+    public static function recordConcatLength(length:Null<Int>):Void {
+        concatLength = length == null || concatLength == null ? null : Std.int(Math.max(concatLength, length));
+    }
+
+    public static function recordLabelText(value:IRNode):Void {
+        var length:Null<Int> = value == null ? null
+            : value.maxLength != null ? value.maxLength
+            : value.type == "string" ? Std.string(value.value).length : null;
+        labelTextLength = length == null || labelTextLength == null ? null : Std.int(Math.max(labelTextLength, length));
+    }
+
     static function writeLimitFactsJson():Void {
         // Distinct keys per map type, null when not countable
         var keys:Dynamic = {};
@@ -151,7 +167,13 @@ class N64MacroBase {
         for (t in types) {
             Reflect.setField(keys, t, dynamicMapTypes.exists(t) ? null : Lambda.count(mapKeys.get(t)));
         }
-        writeJsonFile("n64_limits.json", {ir_version: 1, map_key_length: mapKeyLength, map_keys: keys});
+        writeJsonFile("n64_limits.json", {
+            ir_version: 1,
+            map_key_length: mapKeyLength,
+            map_keys: keys,
+            concat_length: concatLength,
+            label_text_length: labelTextLength
+        });
     }
 
     // Signals used by the game, by "<declaring class>.<name>". Argument types
