@@ -159,13 +159,12 @@ def _body_kind(rigid_body: Dict) -> str:
 def _physics_bounds(physics: List[tuple]) -> tuple:
     """(pairs, contacts) the bodies of a scene can make in one step.
 
-    Broadphase pairs: every two bodies but two static ones. Contacts: pairs
-    with a dynamic body whose collision filters accept each other
-    (ContactManager.shouldCollide).
+    Broadphase pairs: every two bodies with a dynamic one (the broadphase
+    skips the others). Contacts: those pairs whose collision filters accept
+    each other (ContactManager.shouldCollide).
     """
-    movable = [b for b in physics if b[0] != "static"]
-    static = len(physics) - len(movable)
-    pairs = len(movable) * (len(movable) - 1) // 2 + len(movable) * static
+    dynamic = sum(1 for b in physics if b[0] == "dynamic")
+    pairs = dynamic * (dynamic - 1) // 2 + dynamic * (len(physics) - dynamic)
     contacts = 0
     for i, (kind1, group1, mask1) in enumerate(physics):
         for kind2, group2, mask2 in physics[i + 1:]:

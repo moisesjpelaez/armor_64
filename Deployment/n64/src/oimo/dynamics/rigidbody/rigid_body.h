@@ -499,6 +499,12 @@ static inline int oimo_rigid_body_get_type(const OimoRigidBody* rb) {
 
 static inline void oimo_rigid_body_set_type(OimoRigidBody* rb, int type) {
     rb->_type = type;
+    // The broadphase filters pairs by these
+    for (OimoShape* s = rb->_shapeList; s != NULL; s = s->_next) {
+        if (s->_proxy == NULL) continue;
+        s->_proxy->_isStatic = type == OIMO_RIGID_BODY_STATIC;
+        s->_proxy->_isDynamic = type == OIMO_RIGID_BODY_DYNAMIC;
+    }
     oimo_rigid_body_update_mass(rb);
 }
 

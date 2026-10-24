@@ -133,7 +133,9 @@ static inline void oimo_broadphase_collect_pairs_bruteforce(OimoBroadPhase* bp) 
         OimoProxy* p2 = p1->_next;
         while (p2 != NULL) {
             bp->_testCount++;
-            if (p1->_isStatic && p2->_isStatic) {
+            // Only pairs with a dynamic body: the contact manager drops the
+            // others (ContactManager.shouldCollide), so they'd only use pair slots
+            if (!p1->_isDynamic && !p2->_isDynamic) {
                 p2 = p2->_next;
                 continue;
             }
