@@ -4,6 +4,7 @@
 // 1:1 port from OimoPhysics Island.hx
 
 #include "../common/vec3.h"
+#include "../../limits.h"
 #include "../common/mat3.h"
 #include "../common/setting.h"
 #include "time_step.h"
@@ -12,9 +13,6 @@
 #include "constraint/position_correction_algorithm.h"
 #include "constraint/solver/pgs/pgs_contact_constraint_solver.h"
 
-// Island size limits for N64
-#define OIMO_MAX_ISLAND_BODIES 32
-#define OIMO_MAX_ISLAND_SOLVERS 64
 
 typedef struct OimoIsland {
     OimoVec3 gravity;
@@ -76,6 +74,8 @@ static inline void oimo_island_add_rigid_body(OimoIsland* island, OimoRigidBody*
     if (island->numRigidBodies < OIMO_MAX_ISLAND_BODIES) {
         rb->_addedToIsland = 1;
         island->rigidBodies[island->numRigidBodies++] = rb;
+    } else {
+        ARM_LIMIT_REACHED(OIMO_MAX_ISLAND_BODIES);
     }
 }
 
@@ -94,6 +94,8 @@ static inline void oimo_island_add_solver(OimoIsland* island, OimoPgsContactCons
                 island->solversNgs[island->numSolversNgs++] = solver;
             }
         }
+    } else {
+        ARM_LIMIT_REACHED(OIMO_MAX_ISLAND_SOLVERS);
     }
 }
 

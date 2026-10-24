@@ -1,5 +1,6 @@
 // object.c - Object lifecycle management
 #include "object.h"
+#include "../../limits.h"
 #include "../../engine.h"
 #include "../../data/scenes.h"
 
@@ -10,7 +11,6 @@
 
 // Deferred removal queue - objects are marked for removal but physics cleanup
 // is deferred until safe (after contact dispatch completes)
-#define MAX_PENDING_REMOVALS 32
 
 typedef struct {
     ArmObject* obj;
@@ -45,6 +45,8 @@ static void object_remove_internal(ArmObject* obj, SceneId scene_id, bool recycl
         g_pending_removals[g_pending_count].scene_id = scene_id;
         g_pending_removals[g_pending_count].recycle = recycle;
         g_pending_count++;
+    } else {
+        ARM_LIMIT_REACHED(MAX_PENDING_REMOVALS);
     }
 }
 

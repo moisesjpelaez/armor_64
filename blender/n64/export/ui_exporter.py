@@ -959,19 +959,13 @@ def write_label_h(exporter):
         label_defines_lines.append('')
         total_label_count = max(total_label_count, len(labels))
 
-    max_label_text_size = 32
-    for canvas in exporter.ui_canvas_data.values():
-        for label in canvas.get('labels', []):
-            max_label_text_size = max(max_label_text_size, len(label.get('text', '')) + 1)
-    max_label_text_size = 1 << (max_label_text_size - 1).bit_length()
-
     output = tmpl.format(
         canvas_width=320,
         canvas_height=240,
         label_defines='\n'.join(label_defines_lines) if label_defines_lines else '// No labels',
         label_count=total_label_count,
-        max_labels=max(1, total_label_count + 4),
-        max_label_text_size=max_label_text_size,
+        max_labels=exporter.limits['UI_MAX_LABELS'],
+        max_label_text_size=exporter.limits['UI_LABEL_TEXT_SIZE'],
     )
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(output)
@@ -1063,7 +1057,7 @@ def write_image_h(exporter):
     output = tmpl.format(
         image_defines='\n'.join(image_defines_lines) if image_defines_lines else '// No images',
         image_count=total_image_count,
-        max_images=max(1, total_image_count + 4),
+        max_images=exporter.limits['UI_MAX_IMAGES'],
     )
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(output)
@@ -1153,7 +1147,8 @@ def write_button_h(exporter):
     output = tmpl.format(
         button_defines='\n'.join(button_defines_lines) if button_defines_lines else '// No buttons',
         button_count=total_button_count,
-        max_buttons=max(1, total_button_count + 2),
+        max_buttons=exporter.limits['UI_MAX_BUTTONS'],
+        button_text_size=exporter.limits['UI_BUTTON_TEXT_SIZE'],
     )
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(output)
@@ -1265,7 +1260,7 @@ def write_panel_h(exporter):
     output = tmpl.format(
         panel_defines='\n'.join(panel_defines_lines) if panel_defines_lines else '// No panels',
         panel_count=total_panel_count,
-        max_panels=max(1, total_panel_count + 2),
+        max_panels=exporter.limits['UI_MAX_PANELS'],
     )
     with open(out_path, 'w', encoding='utf-8') as f:
         f.write(output)
@@ -1361,19 +1356,6 @@ def write_canvas_h(exporter):
         default=0
     )
 
-    max_groups = max(1, total_group_count + 2)
-    max_group_children = 8
-    for canvas in exporter.ui_canvas_data.values():
-        for group in canvas.get('groups', []):
-            child_count = max(
-                len(group.get('child_image_indices', [])),
-                len(group.get('child_label_indices', [])),
-                len(group.get('child_button_indices', [])),
-                len(group.get('child_panel_indices', [])),
-                len(group.get('child_group_indices', []))
-            )
-            max_group_children = max(max_group_children, child_count)
-
     # Build UI scene defines (Koui scenes within a canvas)
     ui_scene_defines_lines = []
     max_ui_scene_count = 0
@@ -1391,8 +1373,8 @@ def write_canvas_h(exporter):
         group_defines='\n'.join(group_defines_lines) if group_defines_lines else '// No groups',
         group_count=total_group_count,
         element_count=total_element_count,
-        max_groups=max_groups,
-        max_group_children=max_group_children,
+        max_groups=exporter.limits['UI_MAX_GROUPS'],
+        max_group_children=exporter.limits['UI_MAX_GROUP_CHILDREN'],
         ui_scene_defines='\n'.join(ui_scene_defines_lines) if ui_scene_defines_lines else '// No UI scenes',
         ui_scene_count=max_ui_scene_count,
     )

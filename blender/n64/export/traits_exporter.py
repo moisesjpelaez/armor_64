@@ -30,6 +30,20 @@ def write_types(exporter):
         f.write(output)
 
 
+def write_limits(exporter):
+    """Generate limits.h: the engine limits computed for this project (codegen/limits.py)."""
+    from arm.n64.codegen import limits
+
+    tmpl_path = os.path.join(arm.utils.get_n64_deployment_path(), 'src', 'limits.h.j2')
+    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'limits.h')
+
+    with open(tmpl_path, 'r', encoding='utf-8') as f:
+        tmpl_content = f.read()
+
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write(tmpl_content.format(**limits.header_data(exporter.limits)))
+
+
 def write_traits(exporter):
     """Generate traits.h and traits.c files.
 

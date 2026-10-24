@@ -3,6 +3,7 @@
 // bvh.h - Simple BVH for static mesh triangle queries (N64 optimized)
 
 #include "../geometry/aabb.h"
+#include "../../../limits.h"
 #include "../../common/vec3.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -12,9 +13,6 @@
 extern "C" {
 #endif
 
-// BVH limits (computed from scene mesh colliders at export time)
-#define OIMO_BVH_MAX_TRIANGLES {max_bvh_triangles}
-#define OIMO_BVH_MAX_DEPTH {max_bvh_depth}
 
 // Maximum triangles per leaf before splitting
 #define OIMO_BVH_LEAF_THRESHOLD 4

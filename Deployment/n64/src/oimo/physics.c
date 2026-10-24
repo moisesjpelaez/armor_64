@@ -1,5 +1,6 @@
 // physics.c - Mini-engine physics implementation
 #include "physics.h"
+#include "../limits.h"
 #include "../events/physics_events.h"
 #include "../engine.h"
 #include "../iron/object/object.h"
@@ -11,7 +12,6 @@
 #include <t3d/t3d.h>
 #include <string.h>
 
-#define MAX_PHYSICS_BODIES {max_physics_bodies}
 
 // Static pools
 static OimoWorld g_world;
@@ -25,11 +25,11 @@ static void* g_contact_user_data = NULL;
 static OimoRigidBody g_bodies[MAX_PHYSICS_BODIES];
 static OimoShape g_shapes[MAX_PHYSICS_BODIES];
 
-typedef union {{
+typedef union {
     OimoSphereGeometry sphere;
     OimoBoxGeometry box;
     OimoCapsuleGeometry capsule;
-}} GeometryUnion;
+} GeometryUnion;
 static GeometryUnion g_geometries[MAX_PHYSICS_BODIES];
 
 // Free list for O(1) body allocation/deallocation
@@ -43,27 +43,28 @@ static OimoShape g_mesh_shapes[MAX_MESH_COLLIDERS];
 static bool g_mesh_used[MAX_MESH_COLLIDERS];
 
 // Pool helpers - O(1) free list implementation
-static OimoRigidBody* alloc_body(void) {{
-    if (g_free_count == 0) {{
+static OimoRigidBody* alloc_body(void) {
+    if (g_free_count == 0) {
+        ARM_LIMIT_REACHED(MAX_PHYSICS_BODIES);
         return NULL;
-    }}
+    }
     int16_t idx = g_free_list[--g_free_count];
     return &g_bodies[idx];
-}}
+}
 
-static void free_body(OimoRigidBody* rb) {{
+static void free_body(OimoRigidBody* rb) {
     int idx = (int)(rb - g_bodies);
-    if (idx >= 0 && idx < MAX_PHYSICS_BODIES) {{
+    if (idx >= 0 && idx < MAX_PHYSICS_BODIES) {
         g_free_list[g_free_count++] = (int16_t)idx;
-    }}
-}}
+    }
+}
 
-static int get_body_index(OimoRigidBody* rb) {{
+static int get_body_index(OimoRigidBody* rb) {
     return (int)(rb - g_bodies);
-}}
+}
 
 // World management
-void physics_init(void) {{
+void physics_init(void) {
     if (g_initialized) return;
 
     memset(g_bodies, 0, sizeof(g_bodies));
@@ -72,9 +73,9 @@ void physics_init(void) {{
 
     // Initialize free list - all bodies available, in reverse order for LIFO
     g_free_count = MAX_PHYSICS_BODIES;
-    for (int i = 0; i < MAX_PHYSICS_BODIES; i++) {{
+    for (int i = 0; i < MAX_PHYSICS_BODIES; i++) {
         g_free_list[i] = (int16_t)(MAX_PHYSICS_BODIES - 1 - i);
-    }}
+    }
 
     // Mesh colliders
     memset(g_mesh_geometries, 0, sizeof(g_mesh_geometries));
@@ -90,15 +91,15 @@ void physics_init(void) {{
 
     g_paused = false;
     g_initialized = true;
-}}
+}
 
-void physics_shutdown(void) {{
+void physics_shutdown(void) {
     if (!g_initialized) return;
     physics_reset();
     g_initialized = false;
-}}
+}
 
-void physics_reset(void) {{
+void physics_reset(void) {
     if (!g_initialized) return;
 
     // Clear contact subscriptions
@@ -108,11 +109,11 @@ void physics_reset(void) {{
     // This is the only resource that requires explicit freeing - everything
     // else (broadphase proxies, contacts, linked lists) lives in static
     // pools that get wiped by oimo_world_init below.
-    for (int i = 0; i < MAX_MESH_COLLIDERS; i++) {{
-        if (g_mesh_used[i]) {{
+    for (int i = 0; i < MAX_MESH_COLLIDERS; i++) {
+        if (g_mesh_used[i]) {
             oimo_static_mesh_geometry_free(&g_mesh_geometries[i]);
-        }}
-    }}
+        }
+    }
 
     // Nuclear reset: zero all body/shape/geometry pools.
     // This safely clears all stale pointers (_next, _prev, _contactLinkList,
@@ -128,16 +129,16 @@ void physics_reset(void) {{
 
     // Reinitialize free list - all bodies available
     g_free_count = MAX_PHYSICS_BODIES;
-    for (int i = 0; i < MAX_PHYSICS_BODIES; i++) {{
+    for (int i = 0; i < MAX_PHYSICS_BODIES; i++) {
         g_free_list[i] = (int16_t)(MAX_PHYSICS_BODIES - 1 - i);
-    }}
+    }
 
     // Re-initialize world (wipes linked list, contact manager, broadphase)
     OimoVec3 gravity = g_world._gravity;
     oimo_world_init(&g_world, &gravity);
-}}
+}
 
-void physics_step(float dt) {{
+void physics_step(float dt) {
     if (!g_initialized || g_paused) return;
     oimo_world_step(&g_world, dt);
 
@@ -148,12 +149,12 @@ void physics_step(float dt) {{
     object_process_removals();
 
     // Process global contact callbacks if registered
-    if (g_contact_callback) {{
+    if (g_contact_callback) {
         OimoContact* contact = g_world._contactManager._contactList;
-        while (contact != NULL) {{
-            if (contact->_touching && contact->_manifold._numPoints > 0) {{
+        while (contact != NULL) {
+            if (contact->_touching && contact->_manifold._numPoints > 0) {
                 OimoManifoldPoint* pt = &contact->_manifold._points[0];
-                if (pt->_depth > 0) {{
+                if (pt->_depth > 0) {
                     PhysicsContactPair pair;
                     pair.obj_a = (ArmObject*)contact->_b1->userData;
                     pair.obj_b = (ArmObject*)contact->_b2->userData;
@@ -162,46 +163,46 @@ void physics_step(float dt) {{
                     pair.normal = contact->_manifold._normal;
                     pair.impulse = pt->_impulse.impulseN;
                     g_contact_callback(&pair, g_contact_user_data);
-                }}
-            }}
+                }
+            }
             contact = contact->_next;
-        }}
-    }}
-}}
+        }
+    }
+}
 
-void physics_pause(void) {{ g_paused = true; }}
-void physics_resume(void) {{ g_paused = false; }}
-OimoWorld* physics_get_world(void) {{ return &g_world; }}
+void physics_pause(void) { g_paused = true; }
+void physics_resume(void) { g_paused = false; }
+OimoWorld* physics_get_world(void) { return &g_world; }
 
 // Gravity
-void physics_set_gravity(float x, float y, float z) {{
+void physics_set_gravity(float x, float y, float z) {
     if (!g_initialized) return;
     oimo_world_set_gravity(&g_world, oimo_vec3(x, y, z));
-}}
+}
 
-OimoVec3 physics_get_gravity(void) {{
+OimoVec3 physics_get_gravity(void) {
     return g_initialized ? oimo_world_get_gravity(&g_world) : oimo_vec3_zero();
-}}
+}
 
-static int resolve_body_type(int requested_type, const PhysicsBodyParams* params) {{
+static int resolve_body_type(int requested_type, const PhysicsBodyParams* params) {
     return (params && params->animated) ? OIMO_RIGID_BODY_KINEMATIC : requested_type;
-}}
+}
 
-typedef struct {{
+typedef struct {
     OimoRigidBody* rb;
     int idx;
     int final_type;
-}} BodySetupResult;
+} BodySetupResult;
 
 static bool setup_body_common(ArmObject* obj, int type, const PhysicsBodyParams* params,
-                              BodySetupResult* out) {{
+                              BodySetupResult* out) {
     if (!g_initialized || !obj || !params) return false;
 
     OimoRigidBody* rb = alloc_body();
-    if (!rb) {{
+    if (!rb) {
         debugf("Physics: body pool exhausted\\n");
         return false;
-    }}
+    }
 
     out->rb = rb;
     out->idx = get_body_index(rb);
@@ -218,10 +219,10 @@ static bool setup_body_common(ArmObject* obj, int type, const PhysicsBodyParams*
     config.autoSleep = params->use_deactivation && (out->final_type == OIMO_RIGID_BODY_DYNAMIC);
     oimo_rigid_body_init(rb, &config);
     return true;
-}}
+}
 
 static void setup_shape_common(OimoShape* shape, OimoGeometry* geom, int final_type,
-                               float density, const PhysicsBodyParams* params) {{
+                               float density, const PhysicsBodyParams* params) {
     OimoShapeConfig shapeConfig = oimo_shape_config();
     shapeConfig.geometry = geom;
     shapeConfig.friction = params->friction;
@@ -231,24 +232,24 @@ static void setup_shape_common(OimoShape* shape, OimoGeometry* geom, int final_t
     shapeConfig.collisionMask = params->collision_mask;
     oimo_shape_init(shape, &shapeConfig);
     shape->_isTrigger = params->trigger;
-}}
+}
 
 static void finalize_body(OimoRigidBody* rb, ArmObject* obj, int final_type,
-                          const PhysicsBodyParams* params) {{
-    if (final_type == OIMO_RIGID_BODY_DYNAMIC) {{
+                          const PhysicsBodyParams* params) {
+    if (final_type == OIMO_RIGID_BODY_DYNAMIC) {
         rb->_mass = params->mass;
         float af = params->angular_friction;
         if (af < 0.001f) af = 0.001f;
         rb->_localInertia = oimo_mat3(af, 0, 0, 0, af, 0, 0, 0, af);
         oimo_rigid_body_complete_mass_data(rb);
-    }}
+    }
     oimo_world_add_rigid_body(&g_world, rb);
     obj->rigid_body = rb;
     rb->userData = obj;
-}}
+}
 
 bool physics_create_box_full(ArmObject* obj, int type, float hx, float hy, float hz,
-                             const PhysicsBodyParams* params) {{
+                             const PhysicsBodyParams* params) {
     BodySetupResult setup;
     if (!setup_body_common(obj, type, params, &setup)) return false;
 
@@ -265,10 +266,10 @@ bool physics_create_box_full(ArmObject* obj, int type, float hx, float hy, float
     oimo_rigid_body_add_shape(setup.rb, &g_shapes[setup.idx]);
     finalize_body(setup.rb, obj, setup.final_type, params);
     return true;
-}}
+}
 
 bool physics_create_sphere_full(ArmObject* obj, int type, float radius,
-                                const PhysicsBodyParams* params) {{
+                                const PhysicsBodyParams* params) {
     BodySetupResult setup;
     if (!setup_body_common(obj, type, params, &setup)) return false;
 
@@ -280,10 +281,10 @@ bool physics_create_sphere_full(ArmObject* obj, int type, float radius,
     oimo_rigid_body_add_shape(setup.rb, &g_shapes[setup.idx]);
     finalize_body(setup.rb, obj, setup.final_type, params);
     return true;
-}}
+}
 
 bool physics_create_capsule_full(ArmObject* obj, int type, float radius, float half_height,
-                                 const PhysicsBodyParams* params) {{
+                                 const PhysicsBodyParams* params) {
     BodySetupResult setup;
     if (!setup_body_common(obj, type, params, &setup)) return false;
 
@@ -296,12 +297,12 @@ bool physics_create_capsule_full(ArmObject* obj, int type, float radius, float h
     oimo_rigid_body_add_shape(setup.rb, &g_shapes[setup.idx]);
     finalize_body(setup.rb, obj, setup.final_type, params);
     return true;
-}}
+}
 
 // Legacy body creation (wraps _full versions)
 bool physics_create_box_ex(ArmObject* obj, int type, float hx, float hy, float hz,
                            float mass, float friction, float restitution,
-                           int collision_group, int collision_mask) {{
+                           int collision_group, int collision_mask) {
     PhysicsBodyParams params = physics_body_params_default();
     params.mass = mass;
     params.friction = friction;
@@ -309,11 +310,11 @@ bool physics_create_box_ex(ArmObject* obj, int type, float hx, float hy, float h
     params.collision_group = collision_group;
     params.collision_mask = collision_mask;
     return physics_create_box_full(obj, type, hx, hy, hz, &params);
-}}
+}
 
 bool physics_create_sphere_ex(ArmObject* obj, int type, float radius,
                               float mass, float friction, float restitution,
-                              int collision_group, int collision_mask) {{
+                              int collision_group, int collision_mask) {
     PhysicsBodyParams params = physics_body_params_default();
     params.mass = mass;
     params.friction = friction;
@@ -321,11 +322,11 @@ bool physics_create_sphere_ex(ArmObject* obj, int type, float radius,
     params.collision_group = collision_group;
     params.collision_mask = collision_mask;
     return physics_create_sphere_full(obj, type, radius, &params);
-}}
+}
 
 bool physics_create_capsule_ex(ArmObject* obj, int type, float radius, float half_height,
                                float mass, float friction, float restitution,
-                               int collision_group, int collision_mask) {{
+                               int collision_group, int collision_mask) {
     PhysicsBodyParams params = physics_body_params_default();
     params.mass = mass;
     params.friction = friction;
@@ -333,54 +334,54 @@ bool physics_create_capsule_ex(ArmObject* obj, int type, float radius, float hal
     params.collision_group = collision_group;
     params.collision_mask = collision_mask;
     return physics_create_capsule_full(obj, type, radius, half_height, &params);
-}}
+}
 
-void physics_remove_body(ArmObject* obj) {{
+void physics_remove_body(ArmObject* obj) {
     if (!g_initialized || !obj || !obj->rigid_body) return;
 
     OimoRigidBody* rb = obj->rigid_body;
 
     // Check if this is a mesh collider body (lives in g_mesh_bodies[])
     ptrdiff_t mesh_idx = rb - g_mesh_bodies;
-    if (mesh_idx >= 0 && mesh_idx < MAX_MESH_COLLIDERS && &g_mesh_bodies[mesh_idx] == rb) {{
+    if (mesh_idx >= 0 && mesh_idx < MAX_MESH_COLLIDERS && &g_mesh_bodies[mesh_idx] == rb) {
         // Mesh body: remove from world, free geometry, mark slot as unused
         oimo_world_remove_rigid_body(&g_world, rb);
         oimo_static_mesh_geometry_free(&g_mesh_geometries[mesh_idx]);
         g_mesh_used[mesh_idx] = false;
-    }} else {{
+    } else {
         // Primitive body (box/sphere/capsule): remove from world and return to free list
         oimo_world_remove_rigid_body(&g_world, rb);
         free_body(rb);
-    }}
+    }
     obj->rigid_body = NULL;
-}}
+}
 
 // Static mesh collider (full version with all params)
 bool physics_create_mesh_full(ArmObject* obj,
                               const OimoVec3* vertices, const int16_t* indices,
                               int vertex_count, int index_count,
-                              const PhysicsBodyParams* params) {{
+                              const PhysicsBodyParams* params) {
     if (!g_initialized || !obj || !params) return false;
 
     // Find free mesh slot
     int idx = -1;
-    for (int i = 0; i < MAX_MESH_COLLIDERS; i++) {{
-        if (!g_mesh_used[i]) {{
+    for (int i = 0; i < MAX_MESH_COLLIDERS; i++) {
+        if (!g_mesh_used[i]) {
             idx = i;
             break;
-        }}
-    }}
+        }
+    }
 
-    if (idx < 0) {{
+    if (idx < 0) {
         debugf("Physics: mesh collider pool exhausted\\n");
         return false;
-    }}
+    }
 
     // Initialize mesh geometry
-    if (!oimo_static_mesh_geometry_init(&g_mesh_geometries[idx], vertices, indices, vertex_count, index_count)) {{
+    if (!oimo_static_mesh_geometry_init(&g_mesh_geometries[idx], vertices, indices, vertex_count, index_count)) {
         debugf("Physics: failed to create mesh geometry\\n");
         return false;
-    }}
+    }
 
     // Body config (always static for mesh colliders)
     OimoRigidBodyConfig config = oimo_rigid_body_config();
@@ -411,24 +412,24 @@ bool physics_create_mesh_full(ArmObject* obj,
     g_mesh_used[idx] = true;
 
     return true;
-}}
+}
 
 // Legacy mesh collider (wraps _full version)
 bool physics_create_mesh(ArmObject* obj,
                          const OimoVec3* vertices, const int16_t* indices,
                          int vertex_count, int index_count,
                          float friction, float restitution,
-                         int collision_group, int collision_mask) {{
+                         int collision_group, int collision_mask) {
     PhysicsBodyParams params = physics_body_params_default();
     params.friction = friction;
     params.restitution = restitution;
     params.collision_group = collision_group;
     params.collision_mask = collision_mask;
     return physics_create_mesh_full(obj, vertices, indices, vertex_count, index_count, &params);
-}}
+}
 
 // Transform sync
-void physics_sync_object(ArmObject* obj) {{
+void physics_sync_object(ArmObject* obj) {
     if (!obj || !obj->rigid_body) return;
 
     OimoRigidBody* rb = obj->rigid_body;
@@ -437,12 +438,12 @@ void physics_sync_object(ArmObject* obj) {{
     OimoVec3 pos = oimo_rigid_body_get_position(rb);
 
     // Check if object has fallen out of world bounds
-    if (!position_in_bounds(pos.x, pos.y, pos.z)) {{
+    if (!position_in_bounds(pos.x, pos.y, pos.z)) {
         // Object fell off world - put it to sleep and hide it
         oimo_rigid_body_sleep(rb);
         obj->visible = false;
         return;
-    }}
+    }
 
     obj->transform.loc.x = pos.x;
     obj->transform.loc.y = pos.y;
@@ -455,46 +456,46 @@ void physics_sync_object(ArmObject* obj) {{
     obj->transform.rot.w = rot.w;
 
     obj->transform.dirty = TRANSFORM_DIRTY_FRAMES;
-}}
+}
 
 // Contact callback management
-void physics_set_contact_callback(PhysicsContactCallback callback, void* user_data) {{
+void physics_set_contact_callback(PhysicsContactCallback callback, void* user_data) {
     g_contact_callback = callback;
     g_contact_user_data = user_data;
-}}
+}
 
 // Get contacts for a specific rigid body
-int physics_get_contacts(OimoRigidBody* rb, PhysicsContactPair* contacts, int max_contacts) {{
+int physics_get_contacts(OimoRigidBody* rb, PhysicsContactPair* contacts, int max_contacts) {
     if (!g_initialized || !rb || !contacts || max_contacts <= 0) return 0;
 
     int count = 0;
     OimoContactLink* link = rb->_contactLinkList;
 
-    while (link != NULL && count < max_contacts) {{
+    while (link != NULL && count < max_contacts) {
         OimoContact* contact = link->_contact;
-        if (contact && contact->_touching && contact->_manifold._numPoints > 0) {{
+        if (contact && contact->_touching && contact->_manifold._numPoints > 0) {
             OimoManifoldPoint* pt = &contact->_manifold._points[0];
-            if (pt->_depth > 0) {{
+            if (pt->_depth > 0) {
                 PhysicsContactPair* pair = &contacts[count];
 
                 // Determine which body is the "other"
-                if (contact->_b1 == rb) {{
+                if (contact->_b1 == rb) {
                     pair->obj_a = (ArmObject*)rb->userData;
                     pair->obj_b = (ArmObject*)contact->_b2->userData;
-                }} else {{
+                } else {
                     pair->obj_a = (ArmObject*)contact->_b1->userData;
                     pair->obj_b = (ArmObject*)rb->userData;
-                }}
+                }
 
                 pair->pos_a = pt->_pos1;
                 pair->pos_b = pt->_pos2;
                 pair->normal = contact->_manifold._normal;
                 pair->impulse = pt->_impulse.impulseN;
                 count++;
-            }}
-        }}
+            }
+        }
         link = link->_next;
-    }}
+    }
 
     return count;
-}}
+}

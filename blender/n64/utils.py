@@ -37,15 +37,6 @@ def c_float(value) -> str:
 # Build Helpers
 # =============================================================================
 
-# N64 Configuration Limits
-# IMPORTANT: These values must match armory.n64.mapping.Constants in Haxe.
-# If you change these, update Constants.hx to maintain parity.
-N64_CONFIG = {
-    'max_physics_bodies': 128,        # Constants.MAX_PHYSICS_BODIES
-    'max_button_subscribers': 16,    # Constants.MAX_BUTTON_SUBSCRIBERS
-    'max_contact_subscribers': 4,    # Constants.MAX_CONTACT_SUBSCRIBERS (per body)
-    'max_contact_bodies': 16,        # Constants.MAX_CONTACT_BODIES
-}
 
 def get_physics_debug_mode() -> int:
     wrd = bpy.data.worlds.get('Arm')
@@ -62,9 +53,6 @@ def get_physics_debug_mode() -> int:
         ('arm_physics_dbg_draw_raycast', 65536),
     ]
     return sum(bit for prop, bit in flags if getattr(wrd, prop, False))
-
-def get_config(key, default=None):
-    return N64_CONFIG.get(key, default)
 
 def copy_src(name, path=''):
     tmpl_path = os.path.join(arm.utils.get_n64_deployment_path(), path, name)

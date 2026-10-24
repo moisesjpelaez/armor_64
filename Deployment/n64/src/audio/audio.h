@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include "../limits.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,10 +48,10 @@ void arm_audio_stop_all(void);
 #include "../system/arm_map.h"
 
 // Array of sound handles (for channel pooling, max 8 channels per sound)
-ARM_ARRAY_DECLARE(ArmSoundHandle, ArmSoundHandleArray, 8)
+ARM_ARRAY_DECLARE(ArmSoundHandle, ArmSoundHandleArray, ARM_SOUND_HANDLE_ARRAY_CAPACITY)
 
 // Map from string key to sound handle array (for named channel groups)
-ARM_MAP_DECLARE(ArmSoundHandleArray, ArmSoundChannelMap, 16)
+ARM_MAP_DECLARE(ArmSoundHandleArray, ArmSoundChannelMap, ARM_SOUND_CHANNEL_MAP_CAPACITY)
 
 #ifdef __cplusplus
 }

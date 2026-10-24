@@ -18,7 +18,10 @@ void trait_events_subscribe_started(N64Button btn, TraitEventHandler handler, vo
 {
     if (btn >= N64_BTN_COUNT) return;
     ButtonEventSubs* subs = &g_events.buttons[btn];
-    if (subs->started_count >= MAX_BUTTON_SUBSCRIBERS) return;
+    if (subs->started_count >= MAX_BUTTON_SUBSCRIBERS) {
+        ARM_LIMIT_REACHED(MAX_BUTTON_SUBSCRIBERS);
+        return;
+    }
 
     subs->started[subs->started_count].handler = handler;
     subs->started[subs->started_count].obj = obj;
@@ -33,7 +36,10 @@ void trait_events_subscribe_released(N64Button btn, TraitEventHandler handler, v
 {
     if (btn >= N64_BTN_COUNT) return;
     ButtonEventSubs* subs = &g_events.buttons[btn];
-    if (subs->released_count >= MAX_BUTTON_SUBSCRIBERS) return;
+    if (subs->released_count >= MAX_BUTTON_SUBSCRIBERS) {
+        ARM_LIMIT_REACHED(MAX_BUTTON_SUBSCRIBERS);
+        return;
+    }
 
     subs->released[subs->released_count].handler = handler;
     subs->released[subs->released_count].obj = obj;
@@ -48,7 +54,10 @@ void trait_events_subscribe_down(N64Button btn, TraitEventHandler handler, void*
 {
     if (btn >= N64_BTN_COUNT) return;
     ButtonEventSubs* subs = &g_events.buttons[btn];
-    if (subs->down_count >= MAX_BUTTON_SUBSCRIBERS) return;
+    if (subs->down_count >= MAX_BUTTON_SUBSCRIBERS) {
+        ARM_LIMIT_REACHED(MAX_BUTTON_SUBSCRIBERS);
+        return;
+    }
 
     subs->down[subs->down_count].handler = handler;
     subs->down[subs->down_count].obj = obj;

@@ -2,7 +2,7 @@
  * Tween system for N64 - Fixed pool implementation
  *
  * Design decisions for N64 hardware:
- * - Fixed pool of MAX_TWEENS (16) - no malloc/free during gameplay
+ * - Fixed pool of MAX_TWEENS (limits.h) - no malloc/free during gameplay
  * - All easing functions are inline for speed
  * - Deferred cleanup to avoid iteration issues
  * - Callbacks receive object + data pointers for full capture support
@@ -49,7 +49,8 @@ ArmTween* tween_alloc(void) {
         }
     }
 
-    // Pool exhausted - return NULL
+    // Pool exhausted
+    ARM_LIMIT_REACHED(MAX_TWEENS);
     return NULL;
 }
 

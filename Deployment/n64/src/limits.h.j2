@@ -1,0 +1,24 @@
+// Engine limits, written by the exporter (blender/n64/codegen/limits.py):
+// each fixed capacity of the runtime, computed for this project.
+#pragma once
+
+#include <stdbool.h>
+#include <libdragon.h>
+
+{limit_defines}
+
+// A full pool or container: reported once per place with debugf, the request
+// is then dropped. The report is out of line and cold: only a flag check stays
+// at each place.
+__attribute__((cold, noinline, unused))
+static void arm_limit_reached(const char *name, int value) {{
+    debugf("N64 limit reached: %s = %d (see limits.h)\n", name, value);
+}}
+
+#define ARM_LIMIT_REACHED(limit) do {{ \
+    static bool _arm_limit_reported = false; \
+    if (!_arm_limit_reported) {{ \
+        _arm_limit_reported = true; \
+        arm_limit_reached(#limit, (int)(limit)); \
+    }} \
+}} while (0)

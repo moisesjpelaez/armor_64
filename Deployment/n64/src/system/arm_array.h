@@ -20,6 +20,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "../limits.h"
 #include <string.h>
 #include <ctype.h>
 
@@ -41,7 +42,7 @@
     } \
     \
     static inline bool array_name##_push(array_name *arr, elem_type item) { \
-        if (arr->count >= max_capacity) return false; \
+        if (arr->count >= max_capacity) { ARM_LIMIT_REACHED(max_capacity); return false; } \
         arr->items[arr->count++] = item; \
         return true; \
     } \
@@ -87,15 +88,15 @@
  */
 
 // Int array with default capacity 32
-ARM_ARRAY_DECLARE(int32_t, ArmIntArray, 32)
+ARM_ARRAY_DECLARE(int32_t, ArmIntArray, ARM_INT_ARRAY_CAPACITY)
 
 // Float array with default capacity 32
-ARM_ARRAY_DECLARE(float, ArmFloatArray, 32)
+ARM_ARRAY_DECLARE(float, ArmFloatArray, ARM_FLOAT_ARRAY_CAPACITY)
 
 // String array (const char*) with default capacity 16
-ARM_ARRAY_DECLARE(const char*, ArmStringArray, 16)
+ARM_ARRAY_DECLARE(const char*, ArmStringArray, ARM_STRING_ARRAY_CAPACITY)
 
 // Bool array with default capacity 32
-ARM_ARRAY_DECLARE(bool, ArmBoolArray, 32)
+ARM_ARRAY_DECLARE(bool, ArmBoolArray, ARM_BOOL_ARRAY_CAPACITY)
 
 #endif // ARM_ARRAY_H

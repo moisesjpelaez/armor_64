@@ -45,9 +45,11 @@ void animation_init(ArmAnimation *anim, T3DModel *model)
     // Auto-discover animation clips from the model
     uint32_t model_anim_count = t3d_model_get_animation_count(model);
     uint16_t count = model_anim_count < ANIM_MAX_CLIPS ? (uint16_t)model_anim_count : ANIM_MAX_CLIPS;
+    if (model_anim_count > ANIM_MAX_CLIPS) ARM_LIMIT_REACHED(ANIM_MAX_CLIPS);
     anim->anim_count = count;
 
-    if (count > 0) {
+    // tiny3d writes every clip of the model: room for all of them
+    if (count > 0 && model_anim_count <= ANIM_MAX_CLIPS) {
         T3DChunkAnim *anim_chunks[ANIM_MAX_CLIPS];
         t3d_model_get_animations(model, anim_chunks);
 

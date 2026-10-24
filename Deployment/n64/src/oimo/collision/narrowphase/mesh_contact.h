@@ -3,13 +3,12 @@
 // mesh_contact.h - Shared contact storage for mesh collision detectors
 
 #include "../../common/vec3.h"
+#include "../../../limits.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Maximum contacts for mesh collision (balance stability vs performance)
-#define OIMO_MESH_MAX_CONTACTS 4
 
 // Temporary contact storage for single-pass mesh collision
 typedef struct OimoMeshContact {

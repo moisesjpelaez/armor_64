@@ -2,10 +2,11 @@
 #pragma once
 
 #include "../types.h"
+#include "../limits.h"
 #include "../oimo/physics.h"
 
 #ifdef __cplusplus
-extern "C" {{
+extern "C" {
 #endif
 
 /**
@@ -20,11 +21,7 @@ extern "C" {{
  *   physics_contact_dispatch();                         // Called by physics_step
  */
 
-// Maximum contact subscriptions per rigid body
-#define MAX_CONTACT_SUBSCRIBERS {max_contact_subscribers}
 
-// Maximum rigid bodies with contact subscriptions
-#define MAX_CONTACT_BODIES {max_contact_bodies}
 
 // Contact handler signature: (obj, data, other_obj)
 // - obj: the object this trait is attached to
@@ -33,18 +30,18 @@ extern "C" {{
 typedef void (*PhysicsContactHandler)(void* obj, void* data, ArmObject* other);
 
 // Subscription entry
-typedef struct {{
+typedef struct {
     PhysicsContactHandler handler;
     void* obj;
     void* data;
-}} PhysicsContactSub;
+} PhysicsContactSub;
 
 // Per-body subscriptions
-typedef struct {{
+typedef struct {
     OimoRigidBody* rb;
     PhysicsContactSub subs[MAX_CONTACT_SUBSCRIBERS];
     uint8_t count;
-}} BodyContactSubs;
+} BodyContactSubs;
 
 // Initialize contact event system
 void physics_contact_init(void);
@@ -70,5 +67,5 @@ void physics_contact_unsubscribe_all(void* obj);
 void physics_contact_dispatch(void);
 
 #ifdef __cplusplus
-}}
+}
 #endif

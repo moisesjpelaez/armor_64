@@ -4,6 +4,7 @@
 // 1:1 port from OimoPhysics ContactManager.hx
 
 #include <libdragon.h>
+#include "../../limits.h"
 #include "../collision/broadphase/broadphase.h"
 #include "../collision/broadphase/proxy_pair.h"
 #include "../collision/narrowphase/collision_matrix.h"
@@ -12,8 +13,6 @@
 #include "rigidbody/rigid_body_type.h"
 #include "contact.h"
 
-// Maximum contacts (for N64 memory constraints)
-#define OIMO_MAX_CONTACTS 64
 
 typedef struct OimoContactManager {
     int _numContacts;

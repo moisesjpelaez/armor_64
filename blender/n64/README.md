@@ -159,16 +159,62 @@ def emit_my_call(self, node: Dict) -> str:
 
 ## Configuration
 
-### Python Configuration (`utils.py`)
+### Engine limits (`codegen/limits.py`)
 
-```python
-N64_CONFIG = {
-    'max_physics_bodies': 32,      # See also: Constants.hx
-    'max_button_subscribers': 16,
-    'max_contact_subscribers': 4,
-    'max_contact_bodies': 16,
-}
-```
+The runtime allocates nothing during gameplay: pools and containers are static
+arrays, so each one has a size decided at export. `limits.py` decides all of
+them, and the exporter writes them into the C as plain numbers: `limits.h` (from
+`limits.h.j2`) for the engine, the UI headers for the UI pools.
+
+A full pool or container reports it once with `debugf` (`ARM_LIMIT_REACHED` in
+`limits.h`) and drops the request.
+
+`DEFAULTS` holds each limit's value when nothing more precise is known.
+`compute()` replaces defaults with values worked out from the project:
+
+- physics: from the scene export, the largest scene's counts
+- UI: from the canvas data, the largest canvas's counts
+
+| Limit | Default | What it limits | Where it's defined |
+|---|---|---|---|
+| `MAX_TWEENS` | 16 | Tweens allocated at once (tween pool) | `limits.h` |
+| `ARM_SIGNAL_MAX_SUBS` | 16 | Subscribers of one signal | `limits.h` |
+| `ANIM_MAX_CLIPS` | 8 | Animation clips of one model | `limits.h` |
+| `MAX_PENDING_REMOVALS` | 32 | Objects removed during one frame | `limits.h` |
+| `MAX_BUTTON_SUBSCRIBERS` | 16 | Handlers of one gamepad button event | `limits.h` |
+| `SPAWN_MAX_INSTANCES` | 4 | Copies alive at once of one spawnable template (Python only; spawning isn't supported yet) | Python only |
+| `MAX_PHYSICS_BODIES` | 128 | Rigid bodies (physics body pool) | `limits.h` |
+| `MAX_MESH_COLLIDERS` | 8 | Mesh colliders | `limits.h` |
+| `MAX_CONTACT_BODIES` | 16 | Bodies with contact handlers | `limits.h` |
+| `MAX_CONTACT_SUBSCRIBERS` | 4 | Contact handlers of one body | `limits.h` |
+| `OIMO_MAX_PROXIES` | 128 | Broadphase proxies (one per shape) | `limits.h` |
+| `OIMO_MAX_PROXY_PAIRS` | 256 | Broadphase overlapping pairs | `limits.h` |
+| `OIMO_MAX_CONTACTS` | 64 | Contacts between shapes | `limits.h` |
+| `OIMO_MAX_ISLAND_BODIES` | 32 | Bodies in one simulation island | `limits.h` |
+| `OIMO_MAX_ISLAND_SOLVERS` | 64 | Contact solvers in one simulation island | `limits.h` |
+| `OIMO_MAX_RIGID_BODIES` | 32 | Bodies visited while building one island | `limits.h` |
+| `OIMO_MAX_SHAPES` | 64 | Shapes (unused by the runtime) | `limits.h` |
+| `OIMO_MESH_MAX_CONTACTS` | 4 | Contacts kept per mesh collision (the shallowest is replaced) | `limits.h` |
+| `OIMO_BVH_MAX_TRIANGLES` | 4 | Triangles of the largest mesh collider (its BVH) | `limits.h` |
+| `OIMO_BVH_MAX_DEPTH` | 4 | Depth of the largest mesh collider's BVH | `limits.h` |
+| `ARM_INT_ARRAY_CAPACITY` | 32 | Items of an Array<Int> | `limits.h` |
+| `ARM_FLOAT_ARRAY_CAPACITY` | 32 | Items of an Array<Float> | `limits.h` |
+| `ARM_BOOL_ARRAY_CAPACITY` | 32 | Items of an Array<Bool> | `limits.h` |
+| `ARM_STRING_ARRAY_CAPACITY` | 16 | Items of an Array<String> | `limits.h` |
+| `ARM_MAP_CAPACITY` | 16 | Keys of a Map<String, *> | `limits.h` |
+| `ARM_MAP_MAX_KEY_LEN` | 32 | Characters of a Map key, including the terminator | `limits.h` |
+| `ARM_SOUND_HANDLE_ARRAY_CAPACITY` | 8 | Items of an Array<BaseChannelHandle> | `limits.h` |
+| `ARM_SOUND_CHANNEL_MAP_CAPACITY` | 16 | Keys of a Map<String, Array<BaseChannelHandle>> | `limits.h` |
+| `STR_FMT_BUFFER_SIZE` | 64 | Characters of a string built by concatenation | `limits.h` |
+| `STR_FMT_BUFFER_COUNT` | 4 | Concatenated strings alive at once (rotating buffers) | `limits.h` |
+| `UI_MAX_LABELS` | 1 | Labels | UI headers |
+| `UI_LABEL_TEXT_SIZE` | 32 | Characters of a label | UI headers |
+| `UI_MAX_IMAGES` | 1 | Images | UI headers |
+| `UI_MAX_BUTTONS` | 1 | Buttons | UI headers |
+| `UI_BUTTON_TEXT_SIZE` | 32 | Characters of a button | UI headers |
+| `UI_MAX_PANELS` | 1 | Panels | UI headers |
+| `UI_MAX_GROUPS` | 1 | Layout groups | UI headers |
+| `UI_MAX_GROUP_CHILDREN` | 8 | Children of one layout group | UI headers |
 
 ### Haxe Metadata
 

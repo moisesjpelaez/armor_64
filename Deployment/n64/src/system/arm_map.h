@@ -18,9 +18,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include "../limits.h"
 
-// Maximum key length for string keys
-#define ARM_MAP_MAX_KEY_LEN 32
 
 /**
  * Declare a string-keyed map with given value type, name, and max capacity.
@@ -63,7 +62,8 @@
                 return true; \
             } \
         } \
-        return false; /* Map full */ \
+        ARM_LIMIT_REACHED(max_capacity); /* Map full */ \
+        return false; \
     } \
     \
     static inline value_type* map_name##_get(map_name *map, const char *key) { \
@@ -106,9 +106,9 @@
     }
 
 // String-keyed maps of the basic types: Haxe Map<String, String/Int/Float/Bool>
-ARM_MAP_DECLARE(const char*, ArmStringMap, 16)
-ARM_MAP_DECLARE(int32_t, ArmIntMap, 16)
-ARM_MAP_DECLARE(float, ArmFloatMap, 16)
-ARM_MAP_DECLARE(bool, ArmBoolMap, 16)
+ARM_MAP_DECLARE(const char*, ArmStringMap, ARM_MAP_CAPACITY)
+ARM_MAP_DECLARE(int32_t, ArmIntMap, ARM_MAP_CAPACITY)
+ARM_MAP_DECLARE(float, ArmFloatMap, ARM_MAP_CAPACITY)
+ARM_MAP_DECLARE(bool, ArmBoolMap, ARM_MAP_CAPACITY)
 
 #endif // ARM_MAP_H

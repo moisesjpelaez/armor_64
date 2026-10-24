@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <math.h>
 #include <stdio.h>
+#include "limits.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -37,8 +38,6 @@ static inline bool position_in_bounds(float x, float y, float z) {
 }
 
 // String formatting - rotating buffer for multiple calls per frame
-#define STR_FMT_BUFFER_SIZE 64
-#define STR_FMT_BUFFER_COUNT 4
 static char _str_fmt_buffers[STR_FMT_BUFFER_COUNT][STR_FMT_BUFFER_SIZE];
 static int _str_fmt_buffer_idx = 0;
 

@@ -39,22 +39,4 @@ class Constants {
      * String representation of SCALE_FACTOR_INV for C code generation.
      */
     public static inline var SCALE_FACTOR_INV_C:String = "64.0f";
-
-    // ==========================================================================
-    // N64 Config Limits
-    // IMPORTANT: These values must match arm.n64.utils.N64_CONFIG in Python.
-    // If you change these, update utils.py to maintain parity.
-    // ==========================================================================
-
-    /** Maximum physics bodies in a scene */
-    public static inline var MAX_PHYSICS_BODIES:Int = 32;
-
-    /** Maximum button event subscribers */
-    public static inline var MAX_BUTTON_SUBSCRIBERS:Int = 16;
-
-    /** Maximum contact handlers per rigid body */
-    public static inline var MAX_CONTACT_SUBSCRIBERS:Int = 4;
-
-    /** Maximum rigid bodies with contact subscriptions */
-    public static inline var MAX_CONTACT_BODIES:Int = 16;
 }

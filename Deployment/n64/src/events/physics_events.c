@@ -30,6 +30,7 @@ static BodyContactSubs* find_or_create_body_subs(OimoRigidBody* rb)
     }
     // Create new if space available
     if (g_body_sub_count >= MAX_CONTACT_BODIES) {
+        ARM_LIMIT_REACHED(MAX_CONTACT_BODIES);
         return NULL;
     }
     BodyContactSubs* slot = &g_body_subs[g_body_sub_count++];
@@ -54,7 +55,11 @@ void physics_contact_subscribe(OimoRigidBody* rb, PhysicsContactHandler handler,
     if (!rb || !handler) return;
 
     BodyContactSubs* subs = find_or_create_body_subs(rb);
-    if (!subs || subs->count >= MAX_CONTACT_SUBSCRIBERS) return;
+    if (!subs) return;
+    if (subs->count >= MAX_CONTACT_SUBSCRIBERS) {
+        ARM_LIMIT_REACHED(MAX_CONTACT_SUBSCRIBERS);
+        return;
+    }
 
     subs->subs[subs->count].handler = handler;
     subs->subs[subs->count].obj = obj;

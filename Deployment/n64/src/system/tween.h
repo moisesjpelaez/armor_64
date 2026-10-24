@@ -9,8 +9,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "../types.h"
-
-#define MAX_TWEENS 16
+#include "../limits.h"
 
 // Tween type enum
 typedef enum {

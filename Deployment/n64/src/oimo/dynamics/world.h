@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../common/vec3.h"
+#include "../../limits.h"
 #include "../common/setting.h"
 #include "../collision/broadphase/broadphase.h"
 #include "../collision/broadphase/bruteforce_broadphase.h"
@@ -13,9 +14,6 @@
 #include "contact_manager.h"
 #include "island.h"
 
-// World limits for N64
-#define OIMO_MAX_RIGID_BODIES 32
-#define OIMO_MAX_SHAPES 64
 
 typedef struct OimoWorld {
     OimoRigidBody* _rigidBodyList;
@@ -201,9 +199,13 @@ static inline void oimo_world_build_island(OimoWorld* world, OimoRigidBody* base
                 oimo_island_add_solver(&world->_island, solver, cc->_positionCorrectionAlgorithm);
 
                 OimoRigidBody* other = cl->_other;
-                if (!other->_addedToIsland && stackCount < OIMO_MAX_RIGID_BODIES) {
-                    oimo_island_add_rigid_body(&world->_island, other);
-                    world->_rigidBodyStack[stackCount++] = other;
+                if (!other->_addedToIsland) {
+                    if (stackCount < OIMO_MAX_RIGID_BODIES) {
+                        oimo_island_add_rigid_body(&world->_island, other);
+                        world->_rigidBodyStack[stackCount++] = other;
+                    } else {
+                        ARM_LIMIT_REACHED(OIMO_MAX_RIGID_BODIES);
+                    }
                 }
             }
             cl = cl->_next;

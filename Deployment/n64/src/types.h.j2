@@ -45,9 +45,8 @@
  *
  * PHYSICS LIMITS (OimoPhysics)
  * ----------------------------
- *   MAX_PHYSICS_BODIES:       32 default (configurable in config.py)
- *   MAX_CONTACT_BODIES:       16 default
- *   MAX_CONTACT_SUBSCRIBERS:  4 per body default
+ *   MAX_PHYSICS_BODIES, MAX_CONTACT_BODIES, MAX_CONTACT_SUBSCRIBERS, ...:
+ *   see limits.h (computed by blender/n64/codegen/limits.py)
  *
  *   Collision shapes: box, sphere, capsule, mesh (static only)
  *   Body types: static, dynamic, kinematic, trigger
@@ -65,6 +64,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include "limits.h"
 #include <rspq.h>
 #include <t3d/t3dmath.h>
 #include <t3d/t3dmodel.h>
@@ -128,10 +128,6 @@ static inline bool arm_string_equals(const char *a, const char *b) {{
     if (a == b) return true;
     return a != NULL && b != NULL && strcmp(a, b) == 0;
 }}
-
-#ifndef ARM_SIGNAL_MAX_SUBS
-#define ARM_SIGNAL_MAX_SUBS 16
-#endif
 
 /**
  * Signal handler function type.

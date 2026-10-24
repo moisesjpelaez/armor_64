@@ -164,6 +164,18 @@ class N64Exporter:
             # Phase 4: Detect UI canvas (sets has_ui flag)
             ui_exporter.detect_ui_canvas(self)
 
+            # Engine limits for this project (codegen/limits.py)
+            from arm.n64.codegen import limits
+            self.limits = limits.compute(
+                physics={
+                    "bodies": self.max_physics_bodies,
+                    "mesh_colliders": self.max_mesh_colliders,
+                    "contact_bodies": self.max_contact_bodies,
+                    "mesh_triangles": self.max_mesh_triangles,
+                },
+                ui_canvases=self.ui_canvas_data,
+            )
+
             # Phase 5: Generate trait code (may set has_ui/has_physics from traits)
             features = traits_exporter.write_traits(self)
             if features.get('has_ui'):
@@ -178,6 +190,7 @@ class N64Exporter:
 
             # Phase 7: Generate engine and system files
             traits_exporter.write_types(self)
+            traits_exporter.write_limits(self)
             traits_exporter.write_engine(self)
             physics_exporter.write_physics(self)
 
@@ -433,19 +446,7 @@ class N64Exporter:
 
     def _write_iron(self):
         """Copy Iron runtime files."""
-        # Render trait_events.h template
-        tmpl_path = os.path.join(arm.utils.get_n64_deployment_path(), 'src', 'events', 'trait_events.h.j2')
-        out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'events', 'trait_events.h')
-
-        with open(tmpl_path, 'r', encoding='utf-8') as f:
-            tmpl_content = f.read()
-
-        max_button_subscribers = n64_utils.get_config('max_button_subscribers', 16)
-        output = tmpl_content.format(max_button_subscribers=max_button_subscribers)
-
-        with open(out_path, 'w', encoding='utf-8') as f:
-            f.write(output)
-
+        n64_utils.copy_src('events/trait_events.h', 'src')
         n64_utils.copy_src('events/trait_events.c', 'src')
         n64_utils.copy_src('iron/object/transform.h', 'src')
         n64_utils.copy_src('iron/object/transform.c', 'src')

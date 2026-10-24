@@ -1,10 +1,11 @@
 #pragma once
 
 #include "../types.h"
+#include "../limits.h"
 #include "../iron/system/input.h"
 
 #ifdef __cplusplus
-extern "C" {{
+extern "C" {
 #endif
 
 /**
@@ -22,36 +23,34 @@ extern "C" {{
  * Performance: Uses bitmask to skip buttons with no subscribers.
  */
 
-// Maximum traits that can subscribe to a single button event
-#define MAX_BUTTON_SUBSCRIBERS {max_button_subscribers}
 
 // Event handler function signature: (obj, data, dt)
 typedef void (*TraitEventHandler)(void* obj, void* data, float dt);
 
 // Subscription entry: links a handler to an object/data pair
-typedef struct {{
+typedef struct {
     TraitEventHandler handler;
     void* obj;
     void* data;
-}} TraitEventSub;
+} TraitEventSub;
 
 // Per-button event subscriptions
-typedef struct {{
+typedef struct {
     TraitEventSub started[MAX_BUTTON_SUBSCRIBERS];
     TraitEventSub released[MAX_BUTTON_SUBSCRIBERS];
     TraitEventSub down[MAX_BUTTON_SUBSCRIBERS];
     uint8_t started_count;
     uint8_t released_count;
     uint8_t down_count;
-}} ButtonEventSubs;
+} ButtonEventSubs;
 
 // Global event state
-typedef struct {{
+typedef struct {
     ButtonEventSubs buttons[N64_BTN_COUNT];
     uint16_t has_started_subs;   // Bitmask: which buttons have started subscribers
     uint16_t has_released_subs;  // Bitmask: which buttons have released subscribers
     uint16_t has_down_subs;      // Bitmask: which buttons have down subscribers
-}} TraitEventState;
+} TraitEventState;
 
 // Initialize event system (call once at startup)
 void trait_events_init(void);
@@ -74,5 +73,5 @@ void trait_events_unsubscribe_all(void* obj);  // Remove all subscriptions for a
 void trait_events_dispatch(float dt);
 
 #ifdef __cplusplus
-}}
+}
 #endif

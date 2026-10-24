@@ -18,6 +18,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include "../../limits.h"
 #include <stdint.h>
 #include <t3d/t3dmodel.h>
 #include <t3d/t3dskeleton.h>
@@ -28,7 +29,6 @@
 extern "C" {
 #endif
 
-#define ANIM_MAX_CLIPS 8
 
 /**
  * ArmAnimation — per-object skeletal animation instance.

@@ -1,14 +1,13 @@
 #pragma once
 
 #include "broadphase_type.h"
+#include "../../../limits.h"
 #include "proxy.h"
 #include "proxy_pair.h"
 #include "../geometry/aabb.h"
 #include "../../common/vec3.h"
 #include "../../common/math_util.h"
 
-#define OIMO_MAX_PROXIES 128
-#define OIMO_MAX_PROXY_PAIRS 256
 
 typedef void (*OimoBroadPhaseProxyCallback)(OimoProxy* proxy, void* userData);
 
@@ -75,7 +74,7 @@ static inline OimoProxyPair* oimo_broadphase_pick_pair(OimoBroadPhase* bp) {
             pp = &bp->_pairStorage[bp->_pairStorageUsed++];
             oimo_proxy_pair_init(pp);
         } else {
-            // Out of pairs - should not happen in normal usage
+            ARM_LIMIT_REACHED(OIMO_MAX_PROXY_PAIRS);
             return NULL;
         }
     }
@@ -167,7 +166,8 @@ static inline void oimo_broadphase_init(OimoBroadPhase* bp, int type) {
 
 static inline OimoProxy* oimo_broadphase_create_proxy(OimoBroadPhase* bp, void* userData, const OimoAabb* aabb) {
     if (bp->_proxyStorageUsed >= OIMO_MAX_PROXIES) {
-        return NULL;  // Out of proxy storage
+        ARM_LIMIT_REACHED(OIMO_MAX_PROXIES);
+        return NULL;
     }
 
     OimoProxy* p = &bp->_proxyStorage[bp->_proxyStorageUsed++];
