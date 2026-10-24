@@ -37,6 +37,9 @@ void renderer_begin_frame(T3DViewport *viewport, ArmScene *scene) {
 		// Scale back to 1x space for consistency within the camera struct
 		cam->transform.loc = (T3DVec3){{world_pos4.v[0] * WORLD_SCALE_FACTOR, world_pos4.v[1] * WORLD_SCALE_FACTOR, world_pos4.v[2] * WORLD_SCALE_FACTOR}};
 		cam->target = (T3DVec3){{world_target4.v[0] * WORLD_SCALE_FACTOR, world_target4.v[1] * WORLD_SCALE_FACTOR, world_target4.v[2] * WORLD_SCALE_FACTOR}};
+	} else {
+		// Moved by a trait (transform.loc): same rotation, as in Armory
+		t3d_vec3_add(&cam->target, &cam->transform.loc, &cam->look_dir);
 	}
 
 	T3DVec3 cam_loc_scaled = (T3DVec3){{cam->transform.loc.v[0] * WORLD_SCALE_FACTOR_INV, cam->transform.loc.v[1] * WORLD_SCALE_FACTOR_INV, cam->transform.loc.v[2] * WORLD_SCALE_FACTOR_INV}};

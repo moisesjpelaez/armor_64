@@ -70,6 +70,22 @@ class TypedIndex {
      * extractors and TypeMap use (e.g. "Vec4", "Map<String, Array<Int>>").
      * Null if the expression has no typed node or its type isn't known.
      */
+    /**
+     * Compiler type of an expression (an implicit-this field read gets its
+     * field's type, see thisFields). Null if it has no typed node.
+     */
+    public static function exprType(e:Expr):Null<Type> {
+        var list = nodesAt(e);
+        if (list.length == 0) return null;
+        switch (list[0].expr) {
+            case TConst(TThis) | TLocal({name: "`this"}):
+                var field = thisFields.get(key(e.pos));
+                if (field != null) return field.t;
+            default:
+        }
+        return list[0].t;
+    }
+
     public static function typeOf(e:Expr):Null<String> {
         // Outermost node: the expression itself (see classOf)
         var list = nodesAt(e);
@@ -204,7 +220,7 @@ class TypedIndex {
 
     // Static access on an abstract is typed through its implementation class
     // (kha._Color.Color_Impl_ for kha.Color): name the abstract instead
-    static function classPath(c:ClassType):String {
+    public static function classPath(c:ClassType):String {
         return switch (c.kind) {
             case KAbstractImpl(a): fullPath(a.get().pack, a.get().name);
             default: fullPath(c.pack, c.name);

@@ -234,7 +234,8 @@ typedef struct ArmLight {{
 
 typedef struct ArmCamera {{
     ArmTransform transform;
-    T3DVec3 target;               // World-space look-at target (updated per-frame when parented)
+    T3DVec3 target;               // World-space look-at target (updated per-frame)
+    T3DVec3 look_dir;             // target - position: the camera keeps its rotation when moved
     float fov;
     float near;
     float far;

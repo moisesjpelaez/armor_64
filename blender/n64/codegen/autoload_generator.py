@@ -148,18 +148,10 @@ def _prepare_autoload_template_data(name: str, autoload_ir: dict, signal_ctx: Si
         lines.append("}")
         return "\n".join(lines)
 
-    # Collect all tween callbacks from all functions using shared helper
+    # Tween callbacks of all functions (their captures come from Haxe)
     all_tween_callbacks = []
     for func in functions:
-        body = func.get("body", [])
-        func_params = {p.get("name"): p.get("ctype", "int32_t") for p in func.get("params", [])}
-        found = tween_helper.find_tween_callbacks(body)
-
-        # Use shared helper to collect captures
-        found, _ = tween_helper.collect_callback_captures(
-            found, func_params, {m["name"] for m in members}, c_name
-        )
-        all_tween_callbacks.extend(found)
+        all_tween_callbacks.extend(tween_helper.find_tween_callbacks(func.get("body", [])))
 
     # Build capture info map
     callback_param_captures = {}

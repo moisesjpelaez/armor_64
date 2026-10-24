@@ -198,6 +198,8 @@ def generate_camera_block(cameras: List[Dict], trait_info: dict, scene_name: str
         prefix = f'cameras[{i}]'
         lines.extend(generate_transform_block(prefix, cam["pos"]))
         lines.append(f'    {prefix}.target = {_fmt_vec3(cam["target"])};')
+        look_dir = [t - p for t, p in zip(cam["target"], cam["pos"])]
+        lines.append(f'    {prefix}.look_dir = {_fmt_vec3(look_dir)};')
         lines.append(f'    {prefix}.fov = {cam["fov"]:.6f}f;')
         lines.append(f'    {prefix}.near = {cam["near"]:.6f}f;')
         lines.append(f'    {prefix}.far = {cam["far"]:.6f}f;')

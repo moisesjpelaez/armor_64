@@ -840,17 +840,6 @@ class TraitExtractor extends N64Extractor {
                 args: [exprToIR(e2)]
             };
         }
-        // label.text = value -> label_set_text
-        if (isLabelTextAssign(e1)) {
-            var labelName = extractLabelFromTextAssign(e1);
-            var valueIR = exprToIR(e2);
-            meta.uses_ui = true;
-            return {
-                type: "label_set_text",
-                props: { label: labelName },
-                args: [valueIR]
-            };
-        }
         // g2.color = value -> render2d_set_color
         if (isGraphics2ColorAssign(e1)) {
             return { type: "render2d_set_color", args: [exprToIR(e2)] };
@@ -889,12 +878,6 @@ class TraitExtractor extends N64Extractor {
                     args: [exprToIR(e2)]
                 };
             }
-        }
-        if (targetIR != null && targetIR.value == "elements"
-            && targetIR.type == "member") {
-            // The emitter maps the `elements` member to the canvas
-            // element list, so the assigned value isn't needed
-            return { type: "assign", children: [targetIR, { type: "skip" }] };
         }
         // `this` stored in a trait-typed member: the trait's data
         if (targetIR != null && targetIR.type == "member" && isThis(e2)) {
@@ -1086,18 +1069,6 @@ class TraitExtractor extends N64Extractor {
         return false;
     }
 
-    // Check if expression is assignment to label.text (Label type variable)
-    function isLabelTextAssign(expr:Expr):Bool {
-        switch (expr.expr) {
-            case EField(obj, "text"):
-                // Check if the object is a Label-typed variable
-                var objType = getExprType(obj);
-                if (objType == "Label") return true;
-            default:
-        }
-        return false;
-    }
-
     // Check if expression is assignment to g2.color (Graphics2 color property)
     function isGraphics2ColorAssign(expr:Expr):Bool {
         switch (expr.expr) {
@@ -1167,19 +1138,6 @@ class TraitExtractor extends N64Extractor {
             default:
         }
         return { c_name: "", field: "" };
-    }
-
-    // Extract the label variable name from label.text assignment
-    function extractLabelFromTextAssign(expr:Expr):String {
-        switch (expr.expr) {
-            case EField(obj, "text"):
-                switch (obj.expr) {
-                    case EConst(CIdent(name)): return name;
-                    default:
-                }
-            default:
-        }
-        return null;
     }
 
     /**

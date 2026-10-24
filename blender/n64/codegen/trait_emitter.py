@@ -84,15 +84,6 @@ class TraitEmitter:
         """Get the C type of a member from member_map."""
         return self._get_member_info(member_name, "ctype")
 
-    def _get_member_haxe_type(self, member_name: str) -> str:
-        """Get the Haxe type of a member from member_map."""
-        return self._get_member_info(member_name, "type")
-
-    @staticmethod
-    def _camel_to_snake(name: str) -> str:
-        """Convert camelCase to snake_case (e.g. focusUp -> focus_up)."""
-        return re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', name).lower()
-
     def emit(self, node: Optional[Dict]) -> str:
         """Emit C code for an IR node."""
         if node is None:
@@ -366,12 +357,6 @@ class TraitEmitter:
             obj_type = obj_node.get("type", "")
             obj_value = obj_node.get("value", "")
 
-            # Handle elements.length for UI elements array
-            if obj_type == "member" and field in ("length", "count"):
-                if obj_value == "elements":
-                    # Koui elements.length -> N64 UI element count (unified array)
-                    return "UI_ELEMENT_COUNT"
-
             # Emit object and access field
             obj = self.emit(obj_node)
             if obj:
@@ -380,37 +365,7 @@ class TraitEmitter:
                     subfield = field.replace("transform.", "")
                     return f"{obj}->transform.{subfield}"
 
-                # Object pointer access (ArmObject*, etc.)
-                if "ArmObject*" in obj or "ArmCamera*" in obj or "ArmLight*" in obj:
-                    return f"{obj}->{field}"
-
-                # Handle array_access objects (e.g., elements[i].visible)
-                # canvas_get_image() returns UIImage* so use -> for field access
-                if obj_type == "array_access":
-                    return f"{obj}->{field}"
-
-                # Handle map_get results - they return pointers so use ->
-                if obj_type == "map_get":
-                    return f"{obj}->{field}"
-
-                # Handle array_get results - they return values so use .
-                # (but if the element is a struct with pointer, this varies)
-
-                # Handle member types that are pointers (UIGroup*, UILabel*, etc.)
-                # These need -> access since they're pointer types stored in data struct
-                if obj_type == "member":
-                    member_name = obj_value
-                    member_ctype = self._get_member_ctype(member_name)
-                    if member_ctype and member_ctype.endswith("*"):
-                        return f"{obj}->{field}"
-                    # Button members (uint8_t index) — field access goes through canvas_get_button()
-                    # Haxe uses camelCase (focusUp), C struct uses snake_case (focus_up)
-                    member_haxe_type = self._get_member_haxe_type(member_name)
-                    if member_haxe_type == "Button":
-                        c_field = self._camel_to_snake(field)
-                        return f"canvas_get_button({obj})->{c_field}"
-
-                # Through a pointer (Haxe marks it)
+                # Through a pointer (Haxe decides from the object's type)
                 if node.get("props", {}).get("deref"):
                     return f"{obj}->{field}"
 
@@ -441,15 +396,6 @@ class TraitEmitter:
 
         if not index_expr:
             return ""
-
-        # Check for UI elements array (Koui pattern)
-        # elements[i] -> canvas_get_image(i) for image-based UIs like splash screens
-        array_type = array_node.get("type", "")
-        array_value = array_node.get("value", "")
-
-        if array_type == "member" and array_value == "elements":
-            # Map to canvas_get_image() - returns UIImage* with .visible field
-            return f"canvas_get_image({index_expr})"
 
         if not array_expr:
             return ""
@@ -483,37 +429,6 @@ class TraitEmitter:
 
         # Check for special case: elements[i].visible = value
         # This maps to canvas_element_set_visible(i, value) for proper group handling
-        target_node = children[0]
-        if target_node.get("type") == "field_access" and target_node.get("value") == "visible":
-            obj_node = target_node.get("object", {})
-            if obj_node.get("type") == "array_access":
-                array_children = obj_node.get("children", [])
-                if len(array_children) >= 2:
-                    array_node = array_children[0]
-                    index_node = array_children[1]
-                    # The `elements` member (Koui elements array)
-                    if (array_node.get("type") == "member" and
-                        array_node.get("value") == "elements"):
-                        # This is elements[i].visible = value
-                        index_expr = self.emit(index_node)
-                        value_expr = self.emit(children[1])
-                        if index_expr and value_expr:
-                            return f"canvas_element_set_visible({index_expr}, {value_expr});"
-                        return ""
-
-            # Check for UIGroup member visible assignment: groupMember.visible = value
-            # This needs ui_group_set_visible() to propagate visibility to children
-            if obj_node.get("type") == "member":
-                member_name = obj_node.get("value")
-                member_info = self.member_map.get(member_name, {})
-                member_ctype = member_info.get("ctype", "")
-                if member_ctype == "UIGroup*":
-                    group_expr = self.emit(obj_node)
-                    value_expr = self.emit(children[1])
-                    if group_expr and value_expr:
-                        return f"ui_group_set_visible({group_expr}, {value_expr});"
-                    return ""
-
         target = self.emit(children[0])
         value = self.emit(children[1])
 
@@ -1211,23 +1126,27 @@ class TraitEmitter:
         """SceneManager.clearScenes() -> canvas_clear()"""
         return "canvas_clear();"
 
+    def _ui_call(self, node: Dict, func: str) -> str:
+        """func(args...) for the UI nodes Haxe builds from types."""
+        args = [self.emit(a) for a in node.get("args", [])]
+        return f"{func}({', '.join(args)})" if args and all(args) else ""
+
     def emit_label_set_text(self, node: Dict) -> str:
-        """label.text = value -> ui_label_set_text(label, value)"""
-        props = node.get("props", {})
-        label_name = props.get("label", "")
-        args = node.get("args", [])
+        return self._ui_call(node, "ui_label_set_text")
 
-        if not label_name or not args:
-            return ""
+    def emit_canvas_element_set_visible(self, node: Dict) -> str:
+        return self._ui_call(node, "canvas_element_set_visible")
 
-        # Check if this is a member variable (stored in data struct) or local variable
-        if label_name in self.member_names:
-            label_expr = f"(({self.data_type}*)data)->{label_name}"
-        else:
-            label_expr = label_name
+    def emit_ui_group_set_visible(self, node: Dict) -> str:
+        return self._ui_call(node, "ui_group_set_visible")
 
-        value = self.emit(args[0])
-        return f"ui_label_set_text({label_expr}, {value});"
+    def emit_canvas_element(self, node: Dict) -> str:
+        """elements[i]: Koui's element list is the canvas's (logo screens use images)."""
+        return f"canvas_get_image({self.emit(node.get('children', [None])[0])})"
+
+    def emit_button_field(self, node: Dict) -> str:
+        """button.field: buttons are indices into the canvas's button pool."""
+        return f"canvas_get_button({self.emit(node.get('children', [None])[0])})->{node.get('value', '')}"
 
     def emit_transform_call(self, node: Dict) -> str:
         """Transform calls - substitute placeholders in macro-provided c_code."""
@@ -1412,11 +1331,7 @@ class TraitEmitter:
         return node.get("c_code", "")
 
     def emit_vec_call(self, node: Dict) -> str:
-        """Vec calls - substitute placeholders in macro-provided c_code.
-
-        Special handling for camera traits: when setting transform.loc on 'object',
-        also update the camera's look-at target to maintain fixed look direction.
-        """
+        """Vec calls - substitute placeholders in macro-provided c_code."""
         c_code = node.get("c_code", "")
         if not c_code:
             return ""
@@ -1430,34 +1345,7 @@ class TraitEmitter:
         is_compound = obj.startswith("(Arm")
         vec = f"({obj})" if is_compound else obj
 
-        result = self._substitute_placeholders(c_code, node.get("args", []), vec=vec, vec_raw=obj)
-
-        # Special handling for camera traits: when updating camera transform.loc,
-        # also update the look-at target to follow the player
-        if self._is_camera_transform_loc_set(obj_node):
-            # Check if this trait has a 'target' member (camera follow pattern)
-            if self._trait_has_member("target"):
-                # Get the target member and update camera's look-at point
-                # This keeps the look direction constant as the camera moves
-                result += f" ((ArmCamera*)obj)->target.v[0] = it_world_x(&((ArmObject*)(({self.c_name}Data*)data)->target)->transform); ((ArmCamera*)obj)->target.v[1] = it_world_y(&((ArmObject*)(({self.c_name}Data*)data)->target)->transform); ((ArmCamera*)obj)->target.v[2] = it_world_z(&((ArmObject*)(({self.c_name}Data*)data)->target)->transform);"
-
-        return result
-
-    def _is_camera_transform_loc_set(self, obj_node: Dict) -> bool:
-        """Check if we're setting object.transform.loc (camera position)."""
-        if not obj_node:
-            return False
-        if obj_node.get("type") != "field_access":
-            return False
-        if obj_node.get("value") != "transform.loc":
-            return False
-        inner = obj_node.get("object", {})
-        return inner.get("type") == "ident" and inner.get("value") == "object"
-
-    def _trait_has_member(self, member_name: str) -> bool:
-        """Check if current trait has a member with given name."""
-        # Check trait member names
-        return member_name in self.member_names
+        return self._substitute_placeholders(c_code, node.get("args", []), vec=vec, vec_raw=obj)
 
     # =========================================================================
     # Constructors

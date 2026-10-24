@@ -87,61 +87,6 @@ def _find_callbacks_in_value(value) -> List[dict]:
     return callbacks
 
 
-def find_all_idents(nodes: List[dict]) -> Set[str]:
-    """Recursively find all identifier names used in IR nodes.
-
-    Used to detect which variables are captured in closures.
-
-    Args:
-        nodes: List of IR nodes to search
-
-    Returns:
-        Set of identifier names
-    """
-    idents = set()
-    for node in nodes:
-        if node is None:
-            continue
-        if node.get("type") == "ident":
-            name = node.get("value", "")
-            if name:
-                idents.add(name)
-        # Recurse into all potential child locations
-        children = node.get("children", [])
-        if children:
-            idents.update(find_all_idents(children))
-        args = node.get("args", [])
-        if args:
-            idents.update(find_all_idents(args))
-        # Recurse into ALL props values (handles then, else_, and any future props)
-        props = node.get("props", {})
-        if props:
-            idents.update(_find_idents_in_value(props))
-        obj = node.get("object")
-        if obj and isinstance(obj, dict):
-            idents.update(find_all_idents([obj]))
-    return idents
-
-
-def _find_idents_in_value(value) -> Set[str]:
-    """Recursively find identifiers in any value (list, dict, or node)."""
-    idents = set()
-    if value is None:
-        return idents
-    if isinstance(value, list):
-        for v in value:
-            idents.update(_find_idents_in_value(v))
-    elif isinstance(value, dict):
-        if "type" in value:
-            # It's a node
-            idents.update(find_all_idents([value]))
-        else:
-            # Plain dict - recurse into values
-            for v in value.values():
-                idents.update(_find_idents_in_value(v))
-    return idents
-
-
 def generate_tween_callback(
     callback_info: dict,
     emitter,
@@ -316,60 +261,6 @@ class _CaptureEmitter:
                 return {k: self._substitute_captures_in_value(v) for k, v in value.items()}
         # Primitive value (string, int, etc.) - return as-is
         return value
-
-
-def collect_callback_captures(
-    callbacks: List[dict],
-    func_params: Dict[str, str],
-    member_names: Set[str],
-    c_name: str
-) -> Tuple[List[dict], Dict[str, List[Tuple[str, str]]]]:
-    """Analyze callbacks and detect which function params they capture.
-
-    For each callback, checks if any identifiers in its body reference
-    function parameters (not members, not the callback's own param).
-
-    Args:
-        callbacks: List of tween callback info dicts
-        func_params: Map of function parameter names to their C types
-        member_names: Set of class member names (to exclude from captures)
-        c_name: The C name prefix for this class
-
-    Returns:
-        Tuple of (updated_callbacks, callback_param_captures)
-        - updated_callbacks: Callbacks with captures field populated
-        - callback_param_captures: Map of callback_name to list of (param_name, ctype)
-    """
-    callback_param_captures = {}
-
-    for cb in callbacks:
-        cb_name = cb.get("callback_name", "")
-        cb_body = cb.get("body", [])
-        idents = find_all_idents(cb_body)
-
-        # Find which idents are function params (not members, not callback param)
-        cb_param_name = cb.get("param_name") or ""
-        param_caps = []
-        for ident_name in idents:
-            if ident_name in func_params and ident_name != cb_param_name:
-                if ident_name not in member_names:
-                    param_caps.append((ident_name, func_params[ident_name]))
-
-        if param_caps:
-            # Store in the callback's captures
-            existing_captures = cb.get("captures", [])
-            for pname, pctype in param_caps:
-                existing_captures.append({
-                    "name": pname,
-                    "type": pctype,
-                    "is_member": False,
-                    "is_param": True,
-                    "ctype": pctype
-                })
-            cb["captures"] = existing_captures
-            callback_param_captures[cb_name] = param_caps
-
-    return callbacks, callback_param_captures
 
 
 def generate_capture_globals(

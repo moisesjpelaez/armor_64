@@ -235,7 +235,8 @@ class N64Extractor implements IExtractorContext {
             case EBinop(OpAssign, e1, e2) if (isSoundHandle(e1) && N64MacroBase.isNullLiteral(e2)):
                 { type: "assign", children: [exprToIR(e1), SOUND_HANDLE_NULL] };
             case EBinop(OpAssign, e1, e2):
-                convertAssign(e1, e2);
+                var ui = convertUIAssign(e1, e2);
+                ui != null ? ui : convertAssign(e1, e2);
             // Sound handles are compared by sound (also with null)
             case EBinop(op = OpEq | OpNotEq, e1, e2) if (isSoundHandle(e1) || isSoundHandle(e2)):
                 { type: "sound_handle_equals", value: op == OpEq ? "==" : "!=", children: [handleValue(e1), handleValue(e2)] };
@@ -343,6 +344,57 @@ class N64Extractor implements IExtractorContext {
         return members.exists(name) ? { type: "member", value: name } : null;
     }
 
+    // ========================================================================
+    // Koui UI (by type)
+    // ========================================================================
+
+    // Koui's element list (Array<koui.elements.Element>): N64's canvas element list
+    function isKouiElements(e:Expr):Bool {
+        var t = e != null ? TypedIndex.exprType(e) : null;
+        if (t == null) return false;
+        return switch (Context.follow(t)) {
+            case TInst(_.get() => {name: "Array", pack: []}, [elem]):
+                switch (Context.follow(elem)) {
+                    case TInst(c, _): TypedIndex.classPath(c.get()) == "koui.elements.Element";
+                    default: false;
+                }
+            default: false;
+        };
+    }
+
+    function ctypeOf(e:Expr):String {
+        return TypeMap.getCType(getExprType(e));
+    }
+
+    // Snake case of a Haxe field (focusUp -> focus_up), as the C UI structs name them
+    static function snakeCase(name:String):String {
+        return ~/([a-z0-9])([A-Z])/g.replace(name, "$1_$2").toLowerCase();
+    }
+
+    /** UI assignments with their own runtime calls, null for others. */
+    function convertUIAssign(e1:Expr, e2:Expr):IRNode {
+        // The element list itself: N64 uses the canvas's
+        if (isKouiElements(e1)) return { type: "skip" };
+        switch (e1.expr) {
+            case EField(obj, "visible"):
+                switch (obj.expr) {
+                    // elements[i].visible = v
+                    case EArray(list, index) if (isKouiElements(list)):
+                        return { type: "canvas_element_set_visible", args: [exprToIR(index), exprToIR(e2)] };
+                    default:
+                }
+                // A layout's visibility applies to its children
+                if (ctypeOf(obj) == "UIGroup*") {
+                    return { type: "ui_group_set_visible", args: [exprToIR(obj), exprToIR(e2)] };
+                }
+            case EField(obj, "text") if (ctypeOf(obj) == "UILabel*"):
+                meta.uses_ui = true;
+                return { type: "label_set_text", args: [exprToIR(obj), exprToIR(e2)] };
+            default:
+        }
+        return null;
+    }
+
     /** Hook: `e1 = e2`. */
     function convertAssign(e1:Expr, e2:Expr):IRNode {
         return { type: "assign", children: [exprToIR(e1), exprToIR(e2)] };
@@ -350,6 +402,8 @@ class N64Extractor implements IExtractorContext {
 
     /** `e1[e2]`: typed Map and Array containers use their generated functions. */
     function convertArrayAccess(e1:Expr, e2:Expr):IRNode {
+        // elements[i]: the canvas element (a pointer)
+        if (isKouiElements(e1)) return { type: "canvas_element", children: [exprToIR(e2)] };
         var objType = getExprType(e1);
         var ctype = TypeMap.getCType(objType);
         var container = TypeMap.isMapType(objType) ? TypeMap.mapReadNode(objType) : TypeMap.isArrayType(objType) ? "array_get" : null;
@@ -571,9 +625,19 @@ class N64Extractor implements IExtractorContext {
             default:
         }
 
+        // The canvas element list's length
+        if (field == "length" && isKouiElements(obj)) {
+            return { type: "c_literal", c_code: "UI_ELEMENT_COUNT" };
+        }
+
+        // Buttons are indices into the canvas's button pool
+        if (getExprType(obj) == "Button") {
+            return { type: "button_field", value: snakeCase(field), children: [exprToIR(obj)] };
+        }
+
         // Array length: the C arrays' count
         if (field == "length" && TypeMap.isArrayType(getExprType(obj))) {
-            return { type: "field_access", value: "count", object: exprToIR(obj) };
+            return fieldAccess(obj, "count");
         }
 
         // Vec3 component access
@@ -598,9 +662,16 @@ class N64Extractor implements IExtractorContext {
             return N64MacroBase.unsupported('$shortName.$field is not supported on N64 yet');
         }
 
+        return fieldAccess(obj, field);
+    }
+
+    /** obj.field in C, through a pointer (->) for pointer locals, pointer types and pointers the runtime returns. */
+    function fieldAccess(obj:Expr, field:String):IRNode {
         var objIR = exprToIR(obj);
-        // Through a pointer local: ->
-        return isPointerLocal(obj) ? { type: "field_access", object: objIR, value: field, props: { deref: true } }
+        var ctype = ctypeOf(obj);
+        var deref = isPointerLocal(obj) || objIR.type == "map_get" || objIR.type == "canvas_element"
+            || (ctype != null && ctype.endsWith("*") && ctype != "void*" && ctype != "const char*");
+        return deref ? { type: "field_access", object: objIR, value: field, props: { deref: true } }
             : { type: "field_access", object: objIR, value: field };
     }
 

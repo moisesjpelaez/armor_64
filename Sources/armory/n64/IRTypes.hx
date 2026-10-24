@@ -44,7 +44,9 @@ package armory.n64;
  *   math_call, input_call            - Domain-specific calls
  *   physics_call, vec_call           - Domain-specific calls
  *   signal_connect, signal_disconnect, signal_emit - Signals (see SignalCallConverter)
- *   canvas_get_label, label_set_text - UI calls
+ *   canvas_get_label, label_set_text - UI calls (label_set_text.args: [label, text])
+ *   canvas_element, canvas_element_set_visible - Koui's element list (Array<Element>) by type
+ *   ui_group_set_visible, button_field - Layout visibility, field of a Button (pool index)
  *   autoload_call                    - Call to autoload function
  *   object_call                      - Object method call
  *   cast_call                        - Type cast
