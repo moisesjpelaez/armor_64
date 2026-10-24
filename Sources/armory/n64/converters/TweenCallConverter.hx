@@ -34,35 +34,8 @@ class TweenCallConverter implements ICallConverter {
     public function new() {}
 
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
-        // Check if the object is a Tween type
-        var objType = ExprUtils.getExprTypeSafe(obj, ctx);
-        var isPotentiallyInherited = false;
-
-        // If objType is null or Dynamic (unresolved), check if it's a member or inherited member
-        if (objType == null || objType == "Dynamic") {
-            switch (obj.expr) {
-                case EConst(CIdent(name)):
-                    // Check local member types first
-                    objType = ctx.getMemberType(name);
-                    // Then check inherited (may return null if not loaded)
-                    if (objType == null) {
-                        objType = ctx.getInheritedMemberType(name);
-                    }
-                    // If still null and we have a parent, the identifier would become
-                    // potentially_inherited - optimistically assume it could be a Tween
-                    // and let Python resolve it correctly
-                    if (objType == null && ctx.getParentName() != null) {
-                        isPotentiallyInherited = true;
-                    }
-                default:
-            }
-        }
-
-        // Proceed if we know it's a Tween OR if it's potentially inherited
-        // (for inherited members we can't resolve type at macro time)
-        if (!isPotentiallyInherited && (objType == null || objType == "Dynamic" || objType.indexOf("Tween") < 0)) {
-            return null;
-        }
+        // Only armory.system.Tween, from the receiver's type
+        if (TypedIndex.receiverPath(obj) != "armory.system.Tween") return null;
 
         // Get the object IR (the tween variable)
         var objIR = ctx.exprToIR(obj);

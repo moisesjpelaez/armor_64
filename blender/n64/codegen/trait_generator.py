@@ -32,9 +32,8 @@ def _ancestors(all_traits: dict, name: str):
 
 def is_virtual_method(all_traits: dict, name: str, method: str) -> bool:
     """A method of trait `name` needs vtable dispatch if it overrides an
-    ancestor's method or a descendant overrides it."""
-    if all_traits.get(name, {}).get("methods", {}).get(method, {}).get("isVirtual", False):
-        return True
+    ancestor's method or a descendant overrides it (in Haxe a method with an
+    ancestor's name is always an override)."""
     if any(method in all_traits[a].get("methods", {}) for a in _ancestors(all_traits, name)):
         return True
     return any(method in ir.get("methods", {}) for other, ir in all_traits.items()

@@ -64,79 +64,14 @@ class TraitEmitter:
         # Track local variables that are pointers (for sound handle array access)
         self.local_pointer_vars: Set[str] = set()
 
-        # Build member lookup map for routing member access
-        self._member_depth_map = self._build_member_depth_map()
 
     # =========================================================================
     # Inheritance Chain Utilities
     # =========================================================================
 
-    def _walk_inheritance_chain(self, visitor_fn, start_parent: str = None):
-        """Walk up the inheritance chain, calling visitor_fn at each level.
-
-        Args:
-            visitor_fn: Callable(parent_name, parent_ir, depth) -> Optional[result]
-                       Return a non-None value to stop and return that value
-            start_parent: Starting parent name (defaults to self.parent_name)
-
-        Returns:
-            The first non-None value returned by visitor_fn, or None if exhausted
-        """
-        depth = 1
-        current_parent = start_parent if start_parent is not None else self.parent_name
-        while current_parent and current_parent in self.all_traits:
-            parent_ir = self.all_traits[current_parent]
-            result = visitor_fn(current_parent, parent_ir, depth)
-            if result is not None:
-                return result
-            current_parent = parent_ir.get("parent")
-            depth += 1
-        return None
-
-    def _build_member_depth_map(self) -> Dict[str, int]:
-        """Build map of member_name -> depth for routing member access.
-
-        depth 0 = this trait's member (data->member)
-        depth 1 = parent's member (data->_parent.member)
-        depth 2 = grandparent's member (data->_parent._parent.member)
-        etc.
-        """
-        depth_map = {}
-
-        # This trait's members at depth 0
-        for name in self.member_names:
-            depth_map[name] = 0
-
-        # Walk up inheritance chain using helper
-        def collect_parent_members(parent_name, parent_ir, depth):
-            parent_members = parent_ir.get("members", [])
-            for m in parent_members:
-                mname = m.get("name", "")
-                # Don't override - child shadows parent
-                if mname not in depth_map:
-                    depth_map[mname] = depth
-            return None  # Continue walking
-
-        self._walk_inheritance_chain(collect_parent_members)
-
-        return depth_map
-
     def _get_member_access(self, member_name: str) -> str:
-        """Get the C expression to access a member, routing through inheritance chain.
-
-        Returns expression like:
-        - "(Data*)data)->member" for this trait's members (depth 0)
-        - "(Data*)data)->_parent.member" for parent's members (depth 1)
-        - "(Data*)data)->_parent._parent.member" for grandparent's (depth 2), etc.
-        """
-        depth = self._member_depth_map.get(member_name, 0)
-        if depth == 0:
-            # Direct member of this trait
-            return f"(({self.data_type}*)data)->{member_name}"
-        else:
-            # Inherited member - route through _parent chain
-            parent_chain = "_parent." * depth
-            return f"(({self.data_type}*)data)->{parent_chain}{member_name}"
+        """C expression of one of this trait's members."""
+        return f"(({self.data_type}*)data)->{member_name}"
 
     def _get_member_info(self, member_name: str, key: str) -> str:
         """Get a field from member_map for a given member.
@@ -396,49 +331,12 @@ class TraitEmitter:
         - Grandparent's: data->_parent._parent.member
         """
         name = node.get("value", "")
-        return self._get_member_access(name)
-
-    def emit_potentially_inherited(self, node: Dict) -> str:
-        """Handle identifiers that might be inherited members.
-
-        IR format:
-            type: "potentially_inherited"
-            value: "tween"
-            parent: "GameScene"
-
-        At emit time, we have access to all_traits so we can resolve whether
-        this is actually an inherited member and from which ancestor.
-        """
-        name = node.get("value", "")
-        parent_hint = node.get("parent", "")
-
-        # Search for this member in the inheritance chain
-        owner, member_info = self._find_inherited_member(name, parent_hint)
-
+        owner = node.get("owner")
         if owner:
-            # Found it - emit as inherited member access
-            owner_ir = self.all_traits.get(owner, {})
-            owner_c_name = owner_ir.get("c_name", owner.lower())
-            owner_data_type = f"{owner_c_name}Data"
-            return f"(({owner_data_type}*)data)->{name}"
-        else:
-            # Not found as inherited member - emit as regular identifier
-            return name
-
-    def _find_inherited_member(self, member_name: str, parent_hint: str) -> tuple:
-        """Find which ancestor owns a member.
-
-        Returns (owner_name, member_info) or (None, None) if not found.
-        """
-        def find_member(parent_name, parent_ir, depth):
-            parent_members = parent_ir.get("members", [])
-            for m in parent_members:
-                if m.get("name") == member_name:
-                    return (parent_name, m)
-            return None  # Continue searching
-
-        result = self._walk_inheritance_chain(find_member, parent_hint or self.parent_name)
-        return result if result else (None, None)
+            # Declared by an ancestor: its struct is at offset 0 of ours
+            owner_c_name = self.all_traits.get(owner, {}).get("c_name", owner.replace(".", "_").lower())
+            return f"(({owner_c_name}Data*)data)->{name}"
+        return self._get_member_access(name)
 
     def emit_ident(self, node: Dict) -> str:
         """Identifier: local var, dt, object, etc."""
@@ -470,24 +368,10 @@ class TraitEmitter:
             obj_value = obj_node.get("value", "")
 
             # Handle elements.length for UI elements array
-            # Can be either "potentially_inherited" or "member" depending on context
-            if obj_type in ("potentially_inherited", "member") and field in ("length", "count"):
+            if obj_type == "member" and field in ("length", "count"):
                 if obj_value == "elements":
                     # Koui elements.length -> N64 UI element count (unified array)
                     return "UI_ELEMENT_COUNT"
-
-            # this.field -> member access with inheritance routing
-            if obj_type == "ident" and obj_value == "this":
-                # Check if it's a member (own or inherited)
-                if field in self._member_depth_map:
-                    return self._get_member_access(field)
-                return field
-
-            # inst.field -> also a member access for singleton patterns
-            if obj_type == "ident" and obj_value == "inst":
-                if field in self._member_depth_map:
-                    return self._get_member_access(field)
-                return field
 
             # Emit object and access field
             obj = self.emit(obj_node)
@@ -513,7 +397,7 @@ class TraitEmitter:
                 # Handle array_get results - they return values so use .
                 # (but if the element is a struct with pointer, this varies)
 
-                # Handle member/inherited_member types that are pointers (UIGroup*, UILabel*, etc.)
+                # Handle member types that are pointers (UIGroup*, UILabel*, etc.)
                 # These need -> access since they're pointer types stored in data struct
                 if obj_type == "member":
                     member_name = obj_value
@@ -568,8 +452,7 @@ class TraitEmitter:
         array_type = array_node.get("type", "")
         array_value = array_node.get("value", "")
 
-        # Can be either "potentially_inherited" or "member" depending on context
-        if array_type in ("potentially_inherited", "member") and array_value == "elements":
+        if array_type == "member" and array_value == "elements":
             # Map to canvas_get_image() - returns UIImage* with .visible field
             return f"canvas_get_image({index_expr})"
 
@@ -613,8 +496,8 @@ class TraitEmitter:
                 if len(array_children) >= 2:
                     array_node = array_children[0]
                     index_node = array_children[1]
-                    # Handle both "potentially_inherited" and "member" types for elements array
-                    if (array_node.get("type") in ("potentially_inherited", "member") and
+                    # The `elements` member (Koui elements array)
+                    if (array_node.get("type") == "member" and
                         array_node.get("value") == "elements"):
                         # This is elements[i].visible = value
                         index_expr = self.emit(index_node)
@@ -1103,83 +986,6 @@ class TraitEmitter:
             return "; ".join(capture_assignments) + "; " + method_call
         return method_call
 
-    def emit_inherited_method_call(self, node: Dict) -> str:
-        """Emit call to an inherited method from a parent class.
-
-        IR format:
-            type: "inherited_method_call"
-            parent: "GameScene"  (direct parent hint)
-            method: "init"
-            args: [...]
-
-        Walks up the inheritance chain to find which ancestor has the method,
-        then emits a call to that ancestor's method.
-
-        We pass the FULL data pointer (not &_parent) so that virtual method calls
-        within the parent method dispatch correctly to the child's override.
-        Since _parent is at offset 0, casting LevelData* to GameSceneData* works.
-        """
-        method = node.get("method", "")
-        args = node.get("args", [])
-        parent_hint = node.get("parent", "")
-
-        # Find which parent has this method
-        owner_name, depth = self._find_method_owner(method, parent_hint)
-
-        if not owner_name:
-            # No parent found with this method - fail fast with clear error
-            raise RuntimeError(
-                f"N64 Trait Error: [{self.trait_name}] calls inherited method '{method}' "
-                f"but it was not found in any parent class in the inheritance chain. "
-                f"Ensure the method exists in a parent trait."
-            )
-
-        owner_ir = self.all_traits.get(owner_name, {})
-        owner_c_name = owner_ir.get("c_name", owner_name.lower())
-
-        # Pass full data pointer for virtual method dispatch
-        # Parent methods cast to their own type, but since _parent is at offset 0,
-        # this works correctly
-        data_ptr = "data"
-
-        # Collect capture assignments that need to happen before the call
-        capture_assignments = []
-
-        # Emit argument values - skip nodes become NULL, callback_wrapper args become function pointer names
-        arg_strs = []
-        for a in args:
-            if a and a.get("type") == "skip":
-                # Skip node = omitted optional parameter, pass NULL
-                arg_strs.append("NULL")
-            elif a and a.get("type") == "callback_wrapper":
-                # Callback wrapper - use the generated function name
-                arg_strs.append(a.get("callback_name", ""))
-                # Generate capture assignments for any captured params
-                captures = a.get("captures", [])
-                for cap in captures:
-                    if cap.get("is_param", False):
-                        cap_name = cap.get("name", "")
-                        if cap_name:
-                            global_name = f"{self.c_name}_capture_{cap_name}"
-                            capture_assignments.append(f"{global_name} = {cap_name}")
-            else:
-                emitted = self.emit(a)
-                if emitted:
-                    arg_strs.append(emitted)
-        args_part = ", ".join(arg_strs) if arg_strs else ""
-
-        # Build function call: through the vtable if a descendant may override it
-        method_c_name = self._vtable_call(method) or f"{owner_c_name}_{method.lower()}"
-        if args_part:
-            method_call = f"{method_c_name}(obj, {data_ptr}, {args_part})"
-        else:
-            method_call = f"{method_c_name}(obj, {data_ptr})"
-
-        # If we have capture assignments, emit them before the call
-        if capture_assignments:
-            return "; ".join(capture_assignments) + "; " + method_call
-        return method_call
-
     def _vtable_call(self, method: str) -> str:
         """`((OwnerData*)data)->_vfn_method` for virtual methods, through the struct
         of the trait holding the pointer; empty for non-virtual methods."""
@@ -1188,33 +994,6 @@ class TraitEmitter:
             return ""
         owner_c_name = self.all_traits.get(owner, {}).get("c_name", owner.lower())
         return f"(({owner_c_name}Data*)data)->_vfn_{method}"
-
-    def _find_method_owner(self, method: str, parent_hint: str) -> tuple:
-        """Find which ancestor trait owns a method.
-
-        Returns (owner_name, depth) where depth is:
-        - 1 for direct parent
-        - 2 for grandparent
-        - etc.
-
-        Returns (None, 0) if method not found in any ancestor.
-        """
-        depth = 1
-        current_parent = parent_hint or self.parent_name
-
-        while current_parent and current_parent in self.all_traits:
-            parent_ir = self.all_traits[current_parent]
-            parent_methods = parent_ir.get("methods", {})
-
-            # Check if this parent has the method
-            if method in parent_methods:
-                return (current_parent, depth)
-
-            # Move up to grandparent
-            current_parent = parent_ir.get("parent")
-            depth += 1
-
-        return (None, 0)
 
     def emit_method_call(self, node: Dict) -> str:
         """Method call on object: object.method(args).

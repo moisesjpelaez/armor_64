@@ -158,7 +158,6 @@ class N64TraitMacro {
 
 class TraitExtractor extends N64Extractor {
     var methodIRMap:Map<String, MethodIR> = new Map();   // Extracted methods as IR for C generation
-    var publicMethods:Map<String, Bool> = new Map();     // Public methods (potentially virtual)
     var events:Map<String, Array<IRNode>> = new Map();
     var currentSetterTarget:String;  // Inside a setter body, the member it sets (written directly, not through the setter)
 
@@ -222,7 +221,6 @@ class TraitExtractor extends N64Extractor {
                     collectVar(field.name, t, e, set);
                 case FFun(func):
                     methodMap.set(field.name, func);
-                    publicMethods.set(field.name, field.access != null && Lambda.has(field.access, APublic));
                 default:
             }
         }
@@ -432,24 +430,12 @@ class TraitExtractor extends N64Extractor {
             var bodyNodes = statements(method.expr);
             currentSetterTarget = prevSetterTarget;
 
-            // Virtual Method Detection (Haxe side):
-            // Public methods are marked as potentially virtual because they can be overridden
-            // by child traits. The Python generator will use this flag to:
-            // 1. Generate vtable function pointers in the data struct
-            // 2. Initialize vtable pointers in on_ready
-            // 3. Emit vtable dispatch calls instead of direct calls
-            //
-            // If this flag is missing (older IR), Python has fallback detection that
-            // scans the inheritance hierarchy to identify virtual methods.
-            var isVirtual = publicMethods.exists(methodName) && publicMethods.get(methodName);
-
             methodIRMap.set(methodName, {
                 name: methodName,
                 cName: methodCName(methodName),
                 params: params,
                 returnType: returnType,
-                body: bodyNodes,
-                isVirtual: isVirtual
+                body: bodyNodes
             });
 
             // Clear method-specific local variables (parameters) after processing
@@ -725,10 +711,6 @@ class TraitExtractor extends N64Extractor {
         };
     }
 
-    override public function getParentName():String {
-        return parentName;
-    }
-
     override public function getEvents():Map<String, Array<IRNode>> {
         return events;
     }
@@ -765,16 +747,73 @@ class TraitExtractor extends N64Extractor {
             || TypedIndex.fieldOwner(e) == "iron.Trait") {
             return { type: "skip" };
         }
-        // If we have a parent and this isn't a known local/member, it might be inherited
-        // Emit as potentially_inherited - Python will resolve using parent IR
-        if (parentName != null) {
+        // A field an ancestor trait declares
+        var inherited = inheritedField(e);
+        if (inherited != null) {
+            if (!inherited.isMethod) return { type: "member", value: name, owner: inherited.owner };
             return {
-                type: "potentially_inherited",
-                value: name,
-                parent: parentName
+                type: "method_ref",
+                method: name,
+                cName: inherited.cName + "_" + name.toLowerCase(),
+                trait: inherited.owner
             };
         }
         return { type: "ident", value: name };
+    }
+
+    /**
+     * The ancestor trait declaring the instance field `e` reads (from the
+     * typed AST): its path and C name, and whether the field is a method.
+     * Null for this trait's own fields and anything else.
+     */
+    function inheritedField(e:Expr):{owner:String, cName:String, isMethod:Bool} {
+        var ref = TypedIndex.fieldRef(e);
+        if (ref == null || ref.isStatic || ref.owner == traitKey) return null;
+        var owner = N64MacroBase.extractedClass(ref.owner);
+        if (owner == null || !N64Extractor.isTrait(owner)) return null;
+        var field = Lambda.find(owner.fields.get(), f -> f.name == ref.name);
+        if (field == null) return null;
+        var isMethod = switch (field.kind) {
+            case FMethod(_): true;
+            default: false;
+        };
+        return { owner: ref.owner, cName: N64Extractor.traitCName(owner), isMethod: isMethod };
+    }
+
+    // this.x: own members, then the ones an ancestor declares (looked up from
+    // the `this`: the access itself may be typed at a wider position)
+    override function thisField(thisExpr:Expr, name:String):IRNode {
+        var member = super.thisField(thisExpr, name);
+        if (member != null) return member;
+        var inherited = inheritedField(thisExpr);
+        return inherited != null && !inherited.isMethod ? { type: "member", value: name, owner: inherited.owner } : null;
+    }
+
+    /**
+     * A call to a method of this trait or an ancestor (callExpr is `name` or
+     * `this.name`): the C function of the class declaring it. Python calls it
+     * through the vtable when a descendant overrides it.
+     */
+    function traitMethodCall(callExpr:Expr, name:String, params:Array<Expr>):IRNode {
+        var cName:String = null, owner:String = null;
+        var own = methodMap.get(name);
+        if (own != null && own.expr != null) {
+            cName = methodCName(name);
+            owner = traitKey;
+        } else {
+            var inherited = inheritedField(callExpr);
+            if (inherited == null || !inherited.isMethod) return null;
+            cName = inherited.cName + "_" + name.toLowerCase();
+            owner = inherited.owner;
+        }
+        return {
+            type: "trait_method_call",
+            cName: cName,
+            method: name,
+            trait: owner,
+            // Function arguments become callback wrappers
+            args: extractCallbackArgs(params, name)
+        };
     }
 
     // C function of one of this trait's methods: <trait C name>_<method>
@@ -847,7 +886,7 @@ class TraitExtractor extends N64Extractor {
             }
         }
         if (targetIR != null && targetIR.value == "elements"
-            && (targetIR.type == "member" || targetIR.type == "potentially_inherited")) {
+            && targetIR.type == "member") {
             // The emitter maps the `elements` member to the canvas
             // element list, so the assigned value isn't needed
             return { type: "assign", children: [targetIR, { type: "skip" }] };
@@ -887,24 +926,15 @@ class TraitExtractor extends N64Extractor {
             };
         }
 
-        // this.method(): a method of this trait is inlined
+        // this.method(): same as method()
         if (isThis(obj)) {
-            var methodFunc = methodMap.get(method);
-            if (methodFunc != null && methodFunc.expr != null) {
-                return { type: "block", children: statements(methodFunc.expr) };
-            }
-            // Not a local method - emit as method_call (might be from parent)
-            return {
-                type: "method_call",
-                method: method,
-                object: { type: "ident", value: "this" },
-                args: args
-            };
+            var call = traitMethodCall(callExpr, method, params);
+            if (call != null) return call;
         }
         return null;
     }
 
-    override function convertFunctionCall(funcName:String, params:Array<Expr>, args:Array<IRNode>):IRNode {
+    override function convertFunctionCall(callExpr:Expr, funcName:String, params:Array<Expr>, args:Array<IRNode>):IRNode {
         // super() - call parent constructor (on_ready)
         if (funcName == "super") {
             // No parent - skip (shouldn't happen in valid Haxe code)
@@ -992,21 +1022,9 @@ class TraitExtractor extends N64Extractor {
             return { type: "notify_render2d", value: callbackName };
         }
 
-        // Check if this is a call to a local method - emit as C function call
-        if (methodMap.exists(funcName)) {
-            var method = methodMap.get(funcName);
-            if (method != null && method.expr != null) {
-                // Use extractCallbackArgs to properly handle lambda parameters
-                var processedArgs = extractCallbackArgs(params, funcName);
-                return {
-                    type: "trait_method_call",
-                    cName: methodCName(funcName),
-                    method: funcName,
-                    trait: traitKey,
-                    args: processedArgs
-                };
-            }
-        }
+        // A method of this trait or an ancestor
+        var call = traitMethodCall(callExpr, funcName, params);
+        if (call != null) return call;
 
         // Check if this is a call to a function-type parameter (callback invocation)
         // e.g., finishedCallback() where finishedCallback: Void->Void
@@ -1021,20 +1039,7 @@ class TraitExtractor extends N64Extractor {
             };
         }
 
-        // If method not found locally but we have a parent, assume it's inherited
-        // The Python emitter will check if the method exists in parent chain
-        if (parentName != null) {
-            // Extract callbacks from raw params - function args become callback wrappers
-            var processedArgs = extractCallbackArgs(params, funcName);
-            return {
-                type: "inherited_method_call",
-                parent: parentName,
-                method: funcName,
-                args: processedArgs
-            };
-        }
-
-        return super.convertFunctionCall(funcName, params, args);
+        return super.convertFunctionCall(callExpr, funcName, params, args);
     }
 
     // Check if expression is an assignment to transform properties (loc, rot, scale, dirty)
@@ -1291,7 +1296,7 @@ class TraitExtractor extends N64Extractor {
                         }
                     }
                 }
-            case "member":
+            case "member" if (node.owner == null):
                 var name = Std.string(node.value);
                 if (!captures.exists(name)) {
                     var memberType = memberTypes.get(name);

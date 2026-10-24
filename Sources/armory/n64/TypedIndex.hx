@@ -21,6 +21,12 @@ class TypedIndex {
     // "file:min:max" -> typed nodes at that exact position, outermost first
     static var nodes:Map<String, Array<TypedExpr>> = new Map();
 
+    // Field accesses on an implicit `this`, by the position of the `this`:
+    // the compiler may give the access a wider position (`x += 1` puts the
+    // whole assignment's on it), the identifier's only on the `this` (a
+    // generated local named "`this" inside closures)
+    static var thisFields:Map<String, TypedExpr> = new Map();
+
     // Static extensions (`using`) of the class being extracted
     public static var currentUsings:Array<ClassType> = [];
 
@@ -41,6 +47,13 @@ class TypedIndex {
         var list = nodes.get(k);
         if (list == null) nodes.set(k, list = []);
         list.push(t);
+        switch (t.expr) {
+            case TField({expr: TConst(TThis | TSuper), pos: thisPos}, _) if (!thisFields.exists(key(thisPos))):
+                thisFields.set(key(thisPos), t);
+            case TField({expr: TLocal({name: "`this"}), pos: thisPos}, _) if (!thisFields.exists(key(thisPos))):
+                thisFields.set(key(thisPos), t);
+            default:
+        }
         t.iter(addExpr);
     }
 
@@ -253,7 +266,10 @@ class TypedIndex {
     public static function fieldRef(e:Expr):Null<{owner:String, name:String, isStatic:Bool}> {
         // The first field access at this position: the compiler may wrap it
         // (e.g. a method converted to Function when passed as a handler)
-        for (t in nodesAt(e)) {
+        var list = nodesAt(e);
+        var implicit = thisFields.get(key(e.pos));
+        if (implicit != null) list = list.concat([implicit]);
+        for (t in list) {
             switch (t.expr) {
                 case TField(_, FInstance(c, _, cf)): return {owner: classPath(c.get()), name: cf.get().name, isStatic: false};
                 case TField(_, FClosure(owner, cf)) if (owner != null): return {owner: classPath(owner.c.get()), name: cf.get().name, isStatic: false};

@@ -339,9 +339,7 @@ class N64MacroBase {
         if (node.c_func != null) obj.c_func = node.c_func;
         if (node.cName != null) obj.cName = node.cName;
         if (node.trait != null) obj.trait = node.trait;
-        if (node.parent != null) obj.parent = node.parent;
-        // Inherited member fields
-        if (node.memberType != null) obj.memberType = node.memberType;
+        // Declaring class (inherited members, method calls)
         if (node.owner != null) obj.owner = node.owner;
         // Callback parameter call fields
         if (node.name != null) obj.name = node.name;

@@ -273,6 +273,11 @@ class N64Extractor implements IExtractorContext {
         return { type: "ident", value: name };
     }
 
+    /** Hook: `this.name` (thisExpr is the `this`) as a member, null if it isn't one. */
+    function thisField(thisExpr:Expr, name:String):IRNode {
+        return members.exists(name) ? { type: "member", value: name } : null;
+    }
+
     /** Hook: `e1 = e2`. */
     function convertAssign(e1:Expr, e2:Expr):IRNode {
         return { type: "assign", children: [exprToIR(e1), exprToIR(e2)] };
@@ -364,9 +369,8 @@ class N64Extractor implements IExtractorContext {
         // this.member: routed through the class's storage, not the object
         switch (obj.expr) {
             case EConst(CIdent("this")):
-                if (members.exists(field)) {
-                    return { type: "member", value: field };
-                }
+                var member = thisField(obj, field);
+                if (member != null) return member;
             default:
         }
 
@@ -575,7 +579,7 @@ class N64Extractor implements IExtractorContext {
                 return { type: "debug_call", args: args };
 
             case EConst(CIdent(name)):
-                return convertFunctionCall(name, params, args);
+                return convertFunctionCall(callExpr, name, params, args);
 
             default:
                 return N64MacroBase.unsupported("only calls to named functions and methods are supported on N64 (not " + N64MacroBase.describeExpr(callExpr) + ")");
@@ -587,8 +591,8 @@ class N64Extractor implements IExtractorContext {
         return null;
     }
 
-    /** Hook: `name(...)`, a call without a receiver. */
-    function convertFunctionCall(name:String, params:Array<Expr>, args:Array<IRNode>):IRNode {
+    /** Hook: `name(...)`, a call without a receiver (callExpr is `name`). */
+    function convertFunctionCall(callExpr:Expr, name:String, params:Array<Expr>, args:Array<IRNode>):IRNode {
         return { type: "call", value: name, args: args };
     }
 
@@ -632,17 +636,8 @@ class N64Extractor implements IExtractorContext {
         return memberTypes.get(name);
     }
 
-    // Inherited member types are resolved at Python code generation time
-    public function getInheritedMemberType(name:String):String {
-        return null;
-    }
-
     public function getCName():String {
         return cName;
-    }
-
-    public function getParentName():String {
-        return null;
     }
 
     public function getLocalVarType(name:String):String {
