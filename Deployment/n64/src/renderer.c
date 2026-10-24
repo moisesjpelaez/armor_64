@@ -241,6 +241,15 @@ void renderer_draw_scene(T3DViewport *viewport, ArmScene *scene) {
 	rdpq_sync_pipe();
 	rdpq_text_printf(NULL, FONT_BUILTIN_DEBUG_MONO, 200, 220, "FPS: %.2f", display_get_fps());
 	rdpq_text_printf(NULL, FONT_BUILTIN_DEBUG_MONO, 200, 230, "Obj: %d/%d", visible_count, scene->object_count);
+#if ENGINE_ENABLE_PHYSICS
+	{
+		float phys_ms;
+		int phys_steps, phys_tests, phys_contacts;
+		physics_debug_frame(&phys_ms, &phys_steps, &phys_tests, &phys_contacts);
+		rdpq_text_printf(NULL, FONT_BUILTIN_DEBUG_MONO, 10, 210, "Phys: %.2f ms (%d steps)", phys_ms, phys_steps);
+		rdpq_text_printf(NULL, FONT_BUILTIN_DEBUG_MONO, 10, 220, "Tests: %d  Contacts: %d", phys_tests, phys_contacts);
+	}
+#endif
 
 	// Input debug
 	rdpq_text_printf(NULL, FONT_BUILTIN_DEBUG_MONO, 10, 10, "Stick: %.2f, %.2f", input_stick_x(), input_stick_y());

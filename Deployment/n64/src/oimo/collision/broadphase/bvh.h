@@ -110,7 +110,14 @@ static inline void oimo_bvh_compute_bounds(
     }
 }
 
-// Partition triangles along the longest axis (simple median split)
+static inline float oimo_bvh_centroid(const OimoBvhTriangle* triangles, int16_t index, int axis) {
+    const OimoVec3* c = &triangles[index].centroid;
+    return axis == 0 ? c->x : axis == 1 ? c->y : c->z;
+}
+
+// Partition triangles at the median along an axis (quickselect): both halves
+// get half the triangles, so the tree stays balanced (depth log2(n/leaf)) for
+// any triangle distribution, as in OimoPhysics' StaticMeshBvh
 static inline int oimo_bvh_partition(
     OimoBvhTriangle* triangles,
     int16_t* indices,
@@ -118,48 +125,27 @@ static inline int oimo_bvh_partition(
     int axis
 ) {
     if (count <= 1) return 0;
-
-    // Find median value along axis
-    float min_val = 1e30f, max_val = -1e30f;
-    for (int i = 0; i < count; i++) {
-        float val;
-        switch (axis) {
-            case 0: val = triangles[indices[i]].centroid.x; break;
-            case 1: val = triangles[indices[i]].centroid.y; break;
-            default: val = triangles[indices[i]].centroid.z; break;
+    int mid = count / 2;
+    int lo = 0, hi = count - 1;
+    while (lo < hi) {
+        float pivot = oimo_bvh_centroid(triangles, indices[(lo + hi) / 2], axis);
+        int i = lo, j = hi;
+        while (i <= j) {
+            while (oimo_bvh_centroid(triangles, indices[i], axis) < pivot) i++;
+            while (oimo_bvh_centroid(triangles, indices[j], axis) > pivot) j--;
+            if (i <= j) {
+                int16_t tmp = indices[i];
+                indices[i] = indices[j];
+                indices[j] = tmp;
+                i++;
+                j--;
+            }
         }
-        if (val < min_val) min_val = val;
-        if (val > max_val) max_val = val;
+        if (mid <= j) hi = j;
+        else if (mid >= i) lo = i;
+        else break;
     }
-    float mid = (min_val + max_val) * 0.5f;
-
-    // Partition around median
-    int left = 0;
-    int right = count - 1;
-    while (left <= right) {
-        float left_val;
-        switch (axis) {
-            case 0: left_val = triangles[indices[left]].centroid.x; break;
-            case 1: left_val = triangles[indices[left]].centroid.y; break;
-            default: left_val = triangles[indices[left]].centroid.z; break;
-        }
-
-        if (left_val < mid) {
-            left++;
-        } else {
-            // Swap
-            int16_t tmp = indices[left];
-            indices[left] = indices[right];
-            indices[right] = tmp;
-            right--;
-        }
-    }
-
-    // Ensure we don't have empty partitions
-    if (left == 0) left = 1;
-    if (left == count) left = count - 1;
-
-    return left;
+    return mid;
 }
 
 // Build BVH recursively - returns node index
@@ -172,7 +158,7 @@ static inline int16_t oimo_bvh_build_recursive(
     int depth,
     int16_t* sorted_pos
 ) {
-    if (count == 0 || depth > OIMO_BVH_MAX_DEPTH) return -1;
+    if (count == 0) return -1;
 
     int16_t node_idx = oimo_bvh_alloc_node(tree);
     if (node_idx < 0) return -1;
@@ -180,8 +166,10 @@ static inline int16_t oimo_bvh_build_recursive(
     OimoBvhNode* node = &tree->nodes[node_idx];
     oimo_bvh_compute_bounds(triangles, indices, count, &node->aabb);
 
-    // Make leaf if few enough triangles
-    if (count <= OIMO_BVH_LEAF_THRESHOLD) {
+    // Make leaf if few enough triangles. Past the depth limit (can't happen
+    // with median splits) the node keeps all its triangles: none is dropped
+    if (depth >= OIMO_BVH_MAX_DEPTH && count > OIMO_BVH_LEAF_THRESHOLD) ARM_LIMIT_REACHED(OIMO_BVH_MAX_DEPTH);
+    if (count <= OIMO_BVH_LEAF_THRESHOLD || depth >= OIMO_BVH_MAX_DEPTH) {
         node->left_child = -1;
         node->right_child = -1;
         node->first_triangle = *sorted_pos;

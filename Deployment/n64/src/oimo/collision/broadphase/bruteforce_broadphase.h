@@ -40,30 +40,6 @@ static inline void oimo_bruteforce_move_proxy(OimoBroadPhase* bp, OimoProxy* pro
     oimo_proxy_set_aabb(proxy, aabb);
 }
 
-static inline void oimo_bruteforce_collect_pairs(OimoBroadPhase* bp) {
-    // Return previous pairs to pool
-    oimo_broadphase_pool_pairs(bp);
-
-    bp->_testCount = 0;
-
-    // Iterate: p1 from first to second-to-last
-    OimoProxy* p1 = bp->_proxyList;
-    while (p1 != NULL) {
-        // p2 from p1->next to last
-        OimoProxy* p2 = p1->_next;
-        while (p2 != NULL) {
-            bp->_testCount++;
-
-            if (oimo_bruteforce_overlap(p1, p2)) {
-                oimo_broadphase_pick_and_push_pair(bp, p1, p2);
-            }
-
-            p2 = p2->_next;
-        }
-        p1 = p1->_next;
-    }
-}
-
 static inline void oimo_bruteforce_ray_cast(
     OimoBroadPhase* bp,
     const OimoVec3* begin,

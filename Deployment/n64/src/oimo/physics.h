@@ -47,6 +47,12 @@ void physics_init(void);
 void physics_shutdown(void);
 void physics_reset(void);
 void physics_step(float dt);
+
+#ifdef ARM_DEBUG_HUD
+// This frame's physics (debug HUD): world step time (ms, smoothed), steps, the
+// broadphase's pair tests and the contacts of the last step. Resets the frame
+void physics_debug_frame(float *ms, int *steps, int *tests, int *contacts);
+#endif
 void physics_pause(void);
 void physics_resume(void);
 OimoWorld* physics_get_world(void);

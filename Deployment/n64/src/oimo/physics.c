@@ -138,9 +138,34 @@ void physics_reset(void) {
     oimo_world_init(&g_world, &gravity);
 }
 
+#ifdef ARM_DEBUG_HUD
+// Time of this frame's physics steps (debug HUD)
+static uint32_t g_debug_step_ticks = 0;
+static int g_debug_steps = 0;
+static float g_debug_ms = 0.0f;
+
+void physics_debug_frame(float *ms, int *steps, int *tests, int *contacts) {
+    // Smoothed over frames, for a readable number
+    g_debug_ms = g_debug_ms * 0.9f + (TICKS_TO_US(g_debug_step_ticks) / 1000.0f) * 0.1f;
+    *ms = g_debug_ms;
+    *steps = g_debug_steps;
+    *tests = g_world._broadPhase->_testCount;
+    *contacts = g_world._contactManager._numContacts;
+    g_debug_step_ticks = 0;
+    g_debug_steps = 0;
+}
+#endif
+
 void physics_step(float dt) {
+#ifdef ARM_DEBUG_HUD
+    uint32_t debug_start = TICKS_READ();
+#endif
     if (!g_initialized || g_paused) return;
     oimo_world_step(&g_world, dt);
+#ifdef ARM_DEBUG_HUD
+    g_debug_step_ticks += TICKS_DISTANCE(debug_start, TICKS_READ());
+    g_debug_steps++;
+#endif
 
     // Dispatch per-body contact subscriptions
     physics_contact_dispatch();

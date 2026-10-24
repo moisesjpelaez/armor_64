@@ -25,6 +25,9 @@ typedef struct OimoBroadPhase {
     OimoProxyPair _pairStorage[OIMO_MAX_PROXY_PAIRS];
     int _proxyStorageUsed;
     int _pairStorageUsed;
+    // Dynamic proxies and their list positions, gathered per pair collection
+    OimoProxy* _dynamic[OIMO_MAX_PROXIES];
+    int16_t _dynamicPos[OIMO_MAX_PROXIES];
 } OimoBroadPhase;
 
 static inline void oimo_broadphase_list_push(OimoBroadPhase* bp, OimoProxy* p) {
@@ -127,24 +130,36 @@ static inline void oimo_broadphase_collect_pairs_bruteforce(OimoBroadPhase* bp) 
 
     bp->_testCount = 0;
 
-    // Brute-force all pairs
-    OimoProxy* p1 = bp->_proxyList;
-    while (p1 != NULL) {
-        OimoProxy* p2 = p1->_next;
-        while (p2 != NULL) {
-            bp->_testCount++;
-            // Only pairs with a dynamic body: the contact manager drops the
-            // others (ContactManager.shouldCollide), so they'd only use pair slots
-            if (!p1->_isDynamic && !p2->_isDynamic) {
-                p2 = p2->_next;
-                continue;
-            }
-            if (oimo_broadphase_is_overlapping(p1, p2)) {
-                oimo_broadphase_pick_and_push_pair(bp, p1, p2);
-            }
-            p2 = p2->_next;
+    // Only pairs with a dynamic body: the contact manager drops the others
+    // (ContactManager.shouldCollide). A dynamic proxy is tested against every
+    // proxy after it, any other proxy only against the dynamic ones after it:
+    // the same pairs, in the same order, as testing every two proxies, for
+    // about (dynamic x all) tests instead of (all x all)
+    int numDynamic = 0;
+    int16_t pos = 0;
+    for (OimoProxy* p = bp->_proxyList; p != NULL; p = p->_next, pos++) {
+        if (p->_isDynamic) {
+            bp->_dynamic[numDynamic] = p;
+            bp->_dynamicPos[numDynamic++] = pos;
         }
-        p1 = p1->_next;
+    }
+
+    int nextDynamic = 0;  // First dynamic proxy after p1
+    pos = 0;
+    for (OimoProxy* p1 = bp->_proxyList; p1 != NULL; p1 = p1->_next, pos++) {
+        while (nextDynamic < numDynamic && bp->_dynamicPos[nextDynamic] <= pos) nextDynamic++;
+        if (p1->_isDynamic) {
+            for (OimoProxy* p2 = p1->_next; p2 != NULL; p2 = p2->_next) {
+                bp->_testCount++;
+                if (oimo_broadphase_is_overlapping(p1, p2)) oimo_broadphase_pick_and_push_pair(bp, p1, p2);
+            }
+        } else {
+            for (int k = nextDynamic; k < numDynamic; k++) {
+                OimoProxy* p2 = bp->_dynamic[k];
+                bp->_testCount++;
+                if (oimo_broadphase_is_overlapping(p1, p2)) oimo_broadphase_pick_and_push_pair(bp, p1, p2);
+            }
+        }
     }
 }
 

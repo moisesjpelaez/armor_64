@@ -202,7 +202,14 @@ static inline void oimo_contact_manager_destroy_outdated_contacts(OimoContactMan
 
         if (c->_latest) {
             c->_latest = false;
-            c->_shouldBeSkipped = false;
+            // Neither body moves (sleeping or static): the manifold can't
+            // change, keep the contact without the narrowphase (as
+            // OimoPhysics does with an incremental broadphase, below)
+            OimoRigidBody* r1 = c->_s1->_rigidBody;
+            OimoRigidBody* r2 = c->_s2->_rigidBody;
+            bool active1 = !r1->_sleeping && r1->_type != OIMO_RIGID_BODY_STATIC;
+            bool active2 = !r2->_sleeping && r2->_type != OIMO_RIGID_BODY_STATIC;
+            c->_shouldBeSkipped = !active1 && !active2;
         } else if (!incremental) {
             oimo_contact_manager_destroy_contact(cm, c);
         } else {
