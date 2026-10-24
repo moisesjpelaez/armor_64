@@ -53,7 +53,8 @@ DEFAULTS = {
     "MAX_CONTACT_SUBSCRIBERS": (4, "Contact handlers of one body"),
     "OIMO_MAX_PROXIES": (128, "Broadphase proxies (one per shape)"),
     "OIMO_MAX_PROXY_PAIRS": (256, "Broadphase overlapping pairs (budget: the bound is used when lower)"),
-    "OIMO_MAX_CONTACTS": (64, "Contacts between shapes (budget: the bound is used when lower)"),
+    "OIMO_MAX_CONTACTS": (64, "Contacts between shapes (2.6 KB each; without scene data)"),
+    "OIMO_CONTACTS_PER_DYNAMIC_BODY": (16, "Contact budget per dynamic body (Python only: OIMO_MAX_CONTACTS is at most the bound)"),
     "OIMO_MAX_ISLAND_BODIES": (32, "Bodies in one simulation island"),
     "OIMO_MAX_ISLAND_SOLVERS": (64, "Contact solvers in one simulation island (at most the contacts)"),
     "OIMO_MAX_RIGID_BODIES": (32, "Bodies visited while building one island"),
@@ -87,7 +88,7 @@ DEFAULTS = {
 }
 
 # Limits that only Python uses (not written to C)
-PYTHON_ONLY = {"SPAWN_MAX_INSTANCES"}
+PYTHON_ONLY = {"SPAWN_MAX_INSTANCES", "OIMO_CONTACTS_PER_DYNAMIC_BODY"}
 
 # UI limits are written into the UI headers, not limits.h
 UI_LIMITS = {name for name in DEFAULTS if name.startswith("UI_")}
@@ -160,7 +161,7 @@ def _body_kind(rigid_body: Dict) -> str:
 
 
 def _physics_bounds(physics: List[tuple]) -> tuple:
-    """(pairs, contacts) the bodies of a scene can make in one step.
+    """(pairs, contacts, dynamic bodies) the bodies of a scene can make in one step.
 
     Broadphase pairs: every two bodies with a dynamic one (the broadphase
     skips the others). Contacts: those pairs whose collision filters accept
@@ -173,7 +174,7 @@ def _physics_bounds(physics: List[tuple]) -> tuple:
         for kind2, group2, mask2 in physics[i + 1:]:
             if "dynamic" in (kind1, kind2) and (group1 & mask2) and (group2 & mask1):
                 contacts += 1
-    return pairs, contacts
+    return pairs, contacts, dynamic
 
 
 def compute(scenes: Optional[List[Dict]] = None, mesh_triangles: int = 0,
@@ -254,12 +255,19 @@ def _scene_limits(scenes: List[Dict], notes: Dict[str, str]) -> Dict[str, int]:
         notes[name] = f"bound {bound}" if bound <= default else f"budget (bound {bound})"
         return min(default, max(1, bound))
     pairs = budget("OIMO_MAX_PROXY_PAIRS", max(b[0] for b in bounds))
-    contacts = budget("OIMO_MAX_CONTACTS", max(b[1] for b in bounds))
+    # Contacts: a budget per dynamic body (a contact is 2.6 KB and the bound,
+    # every overlap at once, is far above what a body touches), at most the bound
+    per_body = DEFAULTS["OIMO_CONTACTS_PER_DYNAMIC_BODY"][0]
+    contact_bound = max(b[1] for b in bounds)
+    contact_budget = max(b[2] for b in bounds) * per_body
+    contacts = max(1, min(contact_bound, contact_budget))
+    notes["OIMO_MAX_CONTACTS"] = (f"bound {contact_bound}" if contact_bound <= contact_budget
+                                  else f"budget: {per_body} per dynamic body (bound {contact_bound})")
     notes["OIMO_MAX_ISLAND_SOLVERS"] = "at most the contacts"
     return {
         "OIMO_MAX_PROXY_PAIRS": pairs,
         "OIMO_MAX_CONTACTS": contacts,
-        "OIMO_MAX_ISLAND_SOLVERS": min(DEFAULTS["OIMO_MAX_ISLAND_SOLVERS"][0], contacts),
+        "OIMO_MAX_ISLAND_SOLVERS": contacts,
         "MAX_PHYSICS_BODIES": bodies,
         "MAX_MESH_COLLIDERS": need("mesh_colliders"),
         "OIMO_MAX_PROXIES": max(1, bodies + need("mesh_colliders")),

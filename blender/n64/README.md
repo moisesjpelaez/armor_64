@@ -195,7 +195,8 @@ Each export writes `build/n64/limits.txt`: every limit with its default and how 
 | `MAX_CONTACT_SUBSCRIBERS` | 4 | Contact handlers of one body | `limits.h` |
 | `OIMO_MAX_PROXIES` | 128 | Broadphase proxies (one per shape) | `limits.h` |
 | `OIMO_MAX_PROXY_PAIRS` | 256 | Broadphase overlapping pairs (budget: the bound is used when lower) | `limits.h` |
-| `OIMO_MAX_CONTACTS` | 64 | Contacts between shapes (budget: the bound is used when lower) | `limits.h` |
+| `OIMO_MAX_CONTACTS` | 64 | Contacts between shapes (2.6 KB each; without scene data) | `limits.h` |
+| `OIMO_CONTACTS_PER_DYNAMIC_BODY` | 16 | Contact budget per dynamic body (Python only: OIMO_MAX_CONTACTS is at most the bound) | Python only |
 | `OIMO_MAX_ISLAND_BODIES` | 32 | Bodies in one simulation island | `limits.h` |
 | `OIMO_MAX_ISLAND_SOLVERS` | 64 | Contact solvers in one simulation island (at most the contacts) | `limits.h` |
 | `OIMO_MAX_RIGID_BODIES` | 32 | Bodies visited while building one island | `limits.h` |
