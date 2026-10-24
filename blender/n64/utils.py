@@ -382,11 +382,13 @@ def compute_static_flags(scene_data: dict, trait_info: dict) -> None:
 # Collision Mesh
 # =============================================================================
 
-def extract_collision_mesh(obj: bpy.types.Object, max_triangles: int = 256) -> Optional[dict]:
+def extract_collision_mesh(obj: bpy.types.Object, scale, max_triangles: int = 256) -> Optional[dict]:
     """Extract triangulated mesh data for physics collision.
 
     Args:
         obj: Blender mesh object to extract collision data from.
+        scale: The object's world scale (vertices are scaled by it; rotation
+               and position come from the body's transform).
         max_triangles: Maximum triangle count for collision mesh (default 256).
                        This limit exists because N64 collision detection is
                        CPU-intensive; complex meshes should use simplified
@@ -406,10 +408,9 @@ def extract_collision_mesh(obj: bpy.types.Object, max_triangles: int = 256) -> O
         bm.from_mesh(mesh)
         bmesh.ops.triangulate(bm, faces=bm.faces[:], quad_method='FIXED')
 
-        scale = obj.scale
         vertices = []
         for v in bm.verts:
-            scaled = [v.co.x * scale.x, v.co.y * scale.y, v.co.z * scale.z]
+            scaled = [v.co.x * scale[0], v.co.y * scale[1], v.co.z * scale[2]]
             vertices.append(convert_vec3_list(scaled))
 
         indices = []

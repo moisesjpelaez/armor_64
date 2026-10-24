@@ -476,7 +476,7 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object
             bounds_min[i], bounds_max[i] = bounds_max[i], bounds_min[i]
 
     # Extract rigid body data
-    rigid_body_data = _extract_rigid_body(exporter, obj, half_extents)
+    rigid_body_data = _extract_rigid_body(exporter, obj, half_extents, world_scale)
 
     obj_data = {
         "name": arm.utils.safesrc(linked_utils.asset_name(obj)),
@@ -520,13 +520,15 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object
 
 
 
-def _extract_rigid_body(exporter, obj, half_extents):
+def _extract_rigid_body(exporter, obj, half_extents, world_scale):
     """Extract rigid body data from an object if present.
 
     Args:
         exporter: N64Exporter instance to update with physics flag
         obj: Blender object with potential rigid body
         half_extents: Pre-computed half extents from bounding box
+        world_scale: The object's world scale, the one it's drawn with (its own
+            scale times its parents' or collection instancer's)
 
     Returns:
         dict with rigid body data or None
@@ -537,19 +539,20 @@ def _extract_rigid_body(exporter, obj, half_extents):
 
     rb = obj.rigid_body
     shape = rb.collision_shape
+    scale = [abs(s) for s in world_scale]
 
     # N64 supports BOX, SPHERE, CAPSULE, and MESH (static only)
     rb_mesh_data = None
     if shape == 'SPHERE':
         rb_shape = "sphere"
-        max_scale = max(obj.scale)
+        max_scale = max(scale)
         rb_radius = max(half_extents) * max_scale
         rb_half_extents = None
         rb_half_height = None
     elif shape == 'CAPSULE':
         rb_shape = "capsule"
-        rb_radius = max(half_extents[0], half_extents[1]) * max(obj.scale[0], obj.scale[1])
-        total_height = half_extents[2] * 2.0 * obj.scale[2]
+        rb_radius = max(half_extents[0], half_extents[1]) * max(scale[0], scale[1])
+        total_height = half_extents[2] * 2.0 * scale[2]
         rb_half_height = max(0.0, (total_height - 2.0 * rb_radius) / 2.0)
         rb_half_extents = None
     elif shape == 'MESH' and rb.type == 'PASSIVE':
@@ -557,15 +560,15 @@ def _extract_rigid_body(exporter, obj, half_extents):
         rb_radius = None
         rb_half_height = None
         rb_half_extents = None
-        rb_mesh_data = n64_utils.extract_collision_mesh(obj)
+        rb_mesh_data = n64_utils.extract_collision_mesh(obj, world_scale)
         if rb_mesh_data is None:
             log.warn(f'Object "{obj.name}": failed to extract mesh collision data, using BOX')
             rb_shape = "box"
             MIN_HALF_EXTENT = 0.01
             rb_half_extents = [
-                max(half_extents[0] * obj.scale[0], MIN_HALF_EXTENT),
-                max(half_extents[2] * obj.scale[2], MIN_HALF_EXTENT),
-                max(half_extents[1] * obj.scale[1], MIN_HALF_EXTENT)
+                max(half_extents[0] * scale[0], MIN_HALF_EXTENT),
+                max(half_extents[2] * scale[2], MIN_HALF_EXTENT),
+                max(half_extents[1] * scale[1], MIN_HALF_EXTENT)
             ]
     else:
         rb_shape = "box"
@@ -574,9 +577,9 @@ def _extract_rigid_body(exporter, obj, half_extents):
         # Clamp to minimum thickness for flat meshes (e.g. planes)
         MIN_HALF_EXTENT = 0.01
         rb_half_extents = [
-            max(half_extents[0] * obj.scale[0], MIN_HALF_EXTENT),
-            max(half_extents[2] * obj.scale[2], MIN_HALF_EXTENT),
-            max(half_extents[1] * obj.scale[1], MIN_HALF_EXTENT)
+            max(half_extents[0] * scale[0], MIN_HALF_EXTENT),
+            max(half_extents[2] * scale[2], MIN_HALF_EXTENT),
+            max(half_extents[1] * scale[1], MIN_HALF_EXTENT)
         ]
         if shape not in ('BOX', 'SPHERE', 'CAPSULE'):
             if shape == 'MESH' and rb.type != 'PASSIVE':
