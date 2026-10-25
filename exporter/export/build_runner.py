@@ -26,7 +26,7 @@ def write_makefile(exporter):
     from arm.n64.export import audio_exporter, ui_exporter
 
     wrd = bpy.data.worlds['Arm']
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'Makefile.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'Makefile.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'Makefile')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -98,7 +98,7 @@ def write_makefile(exporter):
     else:
         audio_sources = '# No audio'
 
-    tiny3d_path = arm.utils.get_tiny3d_path()
+    tiny3d_path = n64_utils.get_tiny3d_path()
     if not os.path.isdir(tiny3d_path):
         log.warn(f'tiny3d library not found at: {tiny3d_path}. Clone it into the project Libraries directory.')
 
@@ -130,7 +130,7 @@ def _tiny3d_relpath():
     (e.g. "D:/Game Development/...") which break GNU Make's include
     directive and compiler flags.
     """
-    tiny3d_abs = os.path.abspath(arm.utils.get_tiny3d_path())
+    tiny3d_abs = os.path.abspath(n64_utils.get_tiny3d_path())
     makefile_abs = os.path.abspath(
         os.path.join(arm.utils.get_fp(), arm.utils.build_dir(), 'n64')
     )
@@ -143,10 +143,10 @@ def run_make():
     Returns:
         bool: True if build succeeded, False otherwise
     """
-    msys2_executable = arm.utils.get_msys2_bash_executable()
+    msys2_executable = n64_utils.get_msys2_bash_executable()
     if len(msys2_executable) > 0:
-        n64_toolchain = arm.utils.get_n64_toolchain_path()
-        mingw64 = arm.utils.get_mingw64_path()
+        n64_toolchain = n64_utils.get_n64_toolchain_path()
+        mingw64 = n64_utils.get_mingw64_path()
         build_abs = os.path.join(
             arm.utils.get_fp(), arm.utils.build_dir(), 'n64'
         ).replace('\\', '/')
@@ -189,7 +189,7 @@ def _write_memory_report():
     report_path = os.path.join(n64_dir, 'limits.txt')
     elf = os.path.join(n64_dir, 'build', f'{arm.utils.safestr(bpy.data.worlds["Arm"].arm_project_name)}.elf')
     try:
-        memory = limits.memory_lines(elf, arm.utils.get_n64_toolchain_path())
+        memory = limits.memory_lines(elf, n64_utils.get_n64_toolchain_path())
         with open(report_path, 'a', encoding='utf-8') as f:
             f.write('\n' + '\n'.join(memory) + '\n')
         with open(report_path, 'r', encoding='utf-8') as f:
@@ -204,7 +204,7 @@ def run_emulator():
     Returns:
         bool: True if emulator launched, False if not configured
     """
-    ares_emulator_executable = arm.utils.get_ares_emulator_executable()
+    ares_emulator_executable = n64_utils.get_ares_emulator_executable()
 
     if not ares_emulator_executable:
         log.error('Ares emulator executable path is not set in Armory preferences.')

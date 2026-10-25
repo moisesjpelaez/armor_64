@@ -721,7 +721,7 @@ def write_scene_c(exporter, scene):
     clear_color = scene_data['world']['clear_color']
     ambient_color = scene_data['world']['ambient_color']
 
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'scenes', 'scene.c.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'scenes', 'scene.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'scenes', f'{scene_name}.c')
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl_content = f.read()
@@ -782,7 +782,7 @@ def write_scenes_c(exporter):
     Args:
         exporter: N64Exporter instance
     """
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'data', 'scenes.c.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'data', 'scenes.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'scenes.c')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -857,7 +857,7 @@ def write_scenes_h(exporter):
     Args:
         exporter: N64Exporter instance
     """
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'data', 'scenes.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'data', 'scenes.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'scenes.h')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -895,7 +895,7 @@ def write_main(exporter):
         exporter: N64Exporter instance with autoload_info
     """
     wrd = bpy.data.worlds['Arm']
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'main.c.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'main.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'main.c')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -936,7 +936,7 @@ def write_models(exporter):
 
 def write_models_c(exporter):
     """Generate models.c from template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'data', 'models.c.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'data', 'models.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'models.c')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -958,7 +958,7 @@ def write_models_c(exporter):
 
 def write_models_h(exporter):
     """Generate models.h from template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'data', 'models.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'data', 'models.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'models.h')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:

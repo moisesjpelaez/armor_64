@@ -79,7 +79,7 @@ def write_audio_config(exporter):
     macros' n64_audio.json (see codegen/audio_codegen.py)."""
     from arm.n64.codegen import audio_codegen
 
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'audio', 'audio_config.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'audio', 'audio_config.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'audio', 'audio_config.h')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:

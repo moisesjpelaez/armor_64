@@ -11,6 +11,7 @@ import glob
 import shutil
 
 import arm.utils
+import arm.n64.utils as n64_utils
 import arm.log as log
 from arm.n64.export.koui_theme_parser import KouiThemeParser
 
@@ -931,7 +932,7 @@ def copy_canvas_images(exporter):
 
 def write_label_h(exporter):
     """Generate label.h from label.h.j2 template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'ui', 'label.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'label.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'label.h')
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl = f.read()
@@ -973,7 +974,7 @@ def write_label_h(exporter):
 
 def write_label_c(exporter):
     """Generate label.c from label.c.j2 template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'ui', 'label.c.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'label.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'label.c')
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl = f.read()
@@ -1026,7 +1027,7 @@ def write_label_c(exporter):
 
 def write_image_h(exporter):
     """Generate image.h from image.h.j2 template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'ui', 'image.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'image.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'image.h')
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl = f.read()
@@ -1065,7 +1066,7 @@ def write_image_h(exporter):
 
 def write_image_c(exporter):
     """Generate image.c from image.c.j2 template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'ui', 'image.c.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'image.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'image.c')
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl = f.read()
@@ -1115,7 +1116,7 @@ def write_image_c(exporter):
 
 def write_button_h(exporter):
     """Generate button.h from button.h.j2 template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'ui', 'button.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'button.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'button.h')
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl = f.read()
@@ -1156,7 +1157,7 @@ def write_button_h(exporter):
 
 def write_button_c(exporter):
     """Generate button.c from button.c.j2 template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'ui', 'button.c.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'button.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'button.c')
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl = f.read()
@@ -1229,7 +1230,7 @@ def write_button_c(exporter):
 
 def write_panel_h(exporter):
     """Generate panel.h from panel.h.j2 template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'ui', 'panel.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'panel.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'panel.h')
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl = f.read()
@@ -1268,7 +1269,7 @@ def write_panel_h(exporter):
 
 def write_panel_c(exporter):
     """Generate panel.c from panel.c.j2 template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'ui', 'panel.c.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'panel.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'panel.c')
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl = f.read()
@@ -1319,7 +1320,7 @@ def write_panel_c(exporter):
 
 def write_canvas_h(exporter):
     """Generate canvas.h from template (group/element content only)."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'ui', 'canvas.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'canvas.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'canvas.h')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -1385,7 +1386,7 @@ def write_canvas_h(exporter):
 
 def write_canvas_c(exporter):
     """Generate canvas.c from template (group/element arrays + font registration)."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'ui', 'canvas.c.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'canvas.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'canvas.c')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -1598,7 +1599,7 @@ def write_fonts(exporter):
 
 def write_fonts_c(exporter):
     """Generate fonts.c from template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'ui', 'fonts.c.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'fonts.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'fonts.c')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -1621,7 +1622,7 @@ def write_fonts_c(exporter):
 
 def write_fonts_h(exporter):
     """Generate fonts.h from template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'ui', 'fonts.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'fonts.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'fonts.h')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:

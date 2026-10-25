@@ -4,17 +4,20 @@ N64 Exporter - Armory Hooks
 Provides khafile.js injection for N64 builds via Armory's library hook system.
 Called by write_data.py get_library_hooks() during khafile and Main.hx generation.
 
-When an N64 build is active (state.is_n64), this hook injects:
+When the build is an N64 one (arm.n64.utils.is_n64_build()), this hook injects:
   - arm_target_n64 define (enables N64 Haxe macros at compile-time)
   - arm_build_dir define (tells macros where to write IR output)
   - --macro parameter to register the N64 build macro (N64Macro)
 """
 
 def write_main():
-    import arm.make_state as state
     import arm.utils
+    try:
+        import arm.n64.utils as n64_utils
+    except ImportError:  # armor_64 isn't registered (blender.py)
+        return {}
 
-    if not getattr(state, 'is_n64', False):
+    if not n64_utils.is_n64_build():
         return {}
 
     build_dir = arm.utils.build_dir()

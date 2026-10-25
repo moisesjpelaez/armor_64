@@ -55,13 +55,13 @@ def get_physics_debug_mode() -> int:
     return sum(bit for prop, bit in flags if getattr(wrd, prop, False))
 
 def copy_src(name, path=''):
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), path, name)
+    tmpl_path = os.path.join(get_n64_runtime_path(), path, name)
     out_path = os.path.join(arm.utils.build_dir(), 'n64', path, name)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     shutil.copyfile(tmpl_path, out_path)
 
 def copy_dir(name, path=''):
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), path, name)
+    tmpl_path = os.path.join(get_n64_runtime_path(), path, name)
     out_path = os.path.join(arm.utils.build_dir(), 'n64', path, name)
     if os.path.exists(out_path):
         shutil.rmtree(out_path)
@@ -434,3 +434,85 @@ def extract_collision_mesh(obj: bpy.types.Object, scale, max_triangles: int = 25
         }
     finally:
         obj_eval.to_mesh_clear()
+
+
+# =============================================================================
+# Build Requests, Paths and N64 Settings
+# =============================================================================
+
+# armor_64's folder (this file is exporter/utils.py)
+_LIBRARY_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def is_n64_build() -> bool:
+    """Whether Armory's current build is an N64 one: the 'custom' target,
+    exported through an n64 exporter entry or played with the Ares runtime.
+
+    Read from the build request make.build() records, every time: nothing is
+    left set after a build, so a failed N64 build can't make the next desktop
+    or web build an N64 one.
+    """
+    import arm.make_state as state
+    if getattr(state, 'target', None) != 'custom':
+        return False
+    wrd = bpy.data.worlds['Arm']
+    if state.is_export:
+        return wrd.arm_exporterlist[wrd.arm_exporterlist_index].arm_project_target == 'n64'
+    return state.is_play and getattr(wrd, 'arm_runtime', '') == 'Ares'
+
+
+def win_path_to_posix(path: str) -> str:
+    """A Windows path for MSYS2 (e.g. D:\\foo -> /d/foo)."""
+    path = os.path.abspath(path).replace('\\', '/')
+    if len(path) >= 2 and path[1] == ':':
+        path = '/' + path[0].lower() + path[2:]
+    return path
+
+
+def _preference(name: str, default):
+    prefs = arm.utils.get_arm_preferences()
+    return getattr(prefs, name, default)
+
+
+def get_n64_toolchain_path() -> str:
+    if os.getenv('N64_INST') is not None:
+        return os.getenv('N64_INST')
+    path = _preference('n64_toolchain_path', '')
+    return win_path_to_posix(path) if path else ''
+
+
+def get_msys2_bash_executable() -> str:
+    return _preference('msys2_bash_executable', '')
+
+
+def get_mingw64_path() -> str:
+    path = _preference('mingw64_path', '')
+    return win_path_to_posix(path) if path else ''
+
+
+def get_ares_emulator_executable() -> str:
+    return _preference('ares_emulator_executable', '')
+
+
+def get_open_n64_rom_directory() -> bool:
+    return _preference('open_n64_rom_directory', False)
+
+
+def get_n64_runtime_path() -> str:
+    """armor_64's C runtime and templates."""
+    return os.path.join(_LIBRARY_DIR, 'runtime')
+
+
+def get_n64_libraries_dir() -> str:
+    """The project's Libraries/ folder."""
+    return os.path.join(arm.utils.get_fp(), 'Libraries')
+
+
+def get_libdragon_path() -> str:
+    """libdragon, expected in the project's Libraries/."""
+    return os.path.join(get_n64_libraries_dir(), 'libdragon')
+
+
+def get_tiny3d_path() -> str:
+    """tiny3d, expected in the project's Libraries/."""
+    return os.path.join(get_n64_libraries_dir(), 'tiny3d')

@@ -8,6 +8,7 @@ C files from Haxe IR data.
 import os
 
 import arm.utils
+import arm.n64.utils as n64_utils
 import arm.n64.codegen as codegen
 
 
@@ -16,7 +17,7 @@ def write_types(exporter):
     import bpy  # Import here to avoid circular imports at module level
     import arm.n64.utils as n64_utils
 
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'types.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'types.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'types.h')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -34,7 +35,7 @@ def write_limits(exporter):
     """Generate limits.h: the engine limits computed for this project (codegen/limits.py)."""
     from arm.n64.codegen import limits
 
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'limits.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'limits.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'limits.h')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -85,7 +86,7 @@ def write_traits(exporter):
 
 def _write_traits_h(template_data: dict):
     """Generate traits.h from template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'data', 'traits.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'data', 'traits.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'traits.h')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -97,7 +98,7 @@ def _write_traits_h(template_data: dict):
 
 def _write_traits_c(template_data: dict):
     """Generate traits.c from template."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'data', 'traits.c.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'data', 'traits.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'traits.c')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -199,7 +200,7 @@ def write_autoloads(exporter):
 
 def _write_autoload_h(c_name: str, template_data: dict):
     """Generate individual autoload .h file."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'autoloads', 'autoload.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'autoloads', 'autoload.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'autoloads', f'{c_name}.h')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -211,7 +212,7 @@ def _write_autoload_h(c_name: str, template_data: dict):
 
 def _write_autoload_c(c_name: str, template_data: dict):
     """Generate individual autoload .c file."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'autoloads', 'autoload.c.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'autoloads', 'autoload.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'autoloads', f'{c_name}.c')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -223,7 +224,7 @@ def _write_autoload_c(c_name: str, template_data: dict):
 
 def _write_autoloads_h(template_data: dict):
     """Generate master autoloads.h that includes all autoloads."""
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'autoloads', 'autoloads.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'autoloads', 'autoloads.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'autoloads', 'autoloads.h')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:
@@ -244,7 +245,7 @@ def write_engine(exporter):
     n64_utils.copy_src('engine.c', 'src')
 
     # Generate engine.h from template with feature flags
-    tmpl_path = os.path.join(arm.utils.get_n64_runtime_path(), 'src', 'engine.h.j2')
+    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'engine.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'engine.h')
 
     with open(tmpl_path, 'r', encoding='utf-8') as f:

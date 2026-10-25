@@ -20,14 +20,6 @@ import sys
 import types
 
 
-def _win_path_to_posix(path):
-    """Convert a Windows path to POSIX for MSYS2 (e.g. D:\\foo → /d/foo)."""
-    path = os.path.abspath(path).replace('\\', '/')
-    # Convert drive letter: D:/... → /d/...
-    if len(path) >= 2 and path[1] == ':':
-        path = '/' + path[0].lower() + path[2:]
-    return path
-
 import bpy
 from bpy.props import StringProperty, BoolProperty, EnumProperty
 
@@ -36,7 +28,6 @@ from bpy.props import StringProperty, BoolProperty, EnumProperty
 # ---------------------------------------------------------------------------
 _LIBRARY_DIR = os.path.dirname(os.path.abspath(__file__))
 _EXPORTER_DIR = os.path.join(_LIBRARY_DIR, 'exporter')
-_RUNTIME_DIR = os.path.join(_LIBRARY_DIR, 'runtime')
 
 # ---------------------------------------------------------------------------
 # Saved originals for clean unregister
@@ -125,24 +116,6 @@ def _unregister_n64_namespace():
 
     if hasattr(arm, 'n64'):
         delattr(arm, 'n64')
-
-
-# =============================================================================
-# make_state.is_n64 Flag
-# =============================================================================
-
-def _register_state_flag():
-    """Add is_n64 flag to arm.make_state."""
-    import arm.make_state as state
-    if not hasattr(state, 'is_n64'):
-        state.is_n64 = False
-
-
-def _unregister_state_flag():
-    """Remove is_n64 flag from arm.make_state."""
-    import arm.make_state as state
-    if hasattr(state, 'is_n64'):
-        delattr(state, 'is_n64')
 
 
 # =============================================================================
@@ -322,11 +295,11 @@ def _unregister_export_target():
 
 
 # =============================================================================
-# Patch arm.utils (get_gapi, target_to_gapi, + N64 helpers)
+# Patch arm.utils (get_gapi, target_to_gapi)
 # =============================================================================
 
 def _register_utils_patches():
-    """Patch arm.utils with N64-aware functions and add N64 helper functions."""
+    """Patch arm.utils with N64-aware functions."""
     import arm.utils
 
     # --- Patch get_gapi() ---
@@ -355,57 +328,9 @@ def _register_utils_patches():
 
     arm.utils.target_to_gapi = _patched_target_to_gapi
 
-    # --- Add N64 helper functions ---
-    def get_n64_toolchain_path():
-        if os.getenv('N64_INST') is not None:
-            return os.getenv('N64_INST')
-        addon_prefs = arm.utils.get_arm_preferences()
-        return '' if not hasattr(addon_prefs, 'n64_toolchain_path') else _win_path_to_posix(addon_prefs.n64_toolchain_path)
-
-    def get_msys2_bash_executable():
-        addon_prefs = arm.utils.get_arm_preferences()
-        return '' if not hasattr(addon_prefs, 'msys2_bash_executable') else addon_prefs.msys2_bash_executable
-
-    def get_mingw64_path():
-        addon_prefs = arm.utils.get_arm_preferences()
-        return '' if not hasattr(addon_prefs, 'mingw64_path') else _win_path_to_posix(addon_prefs.mingw64_path)
-
-    def get_ares_emulator_executable():
-        addon_prefs = arm.utils.get_arm_preferences()
-        return '' if not hasattr(addon_prefs, 'ares_emulator_executable') else addon_prefs.ares_emulator_executable
-
-    def get_open_n64_rom_directory():
-        addon_prefs = arm.utils.get_arm_preferences()
-        return False if not hasattr(addon_prefs, 'open_n64_rom_directory') else addon_prefs.open_n64_rom_directory
-
-    def get_n64_runtime_path():
-        return _RUNTIME_DIR
-
-    def get_n64_libraries_dir():
-        """Return the project's Libraries/ directory path."""
-        return os.path.join(arm.utils.get_fp(), 'Libraries')
-
-    def get_libdragon_path():
-        """Return the path to the libdragon library (sibling in project Libraries/)."""
-        return os.path.join(arm.utils.get_fp(), 'Libraries', 'libdragon')
-
-    def get_tiny3d_path():
-        """Return the path to the tiny3d library (sibling in project Libraries/)."""
-        return os.path.join(arm.utils.get_fp(), 'Libraries', 'tiny3d')
-
-    arm.utils.get_n64_toolchain_path = get_n64_toolchain_path
-    arm.utils.get_msys2_bash_executable = get_msys2_bash_executable
-    arm.utils.get_mingw64_path = get_mingw64_path
-    arm.utils.get_ares_emulator_executable = get_ares_emulator_executable
-    arm.utils.get_open_n64_rom_directory = get_open_n64_rom_directory
-    arm.utils.get_n64_runtime_path = get_n64_runtime_path
-    arm.utils.get_n64_libraries_dir = get_n64_libraries_dir
-    arm.utils.get_libdragon_path = get_libdragon_path
-    arm.utils.get_tiny3d_path = get_tiny3d_path
-
 
 def _unregister_utils_patches():
-    """Restore original arm.utils functions and remove N64 helpers."""
+    """Restore original arm.utils functions."""
     import arm.utils
 
     if 'get_gapi' in _originals:
@@ -413,11 +338,6 @@ def _unregister_utils_patches():
     if 'target_to_gapi' in _originals:
         arm.utils.target_to_gapi = _originals['target_to_gapi']
 
-    for attr in ['get_n64_toolchain_path', 'get_msys2_bash_executable', 'get_mingw64_path',
-                 'get_ares_emulator_executable', 'get_open_n64_rom_directory', 'get_n64_runtime_path',
-                 'get_n64_libraries_dir', 'get_libdragon_path', 'get_tiny3d_path']:
-        if hasattr(arm.utils, attr):
-            delattr(arm.utils, attr)
 
 
 # =============================================================================
@@ -445,20 +365,20 @@ def _register_make_patches():
     def _patched_build_success():
         import arm.make_state as state
         import arm.log as log
+        import arm.n64.utils as n64_utils
         from arm.n64.exporter import N64Exporter
 
-        if state.is_n64:
+        if n64_utils.is_n64_build():
             log.clear()
-            state.is_n64 = False
             if state.is_play:
                 N64Exporter.play_project()
             elif state.is_publish:
                 N64Exporter.publish_project()
-                if arm.utils.get_open_n64_rom_directory():
+                if n64_utils.get_open_n64_rom_directory():
                     arm.utils.open_folder(os.path.abspath(arm.utils.build_dir() + '/n64'))
             else:
                 N64Exporter.export_project()
-                if arm.utils.get_open_n64_rom_directory():
+                if n64_utils.get_open_n64_rom_directory():
                     arm.utils.open_folder(os.path.abspath(arm.utils.build_dir() + '/n64'))
             return
         _originals['build_success']()
@@ -481,20 +401,9 @@ def _unregister_make_patches():
 # =============================================================================
 
 def _register_operator_patches():
-    """Patch Play/Export/Publish operators to support N64."""
+    """Patch Export/Publish operators to support N64 (Play needs nothing:
+    the Ares runtime builds the 'custom' target, see runtime_to_target)."""
     import arm.props_ui as props_ui
-
-    # --- Patch ArmoryPlayButton.execute ---
-    _originals['play_execute'] = props_ui.ArmoryPlayButton.execute
-
-    def _patched_play_execute(self, context):
-        import arm.make_state as state
-        wrd = bpy.data.worlds['Arm']
-        if wrd.arm_runtime == 'Ares':
-            state.is_n64 = True
-        return _originals['play_execute'](self, context)
-
-    props_ui.ArmoryPlayButton.execute = _patched_play_execute
 
     # --- Patch ArmoryBuildProjectButton.execute ---
     _originals['build_execute'] = props_ui.ArmoryBuildProjectButton.execute
@@ -506,7 +415,6 @@ def _register_operator_patches():
         wrd = bpy.data.worlds['Arm']
         item = wrd.arm_exporterlist[wrd.arm_exporterlist_index]
         if item.arm_project_target == 'n64':
-            state.is_n64 = True
 
             # We need to override the target to 'custom' for Haxe macro execution.
             # Save the original target, set to custom, call the build pipeline, then restore.
@@ -541,7 +449,6 @@ def _register_operator_patches():
         wrd = bpy.data.worlds['Arm']
         item = wrd.arm_exporterlist[wrd.arm_exporterlist_index]
         if item.arm_project_target == 'n64':
-            state.is_n64 = True
 
             if item.arm_project_scene is None:
                 item.arm_project_scene = context.scene
@@ -570,8 +477,6 @@ def _unregister_operator_patches():
     """Restore original operator execute methods."""
     import arm.props_ui as props_ui
 
-    if 'play_execute' in _originals:
-        props_ui.ArmoryPlayButton.execute = _originals['play_execute']
     if 'build_execute' in _originals:
         props_ui.ArmoryBuildProjectButton.execute = _originals['build_execute']
     if 'publish_execute' in _originals:
@@ -736,6 +641,7 @@ class N64_OT_InstallLibdragonDependencies(bpy.types.Operator):
     bl_description = "Install libdragon dependencies (base-devel, mingw-w64-x86_64-gcc, mingw-w64-x86_64-make, git)"
 
     def execute(self, context):
+        import arm.n64.utils as n64_utils
         import arm.utils
 
         sdk_path = arm.utils.get_sdk_path()
@@ -743,7 +649,7 @@ class N64_OT_InstallLibdragonDependencies(bpy.types.Operator):
             self.report({"ERROR"}, "Configure Armory SDK path first")
             return {"CANCELLED"}
 
-        msys2_exe = arm.utils.get_msys2_bash_executable()
+        msys2_exe = n64_utils.get_msys2_bash_executable()
         if not msys2_exe or not os.path.exists(msys2_exe):
             self.report({'ERROR'}, 'MSYS2 Bash executable not configured in preferences')
             return {'CANCELLED'}
@@ -776,6 +682,7 @@ class N64_OT_BuildLibdragon(bpy.types.Operator):
     bl_description = "Build libdragon for Nintendo 64 development"
 
     def execute(self, context):
+        import arm.n64.utils as n64_utils
         import arm.utils
 
         sdk_path = arm.utils.get_sdk_path()
@@ -783,20 +690,20 @@ class N64_OT_BuildLibdragon(bpy.types.Operator):
             self.report({"ERROR"}, "Configure Armory SDK path first")
             return {"CANCELLED"}
 
-        msys2_exe = arm.utils.get_msys2_bash_executable()
+        msys2_exe = n64_utils.get_msys2_bash_executable()
         if not msys2_exe:
             self.report({"ERROR"}, "Configure MSYS2 Bash executable path first")
             return {"CANCELLED"}
 
-        libdragon_path = arm.utils.get_libdragon_path()
+        libdragon_path = n64_utils.get_libdragon_path()
         if not os.path.isdir(libdragon_path):
-            self.report({"ERROR"}, f"libdragon not found. Clone it into the project's Libraries directory: {arm.utils.get_n64_libraries_dir()}")
+            self.report({"ERROR"}, f"libdragon not found. Clone it into the project's Libraries directory: {n64_utils.get_n64_libraries_dir()}")
             return {"CANCELLED"}
 
         addon_prefs = arm.utils.get_arm_preferences()
-        libdragon_path_posix = _win_path_to_posix(libdragon_path)
-        n64_toolchain_path = _win_path_to_posix(addon_prefs.n64_toolchain_path)
-        mingw64_path = _win_path_to_posix(addon_prefs.mingw64_path)
+        libdragon_path_posix = n64_utils.win_path_to_posix(libdragon_path)
+        n64_toolchain_path = n64_utils.win_path_to_posix(addon_prefs.n64_toolchain_path)
+        mingw64_path = n64_utils.win_path_to_posix(addon_prefs.mingw64_path)
 
         print('Building libdragon for Nintendo 64, check console for details.')
 
@@ -836,6 +743,7 @@ class N64_OT_BuildTiny3d(bpy.types.Operator):
     bl_description = "Build Tiny3D rendering library for Nintendo 64 development"
 
     def execute(self, context):
+        import arm.n64.utils as n64_utils
         import arm.utils
 
         sdk_path = arm.utils.get_sdk_path()
@@ -843,20 +751,20 @@ class N64_OT_BuildTiny3d(bpy.types.Operator):
             self.report({"ERROR"}, "Configure Armory SDK path first")
             return {"CANCELLED"}
 
-        msys2_exe = arm.utils.get_msys2_bash_executable()
+        msys2_exe = n64_utils.get_msys2_bash_executable()
         if not msys2_exe:
             self.report({"ERROR"}, "Configure MSYS2 Bash executable path first")
             return {"CANCELLED"}
 
-        tiny3d_path = arm.utils.get_tiny3d_path()
+        tiny3d_path = n64_utils.get_tiny3d_path()
         if not os.path.isdir(tiny3d_path):
-            self.report({"ERROR"}, f"tiny3d not found. Clone it into the project's Libraries directory: {arm.utils.get_n64_libraries_dir()}")
+            self.report({"ERROR"}, f"tiny3d not found. Clone it into the project's Libraries directory: {n64_utils.get_n64_libraries_dir()}")
             return {"CANCELLED"}
 
         addon_prefs = arm.utils.get_arm_preferences()
-        tiny3d_path_posix = _win_path_to_posix(tiny3d_path)
-        n64_toolchain_path = _win_path_to_posix(addon_prefs.n64_toolchain_path)
-        mingw64_path = _win_path_to_posix(addon_prefs.mingw64_path)
+        tiny3d_path_posix = n64_utils.win_path_to_posix(tiny3d_path)
+        n64_toolchain_path = n64_utils.win_path_to_posix(addon_prefs.n64_toolchain_path)
+        mingw64_path = n64_utils.win_path_to_posix(addon_prefs.mingw64_path)
 
         print('Building Tiny3D for Nintendo 64, check console for details.')
 
@@ -920,9 +828,8 @@ def _unregister_operators():
 
 def register():
     """Register the N64 exporter library. Called by Armory's load_py_libraries()."""
-    # Order matters: namespace first, then state flag, then patches
+    # Order matters: namespace first, then patches
     _register_n64_namespace()
-    _register_state_flag()
     _register_runtime_enum()
     _register_export_target()
     _register_utils_patches()
@@ -945,7 +852,6 @@ def unregister():
     _unregister_utils_patches()
     _unregister_export_target()
     _unregister_runtime_enum()
-    _unregister_state_flag()
     _unregister_n64_namespace()
 
     _originals.clear()
