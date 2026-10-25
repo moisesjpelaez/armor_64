@@ -817,8 +817,7 @@ class N64Extractor implements IExtractorContext {
                     return N64MacroBase.unsupported('calling $method() on another trait instance is not supported on N64 yet');
                 }
 
-                // The methods the emitters translate
-                return N64MacroBase.methodCall(obj, method, args, exprToIR);
+                return N64MacroBase.unsupportedMethodCall(obj, method);
 
             // trace() -> debugf() for N64 debug output
             case EConst(CIdent("trace")):

@@ -259,36 +259,20 @@ class N64MacroBase {
         return { type: "skip", warn: msg };
     }
 
-    // Methods the Python emitter translates from a generic method_call node
-    // (emit_method_call in trait_emitter.py), by declaring class
-    static var emitterMethods:Map<String, Array<String>> = [
-        "armory.system.Tween" => ["start", "pause", "stop"],
-    ];
-
     /**
-     * Generic `obj.method(args)` call left over after the converters. When the
-     * typed AST names the method's class and nothing translates it, report it
-     * instead of emitting `obj.method()`, which isn't valid C.
+     * `obj.method(args)` that no converter or binding translates: reported at
+     * the source line, as there is no generic C for a method call.
      */
-    public static function methodCall(obj:Expr, method:String, args:Array<IRNode>, exprToIR:Expr->IRNode):IRNode {
+    public static function unsupportedMethodCall(obj:Expr, method:String):IRNode {
         if (TypedIndex.nodesAt(obj).length == 0) {
             return unsupported('could not resolve the type of this .$method() call on N64');
         }
         var owner = TypedIndex.callOwner(obj, method);
-        if (owner != null && !isExtractedClass(owner)) {
-            var methods = emitterMethods.get(owner);
-            if (methods == null || methods.indexOf(method) < 0) {
-                var shortName = owner.substr(owner.lastIndexOf(".") + 1);
-                return unsupported('$shortName.$method() is not supported on N64 yet');
-            }
+        if (owner == null) {
+            return unsupported('.$method() is not supported on N64 (the class declaring it could not be found)');
         }
-        return {
-            type: "method_call",
-            method: method,
-            owner: owner,  // Class declaring the method: the emitter translates by it
-            object: exprToIR(obj),
-            args: args
-        };
+        var shortName = owner.substr(owner.lastIndexOf(".") + 1);
+        return unsupported('$shortName.$method() is not supported on N64 yet');
     }
 
     // iron.math vectors: C struct type and constructor defaults

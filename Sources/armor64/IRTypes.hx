@@ -41,7 +41,7 @@ package armor64;
  *   c_template                       - A call bound to C (Bindings.hx): c_code = the template,
  *                                      args = its {0}..., object = its {self} (if any),
  *                                      props.in_place: {self} is written to
- *   call, method_call                - Generic function/method calls (method_call.owner: class declaring the method)
+ *   call                             - A C function call (value = its name)
  *   super_call                       - super.method(): cName of the declaring ancestor's C function
  *   scene_call, input_call           - Scene.setActive(), input calls
  *   vec_call                         - Vector clone() / set() (transform vectors differ)

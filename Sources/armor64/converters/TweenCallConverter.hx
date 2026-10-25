@@ -380,18 +380,6 @@ class TweenCallConverter implements ICallConverter {
                     findCaptures(node.object, excludeParam, ctx, captures);
                 }
 
-            case "method_call", "call":
-                // Check object
-                if (node.object != null) {
-                    findCaptures(node.object, excludeParam, ctx, captures);
-                }
-                // Check args
-                if (node.args != null) {
-                    for (arg in node.args) {
-                        findCaptures(arg, excludeParam, ctx, captures);
-                    }
-                }
-
             case "binop", "assign":
                 if (node.children != null) {
                     for (child in node.children) {
@@ -426,7 +414,10 @@ class TweenCallConverter implements ICallConverter {
                 }
 
             default:
-                // Recurse into children and args
+                // Recurse into the receiver (a binding's {self}), children and args
+                if (node.object != null) {
+                    findCaptures(node.object, excludeParam, ctx, captures);
+                }
                 if (node.children != null) {
                     for (child in node.children) {
                         findCaptures(child, excludeParam, ctx, captures);
