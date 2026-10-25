@@ -35,8 +35,8 @@ from bpy.props import StringProperty, BoolProperty, EnumProperty
 # Library path (determined at import time — Armory adds our dir to sys.path)
 # ---------------------------------------------------------------------------
 _LIBRARY_DIR = os.path.dirname(os.path.abspath(__file__))
-_BLENDER_DIR = os.path.join(_LIBRARY_DIR, 'blender')
-_DEPLOYMENT_DIR = os.path.join(_LIBRARY_DIR, 'Deployment', 'n64')
+_EXPORTER_DIR = os.path.join(_LIBRARY_DIR, 'exporter')
+_RUNTIME_DIR = os.path.join(_LIBRARY_DIR, 'runtime')
 
 # ---------------------------------------------------------------------------
 # Saved originals for clean unregister
@@ -50,16 +50,13 @@ _registered_classes = []
 # =============================================================================
 
 def _register_n64_namespace():
-    """Register the library's n64 package into the arm.n64 namespace."""
+    """Register the library's exporter package into the arm.n64 namespace
+    (each module is loaded by its path: nothing is added to sys.path)."""
     import arm
 
-    n64_pkg_dir = os.path.join(_BLENDER_DIR, 'n64')
+    n64_pkg_dir = _EXPORTER_DIR
     codegen_dir = os.path.join(n64_pkg_dir, 'codegen')
     export_dir = os.path.join(n64_pkg_dir, 'export')
-
-    # Ensure the blender dir is on sys.path so relative imports work
-    if _BLENDER_DIR not in sys.path:
-        sys.path.insert(0, _BLENDER_DIR)
 
     def _make_stub_package(dotted_name, file_path):
         """Create a stub package module in sys.modules without executing it."""
@@ -128,9 +125,6 @@ def _unregister_n64_namespace():
 
     if hasattr(arm, 'n64'):
         delattr(arm, 'n64')
-
-    if _BLENDER_DIR in sys.path:
-        sys.path.remove(_BLENDER_DIR)
 
 
 # =============================================================================
@@ -384,8 +378,8 @@ def _register_utils_patches():
         addon_prefs = arm.utils.get_arm_preferences()
         return False if not hasattr(addon_prefs, 'open_n64_rom_directory') else addon_prefs.open_n64_rom_directory
 
-    def get_n64_deployment_path():
-        return _DEPLOYMENT_DIR
+    def get_n64_runtime_path():
+        return _RUNTIME_DIR
 
     def get_n64_libraries_dir():
         """Return the project's Libraries/ directory path."""
@@ -404,7 +398,7 @@ def _register_utils_patches():
     arm.utils.get_mingw64_path = get_mingw64_path
     arm.utils.get_ares_emulator_executable = get_ares_emulator_executable
     arm.utils.get_open_n64_rom_directory = get_open_n64_rom_directory
-    arm.utils.get_n64_deployment_path = get_n64_deployment_path
+    arm.utils.get_n64_runtime_path = get_n64_runtime_path
     arm.utils.get_n64_libraries_dir = get_n64_libraries_dir
     arm.utils.get_libdragon_path = get_libdragon_path
     arm.utils.get_tiny3d_path = get_tiny3d_path
@@ -420,7 +414,7 @@ def _unregister_utils_patches():
         arm.utils.target_to_gapi = _originals['target_to_gapi']
 
     for attr in ['get_n64_toolchain_path', 'get_msys2_bash_executable', 'get_mingw64_path',
-                 'get_ares_emulator_executable', 'get_open_n64_rom_directory', 'get_n64_deployment_path',
+                 'get_ares_emulator_executable', 'get_open_n64_rom_directory', 'get_n64_runtime_path',
                  'get_n64_libraries_dir', 'get_libdragon_path', 'get_tiny3d_path']:
         if hasattr(arm.utils, attr):
             delattr(arm.utils, attr)

@@ -25,6 +25,6 @@ def write_main():
             f'arm_build_dir=../{build_dir}',
         ],
         'parameters': [
-            '--macro armory.n64.N64Macro.register()',
+            '--macro armor64.N64Macro.register()',
         ],
     }
