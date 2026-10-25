@@ -11,16 +11,11 @@ import armor64.util.ExprUtils;
 using StringTools;
 
 /**
- * Converts physics API calls to C OimoPhysics operations.
- * Handles: applyForce, applyImpulse, setLinearVelocity, getLinearVelocity, etc.
- * Also handles contact subscription: notifyOnContact, removeContact
+ * RigidBody contact subscriptions: notifyOnContact, removeContact (their
+ * handlers are extracted as events). The other RigidBody calls are in
+ * Bindings.hx.
  */
 class PhysicsCallConverter implements ICallConverter {
-    static var physicsMethods = [
-        "applyForce", "applyImpulse", "setLinearVelocity", "getLinearVelocity",
-        "setAngularVelocity", "getAngularVelocity", "setLinearFactor", "setAngularFactor"
-    ];
-
     public function new() {}
 
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
@@ -28,52 +23,11 @@ class PhysicsCallConverter implements ICallConverter {
         var receiver = TypedIndex.receiverPath(obj);
         if (receiver == null || !isRigidBody(receiver)) return null;
 
-        // Check for contact subscription first
         if (method == "notifyOnContact" || method == "removeContact") {
             ctx.getMeta().uses_physics = true;
             return convertContactSubscription(method, args, rawParams, ctx);
         }
-
-        if (Lambda.has(physicsMethods, method)) {
-            ctx.getMeta().uses_physics = true;
-            // For N64, physics always applies to the current object
-            return convertPhysicsCall(method, { type: "ident", value: "object" }, args);
-        }
-
         return null;
-    }
-
-    function convertPhysicsCall(method:String, objIR:IRNode, args:Array<IRNode>):IRNode {
-        // Physics calls use OimoVec3 which needs coordinate swizzle
-        // Template uses {obj} for object and {0} for first arg (vec)
-        var c_code = switch (method) {
-            case "applyForce":
-                "{ OimoVec3 _f = (OimoVec3){({0}).x, ({0}).z, -({0}).y}; physics_apply_force({obj}->rigid_body, &_f); }";
-            case "applyImpulse":
-                "{ OimoVec3 _i = (OimoVec3){({0}).x, ({0}).z, -({0}).y}; physics_apply_impulse({obj}->rigid_body, &_i); }";
-            case "setLinearVelocity":
-                "{ OimoVec3 _v = (OimoVec3){({0}).x, ({0}).z, -({0}).y}; physics_set_linear_velocity({obj}->rigid_body, &_v); }";
-            case "getLinearVelocity":
-                // Returns OimoVec3, convert to ArmVec4 with reverse coordinate swizzle
-                // Oimo (x,y,z) -> Arm (x,-z,y,1.0f)
-                "({ OimoVec3 _gv = physics_get_linear_velocity({obj}->rigid_body); (ArmVec4){_gv.x, -_gv.z, _gv.y, 1.0f}; })";
-            case "getAngularVelocity":
-                // Returns OimoVec3, convert to ArmVec4 with reverse coordinate swizzle
-                "({ OimoVec3 _gv = physics_get_angular_velocity({obj}->rigid_body); (ArmVec4){_gv.x, -_gv.z, _gv.y, 1.0f}; })";
-            case "setAngularVelocity":
-                "{ OimoVec3 _v = (OimoVec3){({0}).x, ({0}).z, -({0}).y}; physics_set_angular_velocity({obj}->rigid_body, &_v); }";
-            default:
-                null;
-        };
-
-        if (c_code == null) return N64MacroBase.unsupported('RigidBody.$method() is not supported on N64 yet');
-
-        return {
-            type: "physics_call",
-            c_code: c_code,
-            object: objIR,
-            args: args
-        };
     }
 
     // armory.trait.physics.oimo.RigidBody or armory.trait.physics.bullet.RigidBody

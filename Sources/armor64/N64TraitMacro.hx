@@ -17,7 +17,6 @@ import armor64.converters.SceneCallConverter;
 import armor64.converters.CanvasCallConverter;
 import armor64.converters.VecCallConverter;
 import armor64.converters.PhysicsCallConverter;
-import armor64.converters.TransformCallConverter;
 import armor64.converters.InputCallConverter;
 import armor64.converters.SignalCallConverter;
 import armor64.converters.StdCallConverter;
@@ -25,10 +24,8 @@ import armor64.converters.ObjectCallConverter;
 import armor64.converters.AutoloadCallConverter;
 import armor64.converters.AudioCallConverter;
 import armor64.converters.TweenCallConverter;
-import armor64.converters.Graphics2CallConverter;
 import armor64.converters.MapCallConverter;
 import armor64.converters.ArrayCallConverter;
-import armor64.converters.StringCallConverter;
 import armor64.converters.ButtonCallConverter;
 
 using haxe.macro.ExprTools;
@@ -184,7 +181,6 @@ class TraitExtractor extends N64Extractor {
         super(fields, cls, N64Extractor.traitCName(cls), [
             new VecCallConverter(),
             new PhysicsCallConverter(),
-            new TransformCallConverter(),
             new InputCallConverter(),
             new SignalCallConverter(),
             new StdCallConverter(),
@@ -194,10 +190,8 @@ class TraitExtractor extends N64Extractor {
             new AutoloadCallConverter(),
             new AudioCallConverter(),
             new TweenCallConverter(),
-            new Graphics2CallConverter(),
             new MapCallConverter(),
             new ArrayCallConverter(),
-            new StringCallConverter(),
             new ButtonCallConverter(),
         ]);
         this.traitKey = cls.pack.concat([cls.name]).join(".");
@@ -833,7 +827,7 @@ class TraitExtractor extends N64Extractor {
             // Swizzle: Blender (x, y, z) → N64 (x, z, y) and multiply by SCALE_FACTOR
             var sf = Constants.SCALE_FACTOR_C;
             return {
-                type: "transform_call",
+                type: "c_template",
                 c_code: 'it_set_scale(&((ArmObject*)obj)->transform, ({0}).x * $sf, ({0}).z * $sf, ({0}).y * $sf);',
                 args: [exprToIR(e2)]
             };

@@ -714,13 +714,14 @@ class N64Extractor implements IExtractorContext {
                     return N64MacroBase.unsupported('SceneManager.$method() is not supported on N64 yet');
                 }
 
-                // Calls that map straight to C (Bindings.hx), then the converters
-                var bound = Bindings.convert(TypedIndex.callOwner(obj, method), method, obj, args, this);
-                if (bound != null) return bound;
+                // The converters (calls needing logic), then the calls that map
+                // straight to C (Bindings.hx)
                 for (conv in converters) {
                     var result = conv.tryConvert(obj, method, args, params, this);
                     if (result != null) return result;
                 }
+                var bound = Bindings.convert(TypedIndex.callOwner(obj, method), method, obj, args, this);
+                if (bound != null) return bound;
 
                 // A method of an extracted class, called on an instance
                 var owner = N64MacroBase.extractedClass(TypedIndex.callOwner(obj, method));

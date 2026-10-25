@@ -8,8 +8,8 @@ import armor64.N64MacroBase;
 import armor64.converters.ICallConverter;
 
 /**
- * Converts Std.* calls to C equivalents.
- * Handles: Std.int(), Std.parseFloat(), Std.string()
+ * Std.string(), whose format depends on the value's type. Std.int() and
+ * Std.parseFloat() are in Bindings.hx.
  */
 class StdCallConverter implements ICallConverter {
     public function new() {}
@@ -25,10 +25,6 @@ class StdCallConverter implements ICallConverter {
 
     function convert(method:String, args:Array<IRNode>):IRNode {
         return switch (method) {
-            case "int":
-                { type: "cast_call", value: "(int32_t)", args: args };
-            case "parseFloat":
-                { type: "math_call", value: "strtof", args: args };
             case "string":
                 // Std.string(value) - emit sprintf with format based on arg type
                 if (args.length > 0) {
@@ -44,7 +40,7 @@ class StdCallConverter implements ICallConverter {
                     { type: "string", value: "" };
                 }
             default:
-                N64MacroBase.unsupported('Std.$method() is not supported on N64 yet');
+                null;
         };
     }
 }

@@ -8,8 +8,8 @@ import armor64.converters.ICallConverter;
 import armor64.util.ExprUtils;
 
 /**
- * Converts object lifecycle method calls.
- * Handles: object.remove(), object.getTrait(), object.parent, this.remove(), etc.
+ * object.getTrait() and the other trait/children calls N64 doesn't have (or
+ * has built in). remove() and getAnimation() are in Bindings.hx.
  */
 class ObjectCallConverter implements ICallConverter {
     public function new() {}
@@ -29,9 +29,6 @@ class ObjectCallConverter implements ICallConverter {
 
     function convert(method:String, args:Array<IRNode>, rawParams:Array<Expr>):IRNode {
         return switch (method) {
-            case "remove":
-                // object.remove() -> object_remove((ArmObject*)obj)
-                { type: "object_call", c_code: "object_remove((ArmObject*)obj)" };
             case "getTrait" if (rawParams.length > 0 && Lambda.has(builtinTraits, ExprUtils.extractIdentName(rawParams[0]))):
                 { type: "skip" };
             case "getTrait", "addTrait", "removeTrait":
@@ -40,12 +37,8 @@ class ObjectCallConverter implements ICallConverter {
             case "getChildren", "getChild":
                 // Children iteration not yet supported (hierarchy is flat array with parent_index)
                 N64MacroBase.unsupported(method + "() is not supported on N64 yet");
-            case "getAnimation":
-                // object.getAnimation() -> object->animation
-                { type: "object_call", c_code: '((ArmObject*)obj)->animation' };
             default:
-                // Unknown object method
-                N64MacroBase.unsupported("object." + method + "() is not supported on N64");
+                null;
         };
     }
 }

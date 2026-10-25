@@ -299,16 +299,6 @@ class TraitEmitter:
         color_val = self.emit(args[0])
         return f"_g2_color = {color_val};"
 
-    def emit_render2d_fill_rect(self, node: Dict) -> str:
-        """g2.fillRect(x, y, w, h) -> render2d_fill_rect(x, y, x+w, y+h, _g2_color)."""
-        props = node.get("props", {})
-        x = self.emit(props.get("x", {})) or "0"
-        y = self.emit(props.get("y", {})) or "0"
-        width = self.emit(props.get("width", {})) or "0"
-        height = self.emit(props.get("height", {})) or "0"
-        # N64 fill_rectangle takes x0, y0, x1, y1 (corners, not width/height)
-        return f"render2d_fill_rect({x}, {y}, ({x}) + ({width}), ({y}) + ({height}), _g2_color);"
-
     def emit_color_from_floats(self, node: Dict) -> str:
         """Color.fromFloats(r, g, b, a) -> RGBA32 directly."""
         args = node.get("args", [])
@@ -927,7 +917,6 @@ class TraitEmitter:
             object: { type: "ident", value: "handle" }
             args: [...]
 
-        For audio handles, maps to arm_audio_* functions.
         For tween methods (start, pause, stop) on tween_float/vec4/delay objects,
         we emit both the setup call and the tween control call.
         """
@@ -982,41 +971,6 @@ class TraitEmitter:
         obj = self.emit(obj_node)
         if not obj:
             return ""
-
-        # Routed by the class declaring the method (see emitterMethods in N64MacroBase.hx)
-        owner = node.get("owner", "")
-
-        # getAnimation() call on ArmObject -> o->animation
-        if owner == "iron.object.Object" and method == "getAnimation":
-            return f"((ArmObject*){obj})->animation"
-
-        # Animation methods: play(name), pause(), resume()
-        if owner == "iron.object.Animation":
-            if method == "play":
-                anim_name = self.emit(args[0]) if args else '""'
-                return f"animation_play({obj}, {anim_name})"
-            elif method == "pause":
-                return f"animation_pause({obj})"
-            elif method == "resume":
-                return f"animation_resume({obj})"
-            elif method == "setSpeed":
-                spd = self.emit(args[0]) if args else "1.0f"
-                return f"animation_set_speed({obj}, {spd})"
-
-        # Audio handle methods
-        if owner != "aura.channels.BaseChannelHandle":
-            pass
-        elif method == "play":
-            return f"arm_audio_start(&{obj})"
-        elif method == "stop":
-            return f"arm_audio_stop(&{obj})"
-        elif method == "pause":
-            return f"arm_audio_stop(&{obj})"  # No pause in libdragon
-        elif method == "setVolume":
-            vol = "1.0f"
-            if args:
-                vol = self.emit(args[0])
-            return f"arm_audio_set_volume(&{obj}, {vol})"
 
         # Fallback: unknown method, emit as C function call
         arg_strs = [self.emit(a) for a in args]
@@ -1160,40 +1114,19 @@ class TraitEmitter:
         """button.field: buttons are indices into the canvas's button pool."""
         return f"canvas_get_button({self.emit(node.get('children', [None])[0])})->{node.get('value', '')}"
 
-    def emit_transform_call(self, node: Dict) -> str:
-        """Transform calls - substitute placeholders in macro-provided c_code."""
-        c_code = node.get("c_code", "")
-        if not c_code:
-            return ""
-
-        args = node.get("args", [])
-        arg_strs = [self.emit(a) for a in args]
-
-        # Substitute {0}, {1}, {2}, etc. with emitted args
-        # Provide default "1.0f" for missing optional args (e.g., move scale)
-        for i in range(10):
-            placeholder = "{" + str(i) + "}"
-            if placeholder in c_code:
-                val = arg_strs[i] if i < len(arg_strs) else "1.0f"
-                c_code = c_code.replace(placeholder, val)
-
-        # Substitute {obj} with the transform owner (or "obj" for self)
-        obj_node = node.get("object")
-        obj_str = self.emit(obj_node) if obj_node else "obj"
-        c_code = c_code.replace("{obj}", obj_str)
-
-        return c_code
-
     def emit_c_template(self, node: Dict) -> str:
         """A call bound to C in Bindings.hx: its template, with the arguments
         ({0}...), the receiver ({self}) and defaults ({1=1.0f}) filled in.
 
-        An argument used more than once that isn't plain C (a name, member
-        path or literal) is evaluated once, into a temporary.
+        An argument or receiver used more than once that isn't plain C (a
+        name, member path or literal) is evaluated once, into a temporary; a
+        receiver used once is parenthesized. A receiver written to (props
+        in_place: `v.normalize()`) is used as written.
         """
         template = node.get("c_code", "")
         values = {str(i): self.emit(a) for i, a in enumerate(node.get("args") or [])}
         obj = node.get("object")
+        in_place = (node.get("props") or {}).get("in_place", False)
         if obj:
             values["self"] = self.emit(obj)
 
@@ -1203,11 +1136,15 @@ class TraitEmitter:
         temps = []
         for name, count in uses.items():
             value = values.get(name)
-            if value and count > 1 and not _PLAIN_C.match(value):
+            if not value or _PLAIN_C.match(value) or (name == "self" and in_place):
+                continue
+            if count > 1:
                 temp = f"_t{self._temp_count}"
                 self._temp_count += 1
                 temps.append(f"__auto_type {temp} = ({value});")
                 values[name] = temp
+            elif name == "self":
+                values[name] = f"({value})"
 
         missing = []
 
@@ -1227,33 +1164,15 @@ class TraitEmitter:
         if not temps:
             return code
         decls = " ".join(temps)
-        if code.rstrip().endswith((";", "}")):
+        # A statement ends with ; or is a block; an expression may still end
+        # with } (a compound literal)
+        if code.rstrip().endswith(";") or code.lstrip().startswith("{"):
             return f"{{ {decls} {code} }}"
         return f"({{ {decls} {code}; }})"
-
-    def emit_math_call(self, node: Dict) -> str:
-        """Std.parseFloat() -> strtof() (StdCallConverter)."""
-        c_func = node.get("value", "")
-        args = node.get("args", [])
-        arg_strs = [self.emit(a) for a in args if self.emit(a)]
-        return f"{c_func}({', '.join(arg_strs)})"
 
     def emit_input_call(self, node: Dict) -> str:
         """Input calls - macro provides C code."""
         return node.get("c_code", "0")
-
-    def emit_physics_call(self, node: Dict) -> str:
-        """Physics calls - substitute placeholders in macro-provided c_code."""
-        c_code = node.get("c_code", "")
-        if not c_code:
-            return ""
-
-        obj_node = node.get("object")
-        obj = self.emit(obj_node) if obj_node else "((ArmObject*)obj)"
-
-        return self._substitute_placeholders(c_code, node.get("args", []), obj=obj)
-
-    # Signals: rendered by signal_codegen.SignalContext (set by the generator)
 
     def _signal_instance(self, node: Dict) -> Optional[str]:
         """C expression of the instance owning a per-instance signal (None: own data)."""
@@ -1340,37 +1259,6 @@ class TraitEmitter:
         data_struct = f"{self.c_name}Data"
         return f"{autoload}_{member} = ({data_struct}*)data;"
 
-    def emit_cast_call(self, node: Dict) -> str:
-        """Std.int() -> (int32_t)value"""
-        cast = node.get("value", "(int32_t)")
-        args = node.get("args", [])
-        if args:
-            return f"{cast}({self.emit(args[0])})"
-        return ""
-
-    def emit_string_call(self, node: Dict) -> str:
-        """StringTools calls -> C string functions.
-
-        starts_with: strncmp(str, prefix, strlen(prefix)) == 0
-        ends_with:   str_ends_with(str, suffix) (custom helper)
-        contains:    strstr(str, sub) != NULL
-        """
-        func = node.get("value", "")
-        args = node.get("args", [])
-        if len(args) < 2:
-            return ""
-        s = self.emit(args[0])
-        sub = self.emit(args[1])
-        if not s or not sub:
-            return ""
-        if func == "starts_with":
-            return f"(strncmp({s}, {sub}, strlen({sub})) == 0)"
-        elif func == "ends_with":
-            return f"str_ends_with({s}, {sub})"
-        elif func == "contains":
-            return f"(strstr({s}, {sub}) != NULL)"
-        return ""
-
     def emit_debug_call(self, node: Dict) -> str:
         """trace() -> debugf()"""
         args = node.get("args", [])
@@ -1380,10 +1268,6 @@ class TraitEmitter:
         if len(arg_strs) == 1:
             return f'debugf("%s\\n", {arg_strs[0]})'
         return f'debugf("{", ".join(["%s"] * len(arg_strs))}\\n", {", ".join(arg_strs)})'
-
-    def emit_object_call(self, node: Dict) -> str:
-        """Object calls - return macro-provided c_code."""
-        return node.get("c_code", "")
 
     def emit_vec_call(self, node: Dict) -> str:
         """Vec calls - substitute placeholders in macro-provided c_code."""

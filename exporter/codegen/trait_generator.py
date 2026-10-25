@@ -853,7 +853,9 @@ class TraitCodeGenerator:
 
     def _method_uses_render2d(self, nodes: list) -> bool:
         """Whether a method sets or uses the 2D drawing color (needs _g2_color)."""
-        return any(n.get("type") in ("render2d_set_color", "render2d_fill_rect") for n in walk_ir(nodes))
+        return any(n.get("type") == "render2d_set_color" or
+                   (n.get("type") == "c_template" and "_g2_color" in n.get("c_code", ""))
+                   for n in walk_ir(nodes))
 
     def _parent_event_call(self, event: str, with_dt: bool) -> list:
         """Call the parent's handler first: callbacks a parent class registers

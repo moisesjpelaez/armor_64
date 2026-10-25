@@ -39,19 +39,17 @@ package armor64;
  *
  * CALLS:
  *   c_template                       - A call bound to C (Bindings.hx): c_code = the template,
- *                                      args = its {0}..., object = its {self} (if any)
+ *                                      args = its {0}..., object = its {self} (if any),
+ *                                      props.in_place: {self} is written to
  *   call, method_call                - Generic function/method calls (method_call.owner: class declaring the method)
  *   super_call                       - super.method(): cName of the declaring ancestor's C function
- *   scene_call, transform_call       - Domain-specific calls
- *   math_call, input_call            - Std.parseFloat (math_call), input calls
- *   physics_call, vec_call           - Domain-specific calls
+ *   scene_call, input_call           - Scene.setActive(), input calls
+ *   vec_call                         - Vector clone() / set() (transform vectors differ)
  *   signal_connect, signal_disconnect, signal_emit - Signals (see SignalCallConverter)
  *   canvas_get_label, label_set_text - UI calls (label_set_text.args: [label, text])
  *   canvas_element, canvas_element_set_visible - Koui's element list (Array<Element>) by type
  *   ui_group_set_visible, button_field - Layout visibility, field of a Button (pool index)
  *   autoload_call                    - Call to autoload function
- *   object_call                      - Object method call
- *   cast_call                        - Type cast
  *   debug_call                       - trace() -> debugf()
  *   sprintf                          - String formatting
  *   remove_object                    - Object removal

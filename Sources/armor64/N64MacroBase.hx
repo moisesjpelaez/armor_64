@@ -262,9 +262,6 @@ class N64MacroBase {
     // Methods the Python emitter translates from a generic method_call node
     // (emit_method_call in trait_emitter.py), by declaring class
     static var emitterMethods:Map<String, Array<String>> = [
-        "aura.channels.BaseChannelHandle" => ["play", "stop", "pause", "setVolume"],
-        "iron.object.Animation" => ["play", "pause", "resume", "setSpeed"],
-        "iron.object.Object" => ["getAnimation"],
         "armory.system.Tween" => ["start", "pause", "stop"],
     ];
 

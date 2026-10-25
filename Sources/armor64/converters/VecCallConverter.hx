@@ -11,13 +11,12 @@ import armor64.converters.ICallConverter;
 using StringTools;
 
 /**
- * Converts Vec2/Vec3/Vec4 method calls to C struct operations.
- * Handles: mult, add, sub, dot, normalize, length, clone, set
- *
- * Note: cross, setFrom are not yet implemented (add when needed).
+ * Vec2/Vec3/Vec4 clone() and set(), which differ on transform vectors (loc,
+ * scale: T3DVec3, scale stored with SCALE_FACTOR). The other vector methods
+ * are in Bindings.hx.
  */
 class VecCallConverter implements ICallConverter {
-    static var vecMethods = ["mult", "add", "sub", "dot", "normalize", "length", "clone", "set"];
+    static var vecMethods = ["clone", "set"];
 
     public function new() {}
 
@@ -44,26 +43,6 @@ class VecCallConverter implements ICallConverter {
 
         // Template uses {v} for vector, {0} for first arg
         var c_code = switch (method) {
-            case "length":
-                is3D ? "sqrtf({v}.x*{v}.x + {v}.y*{v}.y + {v}.z*{v}.z)"
-                     : "sqrtf({v}.x*{v}.x + {v}.y*{v}.y)";
-            case "mult":
-                is3D ? "(" + cType + "){{v}.x*({0}), {v}.y*({0}), {v}.z*({0})}"
-                     : "(" + cType + "){{v}.x*({0}), {v}.y*({0})}";
-            case "add":
-                is3D ? "(" + cType + "){{v}.x+({0}).x, {v}.y+({0}).y, {v}.z+({0}).z}"
-                     : "(" + cType + "){{v}.x+({0}).x, {v}.y+({0}).y}";
-            case "sub":
-                is3D ? "(" + cType + "){{v}.x-({0}).x, {v}.y-({0}).y, {v}.z-({0}).z}"
-                     : "(" + cType + "){{v}.x-({0}).x, {v}.y-({0}).y}";
-            case "dot":
-                is3D ? "({v}.x*({0}).x + {v}.y*({0}).y + {v}.z*({0}).z)"
-                     : "({v}.x*({0}).x + {v}.y*({0}).y)";
-            case "normalize":
-                // Note: normalize modifies in-place, needs the original var name
-                // We use {vraw} placeholder for unparenthesized var
-                is3D ? "{ float _l=sqrtf({v}.x*{v}.x+{v}.y*{v}.y+{v}.z*{v}.z); if(_l>0.0f){ {vraw}.x/=_l; {vraw}.y/=_l; {vraw}.z/=_l; } }"
-                     : "{ float _l=sqrtf({v}.x*{v}.x+{v}.y*{v}.y); if(_l>0.0f){ {vraw}.x/=_l; {vraw}.y/=_l; } }";
             case "clone":
                 // Clone creates a copy - type depends on target
                 // Special case: transform.scale is stored with SCALE_FACTOR, so multiply by inverse to get Blender values

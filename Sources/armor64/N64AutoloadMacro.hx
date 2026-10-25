@@ -17,7 +17,6 @@ import armor64.converters.AudioCallConverter;
 import armor64.converters.TweenCallConverter;
 import armor64.converters.MapCallConverter;
 import armor64.converters.ArrayCallConverter;
-import armor64.converters.StringCallConverter;
 
 using Lambda;
 
@@ -186,7 +185,6 @@ class AutoloadExtractor extends N64Extractor {
             new TweenCallConverter(),
             new MapCallConverter(),
             new ArrayCallConverter(),
-            new StringCallConverter(),
         ]);
         this.order = order;
     }
