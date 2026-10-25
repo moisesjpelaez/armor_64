@@ -22,7 +22,7 @@ This document provides an architectural overview of the Armory3D N64 exporter, w
 
 1. **Clean IR Separation**: Haxe macros perform semantic analysis and emit JSON IR. Python does mechanical 1:1 translation to C without re-analyzing semantics.
 
-2. **Converter Plugin Pattern**: Each Haxe API domain (physics, audio, input, etc.) has a dedicated converter that can be extended independently.
+2. **Bindings table, then converters**: a Haxe call that maps straight to C is one entry in `Bindings.hx` (`"Class.method" => C template`). Calls needing logic (callbacks, export-time lookups, generated code) have a converter per API domain (`converters/`). See [Adding Support for New Haxe APIs](#adding-support-for-new-haxe-apis).
 
 3. **Template-Based Codegen**: Jinja2 templates separate C code structure from generated data.
 
@@ -34,7 +34,7 @@ This document provides an architectural overview of the Armory3D N64 exporter, w
 |--------|---------|
 | `exporter.py` | Main entry point, orchestrates pipeline |
 | `utils.py` | Shared utilities, configuration, coordinate conversion |
-| `codegen/trait_emitter.py` | IR → C code translation |
+| `codegen/trait_emitter.py` | IR → C code translation (`emit_c_template` renders the bindings) |
 | `codegen/trait_generator.py` | Prepares template data, handles inheritance |
 | `codegen/autoload_generator.py` | Autoload-specific code generation |
 | `codegen/tween_helper.py` | Tween animation support |
@@ -55,7 +55,8 @@ This document provides an architectural overview of the Armory3D N64 exporter, w
 | `N64AutoloadMacro.hx` | Autoloads: static members and functions as C globals → `n64_autoloads.json` |
 | `IRTypes.hx` | IR node type definitions and documentation |
 | `TypedIndex.hx` | Maps source positions to the compiler's typed AST |
-| `converters/*.hx` | Domain-specific call converters |
+| `Bindings.hx` | Haxe calls that map straight to C: one template per `Class.method` |
+| `converters/*.hx` | Calls needing logic, one converter per API domain |
 | `mapping/TypeMap.hx` | Haxe → C type mapping |
 | `mapping/Constants.hx` | Shared constants (scale factors, limits) |
 
@@ -102,60 +103,97 @@ The IR (Intermediate Representation) is a JSON format that bridges Haxe semantic
 - **Variables**: `member`, `ident`, `field_access`, `autoload_field`
 - **Operators**: `assign`, `binop`, `unop`
 - **Control Flow**: `if`, `while`, `for_range`, `return`, `break`, `continue`
-- **Calls**: `call`, `method_call`, `transform_call`, `physics_call`, `audio_*`, etc.
+- **Calls**: `c_template` (a binding), `call`, `trait_method_call`, `autoload_call`, `signal_*`, `audio_*`, `tween_*`, etc.
+- **Containers**: `map_*`, `array_*`, `container_element`
 
 ## Adding Support for New Haxe APIs
 
-### Step 1: Create a Converter (Haxe)
+A call either maps straight to C, and is **one line in `Bindings.hx`**, or needs logic, and is a **converter**. Use the table unless the call needs one of:
 
-Create `Sources/armor64/converters/MyCallConverter.hx`. Decide whether a call is yours from the typed AST, not from variable or class names, so aliases, full paths and differently named variables all work:
+- a decision from the arguments' values or types (`Std.string` picks a format from its argument's type, `Scene.setActive("Level")` resolves the scene ID at export time)
+- something recorded for the exporter (input buttons used, map key lengths, contact handlers)
+- generated code (callbacks, captures, signal handlers)
+
+Calls nothing translates are reported at their Haxe line (`N64MacroBase.unsupportedMethodCall`), never copied to the C.
+
+### The bindings table (`Sources/armor64/Bindings.hx`)
+
+An entry is keyed by the class (or abstract) **declaring** the method, from the typed AST. So aliases, imports, full paths, inherited methods and `using` extensions all match, whatever the code calls the receiver:
+
+```haxe
+"Math.sin" => {c: "fm_sinf({0})"},
+"iron.object.Animation.play" => {c: 'animation_play({self}, {0=""})', receiver: Value},
+"iron.object.Transform.move" => {c: "it_move(&((ArmObject*){self})->transform, ({0}).x, ({0}).z, -({0}).y, {1=1.0f});",
+                                 receiver: FieldOwner("transform"), flags: ["uses_transform", "mutates_transform"]},
+"kha.graphics2.Graphics.begin" => {noop: true},
+```
+
+Then add the C function to the runtime, if it's new. Nothing else is needed: no IR node type, no Python code.
+
+**Placeholders in `c`:**
+
+| Placeholder | Is |
+|---|---|
+| `{0}`, `{1}`, ... | The call's arguments |
+| `{1=1.0f}` | Argument 1, or `1.0f` when the call leaves it out |
+| `{self}` | The receiver, see `receiver` below |
+
+Any other `{name}` is an error. A C brace around a bare name needs a space: `{ x }`. Braces next to other text, such as `(ArmVec4){{self}.x, ...}`, are fine.
+
+**`receiver`, what `{self}` is:**
+
+| Receiver | `{self}` | Example |
+|---|---|---|
+| `None` (default) | Nothing: a static call | `Math.sin(x)`, `StringTools.endsWith(s, x)` (or `s.endsWith(x)`) |
+| `Value` | The receiver | `v.length()`, `anim.play("run")` |
+| `InPlace` | The receiver, which is written to. It's used as written and never copied. | `v.normalize()` |
+| `Self` | The trait's own object, whatever the receiver (traits only) | `rigidBody.applyForce(f)` |
+| `FieldOwner("transform")` | The object owning the field: `x.transform.m()` gives `x`, `transform.m()` gives the trait's object (traits only) | `object.transform.translate(...)` |
+
+**Other fields:**
+- `flags`: the `TraitMeta` flags the call sets, such as `uses_physics`.
+- `noop: true`: the call does nothing on N64, and its arguments aren't evaluated.
+
+**Rules, checked when a call uses the entry** (a broken entry fails at the Haxe line, not in C):
+- Every argument the call passes must appear in the template. An argument the C can't take, such as `applyForce`'s `loc`, is reported instead of dropped.
+- A template ending with `;` or starting with `{` (a block) is a statement. Otherwise it's an expression; it may still end with `}`, as a compound literal does. A value computed with statements is a statement expression: `({ T3DVec3 _d; it_look(..., &_d); (ArmVec4){...}; })`.
+- An argument or receiver used more than once, and that isn't plain C (a name, member path or literal), is evaluated once into a temporary (`__auto_type _t0 = ...`). A receiver used once that isn't plain C is parenthesized. So `({0}).x, ({0}).z, -({0}).y` is safe with any argument.
+- No logic in the table. An entry that would need a condition or a lookup is a converter.
+
+### Converters (`Sources/armor64/converters/`)
+
+Converters run **before** the table, so they also handle special cases of methods the table maps (e.g. `Vec4.set()` on a transform's `loc`, or a mix channel's `setVolume()`). Return `null` for anything you don't handle, so the table and the other converters get it.
+
+Decide whether a call is yours from the typed AST, not from variable or class names:
 
 - `TypedIndex.receiverPath(obj)`: what the receiver is, e.g. `"iron.system.Gamepad"` for `pad` in `pad.started("a")`
 - `TypedIndex.isClassRef(obj, "iron.Scene")`: static calls (`Scene.x()`, `iron.Scene.x()`, aliases)
 - `TypedIndex.callOwner(obj, method)`: the class declaring the method
 
-They return null/false for expressions without a typed node; don't add name-based fallbacks, `N64MacroBase.methodCall()` reports such calls.
+They return null/false for expressions without a typed node; don't add name-based fallbacks.
 
 ```haxe
 class MyCallConverter implements ICallConverter {
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>,
                                rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
-        // Return null if not handling this call
         if (TypedIndex.receiverPath(obj) != "my.api.MyClass") return null;
+        if (method != "load") return null;
 
-        // Return IR node with c_code template
-        return {
-            type: "my_call",
-            c_code: "my_c_function({0}, {1})",
-            args: args
-        };
+        // The logic: here, an asset resolved at export time
+        var asset = ctx.extractStringArg(rawParams[0]);
+        if (asset == null) return N64MacroBase.unsupported("MyClass.load() needs a constant name on N64");
+        return {type: "c_template", c_code: 'my_load(ASSET_${asset.toUpperCase()})', args: []};
     }
 }
 ```
 
-### Step 2: Register the Converter (Haxe)
+A converter can return a `c_template` node, rendered like a table entry (placeholders, temporaries) with no Python needed; the entry checks above are the converter's job. Use its own IR node type and an `emit_<type>` method in `trait_emitter.py` only when the C needs data the template can't carry, such as callbacks or handler names.
 
-Add it to the converter list passed to `super()` in the `TraitExtractor` constructor (`N64TraitMacro.hx`), and in `AutoloadExtractor` (`N64AutoloadMacro.hx`) too if its C doesn't use the trait's `obj` or `data`:
+Register it in the converter list passed to `super()` in `N64TraitMacro.hx`. Also add it in `N64AutoloadMacro.hx` if its C doesn't use the trait's `obj` or `data`.
 
-```haxe
-super(fields, cls, N64Extractor.traitCName(cls), [
-    // ... existing converters ...
-    new MyCallConverter(),
-]);
-```
+### Tests
 
-Calls no converter handles become a generic `method_call`. When the typed AST knows the method's class, `N64MacroBase.methodCall()` reports it as unsupported unless the Python emitter translates it (`emitterMethods`); add an entry there if you handle a new method in `emit_method_call`.
-
-### Step 3: Add Emitter (Python)
-
-In `trait_emitter.py`, add an `emit_my_call` method:
-
-```python
-def emit_my_call(self, node: Dict) -> str:
-    """Handle my_call IR nodes."""
-    c_code = node.get("c_code", "")
-    return self._substitute_placeholders(c_code, node.get("args", []))
-```
+Add the call to a golden suite (`Tests/suites/*/Sources`) and accept the output with `python Tests/run_tests.py --update` once the generated C is right. The suites' compile stage builds the C with `-Werror`. `typed_resolution/.../ApiSurface.hx` calls every binding in the forms games write.
 
 ## Configuration
 
@@ -248,7 +286,7 @@ C code is generated in `build/n64/src/data/traits.c` and related files.
 
 ### Unsupported Code
 
-Haxe the macros can't translate is reported as a compile warning at its source line (`N64: ...`) and kept as an `/* N64 unsupported: ... */` comment in the generated C. Converters report it with `N64MacroBase.unsupported(msg)`; return a plain `{ type: "skip" }` only for code that is intentionally a no-op on N64. `-D n64_strict` turns the warnings into errors.
+Haxe the macros can't translate is reported as a compile warning at its source line (`N64: ...`) and kept as an `/* N64 unsupported: ... */` comment in the generated C. Converters report it with `N64MacroBase.unsupported(msg)`; return a plain `{ type: "skip" }` (or use a `noop` binding) only for code that is intentionally a no-op on N64. `-D n64_strict` turns the warnings into errors.
 
 ### Tests
 
