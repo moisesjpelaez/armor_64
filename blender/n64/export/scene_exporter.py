@@ -119,9 +119,6 @@ def build_scene_data(exporter, scene):
     if hasattr(scene, 'gravity'):
         gravity = [scene.gravity[0], scene.gravity[1], scene.gravity[2]]
 
-    # Get physics debug draw mode from Armory settings
-    debug_draw_mode = n64_utils.get_physics_debug_mode()
-
     # Safe access to Fast64 ambient color with fallback
     try:
         ambient_color = list(scene.fast64.renderSettings.ambientColor)
@@ -161,8 +158,7 @@ def build_scene_data(exporter, scene):
         "world": {
             "clear_color": n64_utils.get_clear_color(scene),
             "ambient_color": ambient_color,
-            "gravity": gravity,
-            "physics_debug_mode": debug_draw_mode
+            "gravity": gravity
         },
         "cameras": [],
         "lights": [],
