@@ -60,9 +60,12 @@
         return &arr->items[index]; \
     } \
     \
+    /* arr[index] = item; at index == count it appends, as Haxe's a[a.length] = x */ \
     static inline void array_name##_set(array_name *arr, int index, elem_type item) { \
         if (index >= 0 && index < arr->count) { \
             arr->items[index] = item; \
+        } else if (index == arr->count) { \
+            array_name##_push(arr, item); \
         } \
     } \
     \

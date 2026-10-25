@@ -81,15 +81,23 @@ class TypedIndex {
             case TConst(TThis) | TLocal({name: "`this"}):
                 var field = thisFields.get(key(e.pos));
                 if (field != null) return field.t;
+            // A variable the compiler adds for it (`var base = this.queue` for
+            // `queue[i] += 1`): the variable's value
+            case TVar(v, _):
+                switch (e.expr) {
+                    case EVars(_):
+                    default: return v.t;
+                }
             default:
         }
         return list[0].t;
     }
 
     public static function typeOf(e:Expr):Null<String> {
-        // Outermost node: the expression itself (see classOf)
-        var list = nodesAt(e);
-        return list.length > 0 ? typeName(list[0].t) : null;
+        // Outermost node: the expression itself (see classOf); an implicit-this
+        // field (e.g. the target of `queue[i] += 1`) its field's type
+        var t = exprType(e);
+        return t != null ? typeName(t) : null;
     }
 
     /**

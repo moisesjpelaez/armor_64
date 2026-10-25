@@ -68,7 +68,11 @@ package armor64;
  *   map_set, map_get, map_value      - map_get gives a pointer (container values),
  *   map_exists, map_remove, map_clear  map_value a copy
  *   array_push, array_pop, array_get, array_clear
+ *   array_set                        - c[k] = v (also map_set): children = [key, value]
+ *   container_element                - Pointer to c[k], written in place (c[k] += v, c[k]++),
+ *                                      inside a deref: props.map, props.pointer
  *   array_get_nested                 - map[key][i]: children = [inner get, index]
+ *   (props.pointer: object is already a pointer, as map[key] in map[key][i])
  */
 
 typedef IRNode = {

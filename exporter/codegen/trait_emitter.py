@@ -663,16 +663,27 @@ class TraitEmitter:
             value: the container's C type (e.g. "ArmIntArray", "ArmSoundChannelMap")
             object: the map or array (member, local, autoload field...)
             children: the arguments (key, value, index...)
+            props.pointer: object is already a pointer (map[key] in map[key][i])
         """
         ctype = node.get("value", "")
         container = self.emit(node.get("object"))
         args = [self.emit(c) for c in (node.get("children") or [])[:nargs]]
         if not ctype or not container or len(args) < nargs or not all(args):
             return ""
-        return f"{ctype}_{func}({', '.join([f'&{container}'] + args)})"
+        ref = container if (node.get("props") or {}).get("pointer") else f"&{container}"
+        return f"{ctype}_{func}({', '.join([ref] + args)})"
 
     def emit_map_set(self, node: Dict) -> str:
         return self._container_call(node, "set", 2)
+
+    def emit_array_set(self, node: Dict) -> str:
+        return self._container_call(node, "set", 2)
+
+    def emit_container_element(self, node: Dict) -> str:
+        """Pointer to c[k], written in place (c[k] += v, c[k]++): a map's get
+        gives one, an array's get_ptr."""
+        func = "get" if (node.get("props") or {}).get("map") else "get_ptr"
+        return self._container_call(node, func, 1)
 
     def emit_map_get(self, node: Dict) -> str:
         return self._container_call(node, "get", 1)

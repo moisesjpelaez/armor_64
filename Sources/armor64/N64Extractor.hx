@@ -239,6 +239,18 @@ class N64Extractor implements IExtractorContext {
             // handle = null: the runtime's "no sound" handle
             case EBinop(OpAssign, e1, e2) if (isSoundHandle(e1) && N64MacroBase.isNullLiteral(e2)):
                 { type: "assign", children: [exprToIR(e1), SOUND_HANDLE_NULL] };
+            // c[k] = v on a typed Map or Array: its set function
+            case EBinop(OpAssign, {expr: EArray(c, k)}, e2) if (containerType(c) != null):
+                convertElementSet(c, k, e2);
+            // c[k] += v, c[k]++: the element through its address
+            case EBinop(OpAssignOp(op), e1 = {expr: EArray(c, _)}, e2) if (containerType(c) != null):
+                if (op == OpAdd && containerValueType(c) == "String") {
+                    N64MacroBase.unsupported("+= on a String element of an Array or Map is not supported on N64 yet");
+                } else {
+                    { type: "binop", value: N64MacroBase.binopToString(OpAssignOp(op)), children: [elementRef(e1), exprToIR(e2)] };
+                }
+            case EUnop(op = OpIncrement | OpDecrement, postFix, operand = {expr: EArray(c, _)}) if (containerType(c) != null):
+                { type: "unop", value: N64MacroBase.unopToString(op), children: [elementRef(operand)], props: { postfix: postFix } };
             case EBinop(OpAssign, e1, e2):
                 var ui = convertUIAssign(e1, e2);
                 ui != null ? ui : convertAssign(e1, e2);
@@ -405,6 +417,70 @@ class N64Extractor implements IExtractorContext {
     /** Hook: `e1 = e2`. */
     function convertAssign(e1:Expr, e2:Expr):IRNode {
         return { type: "assign", children: [exprToIR(e1), exprToIR(e2)] };
+    }
+
+    /** C type of a typed Map or Array (ArmIntArray, ArmStringMap...), null for other expressions. */
+    function containerType(c:Expr):Null<String> {
+        var objType = getExprType(c);
+        if (!TypeMap.isMapType(objType) && !TypeMap.isArrayType(objType)) return null;
+        var ctype = TypeMap.getCType(objType);
+        return ctype != null && ctype.startsWith("Arm") ? ctype : null;
+    }
+
+    /** Haxe type of a Map's values or an Array's elements. */
+    function containerValueType(c:Expr):Null<String> {
+        var parsed = TypeMap.parseParameterizedType(getExprType(c));
+        return parsed == null || parsed.params.length == 0 ? null : parsed.params[parsed.params.length - 1];
+    }
+
+    /**
+     * `c[k] = v`: set(). A Map adds the key; an Array writes an element, or
+     * appends at c[c.length] as in Haxe.
+     */
+    function convertElementSet(c:Expr, k:Expr, v:Expr):IRNode {
+        var ctype = containerType(c);
+        var isMap = TypeMap.isMapType(getExprType(c));
+        var key = exprToIR(k);
+        if (isMap) N64MacroBase.recordMapKey(ctype, key, true);
+        var node:IRNode = { type: isMap ? "map_set" : "array_set", value: ctype, object: exprToIR(c), children: [key, exprToIR(v)] };
+        // map[key][i]: the inner map's get gives a pointer
+        if (isNestedElement(c)) node.props = { pointer: true };
+        return node;
+    }
+
+    /**
+     * `c[k]` written in place (c[k] += v, c[k]++): the element through its
+     * address, so the key is evaluated once. The element must exist.
+     */
+    function elementRef(e:Expr):IRNode {
+        return switch (e.expr) {
+            case EArray(c, k):
+                var ctype = containerType(c);
+                var isMap = TypeMap.isMapType(getExprType(c));
+                var key = exprToIR(k);
+                if (isMap) N64MacroBase.recordMapKey(ctype, key, false);
+                {
+                    type: "deref",
+                    children: [{
+                        type: "container_element",
+                        value: ctype,
+                        object: exprToIR(c),
+                        children: [key],
+                        props: { map: isMap, pointer: isNestedElement(c) }
+                    }]
+                };
+            default:
+                exprToIR(e);
+        };
+    }
+
+    // A container that is itself an element (map[key] in map[key][i]): read as a pointer
+    static function isNestedElement(c:Expr):Bool {
+        return switch (c.expr) {
+            case EArray(_, _): true;
+            case EParenthesis(inner): isNestedElement(inner);
+            default: false;
+        };
     }
 
     /** `e1[e2]`: typed Map and Array containers use their generated functions. */
