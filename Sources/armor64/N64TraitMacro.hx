@@ -18,7 +18,6 @@ import armor64.converters.CanvasCallConverter;
 import armor64.converters.VecCallConverter;
 import armor64.converters.PhysicsCallConverter;
 import armor64.converters.TransformCallConverter;
-import armor64.converters.MathCallConverter;
 import armor64.converters.InputCallConverter;
 import armor64.converters.SignalCallConverter;
 import armor64.converters.StdCallConverter;
@@ -186,7 +185,6 @@ class TraitExtractor extends N64Extractor {
             new VecCallConverter(),
             new PhysicsCallConverter(),
             new TransformCallConverter(),
-            new MathCallConverter(),
             new InputCallConverter(),
             new SignalCallConverter(),
             new StdCallConverter(),

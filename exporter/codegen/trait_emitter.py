@@ -21,6 +21,16 @@ from typing import Dict, List, Optional, Set
 
 log = logging.getLogger(__name__)
 
+# A binding template's placeholder: {0}, {self}, {1=1.0f} (Bindings.hx)
+_PLACEHOLDER = re.compile(r'\{([A-Za-z0-9_]+)(?:=([^{}]*))?\}')
+# C that's cheap and side-effect free to repeat: a name or member path (maybe
+# through a cast, like ((PlayerData*)data)->speed) or a literal
+_PLAIN_C = re.compile(r'''^(?:
+    (?:\(\([A-Za-z_]\w*\s*\*\)\s*[A-Za-z_]\w*\)|[A-Za-z_]\w*)(?:\s*(?:\.|->)\s*[A-Za-z_]\w*)*
+  | -?\d+(?:\.\d*)?(?:[eE][-+]?\d+)?[fFuUlL]*
+  | "(?:[^"\\]|\\.)*"
+)$''', re.X)
+
 
 class TraitEmitter:
     """Emits C code from IR nodes. No semantic analysis, just translation.
@@ -53,6 +63,8 @@ class TraitEmitter:
         self.methods = methods or {}
         # Signal rendering (signal_codegen.SignalContext), set by the generator
         self.signals = None
+        # Temporaries of binding templates (emit_c_template): _t0, _t1...
+        self._temp_count = 0
 
         # Virtual methods callable from this trait (own and inherited) -> trait
         # whose struct holds their vtable pointer
@@ -1172,12 +1184,55 @@ class TraitEmitter:
 
         return c_code
 
+    def emit_c_template(self, node: Dict) -> str:
+        """A call bound to C in Bindings.hx: its template, with the arguments
+        ({0}...), the receiver ({self}) and defaults ({1=1.0f}) filled in.
+
+        An argument used more than once that isn't plain C (a name, member
+        path or literal) is evaluated once, into a temporary.
+        """
+        template = node.get("c_code", "")
+        values = {str(i): self.emit(a) for i, a in enumerate(node.get("args") or [])}
+        obj = node.get("object")
+        if obj:
+            values["self"] = self.emit(obj)
+
+        uses: Dict[str, int] = {}
+        for m in _PLACEHOLDER.finditer(template):
+            uses[m.group(1)] = uses.get(m.group(1), 0) + 1
+        temps = []
+        for name, count in uses.items():
+            value = values.get(name)
+            if value and count > 1 and not _PLAIN_C.match(value):
+                temp = f"_t{self._temp_count}"
+                self._temp_count += 1
+                temps.append(f"__auto_type {temp} = ({value});")
+                values[name] = temp
+
+        missing = []
+
+        def fill(m):
+            value = values.get(m.group(1))
+            if value:
+                return value
+            if m.group(2) is not None:
+                return m.group(2)
+            missing.append(m.group(1))
+            return ""
+
+        # One pass: arguments containing braces aren't read as placeholders
+        code = _PLACEHOLDER.sub(fill, template)
+        if missing:
+            return ""
+        if not temps:
+            return code
+        decls = " ".join(temps)
+        if code.rstrip().endswith((";", "}")):
+            return f"{{ {decls} {code} }}"
+        return f"({{ {decls} {code}; }})"
+
     def emit_math_call(self, node: Dict) -> str:
-        """Math.sin() -> sinf(), etc. - use c_code if available."""
-        c_code = node.get("c_code", "")
-        if c_code:
-            return self._substitute_placeholders(c_code, node.get("args", []))
-        # Fallback for simple math calls
+        """Std.parseFloat() -> strtof() (StdCallConverter)."""
         c_func = node.get("value", "")
         args = node.get("args", [])
         arg_strs = [self.emit(a) for a in args if self.emit(a)]

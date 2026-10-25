@@ -10,7 +10,6 @@ import armor64.N64Extractor;
 import armor64.TypedIndex;
 import armor64.mapping.TypeMap;
 import armor64.converters.VecCallConverter;
-import armor64.converters.MathCallConverter;
 import armor64.converters.SignalCallConverter;
 import armor64.converters.StdCallConverter;
 import armor64.converters.AutoloadCallConverter;
@@ -180,7 +179,6 @@ class AutoloadExtractor extends N64Extractor {
         // object or data, which autoloads don't have
         super(fields, cls, cls.name.toLowerCase(), [
             new VecCallConverter(),
-            new MathCallConverter(),
             new SignalCallConverter(),
             new StdCallConverter(),
             new AutoloadCallConverter(),

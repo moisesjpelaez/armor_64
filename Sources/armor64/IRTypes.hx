@@ -38,10 +38,12 @@ package armor64;
  *   ternary                          - Ternary operator a ? b : c
  *
  * CALLS:
+ *   c_template                       - A call bound to C (Bindings.hx): c_code = the template,
+ *                                      args = its {0}..., object = its {self} (if any)
  *   call, method_call                - Generic function/method calls (method_call.owner: class declaring the method)
  *   super_call                       - super.method(): cName of the declaring ancestor's C function
  *   scene_call, transform_call       - Domain-specific calls
- *   math_call, input_call            - Domain-specific calls
+ *   math_call, input_call            - Std.parseFloat (math_call), input calls
  *   physics_call, vec_call           - Domain-specific calls
  *   signal_connect, signal_disconnect, signal_emit - Signals (see SignalCallConverter)
  *   canvas_get_label, label_set_text - UI calls (label_set_text.args: [label, text])
