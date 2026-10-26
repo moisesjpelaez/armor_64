@@ -437,28 +437,26 @@ def extract_collision_mesh(obj: bpy.types.Object, scale, max_triangles: int = 25
 
 
 # =============================================================================
-# Build Requests, Paths and N64 Settings
+# Files, Paths and N64 Settings
 # =============================================================================
 
 # armor_64's folder (this file is exporter/utils.py)
 _LIBRARY_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def is_n64_build() -> bool:
-    """Whether Armory's current build is an N64 one: the 'custom' target,
-    exported through an n64 exporter entry or played with the Ares runtime.
-
-    Read from the build request make.build() records, every time: nothing is
-    left set after a build, so a failed N64 build can't make the next desktop
-    or web build an N64 one.
-    """
-    import arm.make_state as state
-    if getattr(state, 'target', None) != 'custom':
-        return False
-    wrd = bpy.data.worlds['Arm']
-    if state.is_export:
-        return wrd.arm_exporterlist[wrd.arm_exporterlist_index].arm_project_target == 'n64'
-    return state.is_play and getattr(wrd, 'arm_runtime', '') == 'Ares'
+def write_if_changed(path: str, text: str) -> bool:
+    """Write a text file only if its content changed (an unchanged file keeps
+    its modification time, so make doesn't rebuild what depends on it).
+    Returns whether it was written."""
+    try:
+        with open(path, encoding='utf-8', newline='') as f:
+            if f.read() == text:
+                return False
+    except OSError:
+        pass
+    with open(path, 'w', encoding='utf-8', newline='') as f:
+        f.write(text)
+    return True
 
 
 def win_path_to_posix(path: str) -> str:

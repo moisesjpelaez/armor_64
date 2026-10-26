@@ -95,22 +95,23 @@ class N64Exporter:
     # -------------------------------------------------------------------------
 
     @classmethod
-    def export_project(cls):
+    def export_project(cls) -> bool:
         """Export project without building."""
         exporter = cls()
         exporter.export()
+        return True
 
     @classmethod
-    def publish_project(cls):
+    def publish_project(cls) -> bool:
         """Export and build project to ROM."""
         exporter = cls()
-        exporter.publish()
+        return exporter.publish()
 
     @classmethod
-    def play_project(cls):
+    def play_project(cls) -> bool:
         """Export, build, and run in emulator."""
         exporter = cls()
-        exporter.play()
+        return exporter.play()
 
     # -------------------------------------------------------------------------
     # Main Export Pipeline
@@ -250,11 +251,12 @@ class N64Exporter:
         self.export()
         return build_runner.run_make()
 
-    def play(self):
+    def play(self) -> bool:
         """Export, build, and run in emulator."""
         if not self.publish():
-            return
+            return False
         build_runner.run_emulator()
+        return True
 
     # -------------------------------------------------------------------------
     # Directory Setup

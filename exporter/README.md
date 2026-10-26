@@ -16,6 +16,29 @@ This document provides an architectural overview of the Armory3D N64 exporter, w
    Audio assets                                     Makefile
 ```
 
+## Armory Integration
+
+armor_64 plugs into Armory through Armory's library hooks (`arm/library_hooks.py` in Armory), without patching Armory's code. Its `armory_hooks.py` adds:
+
+| Hook | What it does |
+|---|---|
+| `runtimes()`, `targets()` | "Ares" in the Runtime list (Play) and "Nintendo 64" in the exporter's Target list (Build, Publish); Armory exports these as Kha's `custom` target |
+| `owns_build(request)` | Those builds are armor_64's |
+| `compile(request, done)` | armor_64 builds them (`export/build_pipeline.py`) instead of Armory's khamake compile |
+| `clean(request)` | Publish cleans only the N64 output (khamake's cache stays warm) |
+| `write_main()` | For those builds: the `arm_target_n64` and `arm_build_dir` defines and the `N64Macro` Haxe macro |
+
+`blender.py` only registers the `arm.n64` Python namespace, the N64 preferences and the libdragon/tiny3d operators.
+
+### Build pipeline (`export/build_pipeline.py`)
+
+After Armory's export (scene data, `khafile.js`, `Main.hx`), Haxe runs only to execute armor_64's macros, which write the IR: its output isn't used. So no shader is compiled and no code is generated:
+
+1. khamake `--nohaxe --noshaders --noproject`: only the Haxe build file and the asset list (a fraction of a second when warm)
+2. The asset list for Haxe (`build/n64haxe-resources/files.json`): khamake's assets, plus every shader as an empty placeholder (Kha builds `kha.Shaders` from it). Shader names come from the project's and libraries' `khafile.js` `addShaders()` and from `Sources/Shaders`. Koui's themes (`.ksn`) are copied next to it (`build/n64haxe/`), where Koui's theme macro reads them.
+3. Haxe directly on khamake's build file, retargeted to `n64haxe` with `--no-output`
+4. The N64 export, make, and Ares for Play
+
 ## Key Design Principles
 
 0. **Extraction runs after typing**: the build macros only capture each class's untyped fields; extraction runs in `onAfterTyping` (`N64MacroBase.deferExtraction`) so extractors can ask `TypedIndex` what an expression really is (e.g. which class an identifier refers to) instead of guessing from names. Resolve calls from their receiver's typed node: inlined calls (e.g. `Vec4.mult`) have no typed call node of their own. `getExprType()` returns the typed type (`TypedIndex.typeOf`) in the same short-name format `TypeMap` uses. Nothing is matched by variable or class names: engine-provided values (gamepad, rigid body, transform) are recognized by type in `mapping/EngineTypes.hx`, and calls whose receiver has no typed node are reported as unsupported.

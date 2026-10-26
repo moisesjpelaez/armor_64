@@ -2,26 +2,24 @@
 N64 Exporter - Standalone Library Integration for Armory3D
 
 This module is loaded by Armory's library system (handlers.py load_py_libraries).
-On register(), it monkey-patches the Armory engine to add full N64 support:
+On register():
   - Registers the arm.n64 Python namespace (pointing to this library's modules)
-  - Adds 'Ares' runtime and 'n64' export target
   - Injects N64 preferences into Armory addon settings
-  - Patches the build pipeline (make.py, props_ui.py, utils.py)
   - Registers N64 build operators (Install Dependencies, Build libdragon, Build Tiny3D)
+The builds themselves ("Ares" runtime, "Nintendo 64" target) go through
+Armory's library hooks: see armory_hooks.py.
 
-On unregister(), all patches are cleanly reversed.
+On unregister(), all of it is cleanly reversed.
 """
 
 import importlib
 import os
-import shutil
 import subprocess
 import sys
-import types
 
 
 import bpy
-from bpy.props import StringProperty, BoolProperty, EnumProperty
+from bpy.props import StringProperty, BoolProperty
 
 # ---------------------------------------------------------------------------
 # Library path (determined at import time — Armory adds our dir to sys.path)
@@ -90,7 +88,7 @@ def _register_n64_namespace():
 
     # Export leaves (order: no-deps first)
     for fname in ['koui_theme_parser', 'linked_export', 'mesh_exporter', 'scene_exporter',
-                  'traits_exporter', 'ui_exporter', 'physics_exporter', 'audio_exporter', 'build_runner']:
+                  'traits_exporter', 'ui_exporter', 'physics_exporter', 'audio_exporter', 'build_runner', 'build_pipeline']:
         fpath = os.path.join(export_dir, f'{fname}.py')
         if os.path.isfile(fpath):
             _load_module(f'arm.n64.export.{fname}', fpath)
@@ -116,371 +114,6 @@ def _unregister_n64_namespace():
 
     if hasattr(arm, 'n64'):
         delattr(arm, 'n64')
-
-
-# =============================================================================
-# Runtime Enum Extension (add 'Ares')
-# =============================================================================
-
-def _register_runtime_enum():
-    """Extend arm_runtime EnumProperty to include 'Ares'."""
-    # Save current value if it exists
-    saved_value = None
-    if 'Arm' in bpy.data.worlds:
-        try:
-            saved_value = bpy.data.worlds['Arm'].arm_runtime
-        except Exception:
-            pass
-
-    bpy.types.World.arm_runtime = EnumProperty(
-        items=[('Krom', 'Krom', 'Krom'),
-               ('Browser', 'Browser', 'Browser'),
-               ('Ares', 'Ares', 'Ares')],
-        name="Runtime",
-        description="Runtime to use when launching the game",
-        default='Krom'
-    )
-
-    # Restore previous value
-    if saved_value and 'Arm' in bpy.data.worlds:
-        try:
-            bpy.data.worlds['Arm'].arm_runtime = saved_value
-        except Exception:
-            pass
-
-
-def _unregister_runtime_enum():
-    """Restore arm_runtime to original 2-item list."""
-    saved_value = None
-    if 'Arm' in bpy.data.worlds:
-        try:
-            val = bpy.data.worlds['Arm'].arm_runtime
-            if val != 'Ares':
-                saved_value = val
-        except Exception:
-            pass
-
-    bpy.types.World.arm_runtime = EnumProperty(
-        items=[('Krom', 'Krom', 'Krom'),
-               ('Browser', 'Browser', 'Browser')],
-        name="Runtime",
-        description="Runtime to use when launching the game",
-        default='Krom'
-    )
-
-    if saved_value and 'Arm' in bpy.data.worlds:
-        try:
-            bpy.data.worlds['Arm'].arm_runtime = saved_value
-        except Exception:
-            pass
-
-
-# =============================================================================
-# Export Target Enum Extension (add 'n64')
-# =============================================================================
-
-def _update_gapi_n64(self, context):
-    import arm.utils
-    n64_build_dir = arm.utils.get_fp_build() + '/n64-build'
-    if os.path.isdir(n64_build_dir):
-        shutil.rmtree(n64_build_dir, onerror=lambda f, p, e: (os.chmod(p, 0o777), f(p)))
-    bpy.data.worlds['Arm'].arm_recompile = True
-
-
-def _register_export_target():
-    """Add 'n64' to the project target enum, and add arm_gapi_n64 property.
-
-    Uses direct property assignment on the registered RNA type to avoid
-    unregister/re-register, which would destroy existing CollectionProperty instances.
-    """
-    import arm.props_exporter as props_exporter
-
-    ArmExporterListItem = props_exporter.ArmExporterListItem
-
-    # Read current enum items from the live RNA property
-    current_prop = ArmExporterListItem.bl_rna.properties.get('arm_project_target')
-    original_items = [(item.identifier, item.name, item.description) for item in current_prop.enum_items]
-
-    # Save original items for clean unregister
-    _originals['target_items'] = list(original_items)
-
-    # Save current values from existing export list items
-    saved_targets = {}
-    if 'Arm' in bpy.data.worlds:
-        wrd = bpy.data.worlds['Arm']
-        for i, item in enumerate(wrd.arm_exporterlist):
-            try:
-                saved_targets[i] = item.arm_project_target
-            except Exception:
-                pass
-
-    # Insert n64 before 'custom' if not already present
-    new_items = []
-    n64_found = False
-    for item in original_items:
-        if item[0] == 'n64':
-            n64_found = True
-        if item[0] == 'custom' and not n64_found:
-            new_items.append(('n64', 'Nintendo 64', 'n64'))
-        new_items.append(item)
-
-    # Assign directly to the class — no unregister/re-register needed
-    ArmExporterListItem.arm_project_target = EnumProperty(
-        items=new_items,
-        name="Target",
-        default='html5',
-        description='Build platform'
-    )
-
-    # Add arm_gapi_n64
-    ArmExporterListItem.arm_gapi_n64 = EnumProperty(
-        items=[('tiny3d', 'Tiny3D', 'tiny3d')],
-        name="Graphics API",
-        default='tiny3d',
-        description='Based on currently selected target',
-        update=_update_gapi_n64
-    )
-
-    # Restore saved target values
-    if 'Arm' in bpy.data.worlds:
-        wrd = bpy.data.worlds['Arm']
-        for i, target in saved_targets.items():
-            try:
-                wrd.arm_exporterlist[i].arm_project_target = target
-            except Exception:
-                pass
-
-
-def _unregister_export_target():
-    """Remove 'n64' from project target enum and remove arm_gapi_n64."""
-    import arm.props_exporter as props_exporter
-
-    ArmExporterListItem = props_exporter.ArmExporterListItem
-
-    # Save current values, filter out 'n64' since it won't exist after restore
-    saved_targets = {}
-    if 'Arm' in bpy.data.worlds:
-        wrd = bpy.data.worlds['Arm']
-        for i, item in enumerate(wrd.arm_exporterlist):
-            try:
-                val = item.arm_project_target
-                if val != 'n64':
-                    saved_targets[i] = val
-            except Exception:
-                pass
-
-    # Restore original enum items
-    if 'target_items' in _originals:
-        ArmExporterListItem.arm_project_target = EnumProperty(
-            items=_originals['target_items'],
-            name="Target",
-            default='html5',
-            description='Build platform'
-        )
-
-    # Remove arm_gapi_n64
-    try:
-        del ArmExporterListItem.arm_gapi_n64
-    except Exception:
-        pass
-
-    # Restore saved target values
-    if 'Arm' in bpy.data.worlds:
-        wrd = bpy.data.worlds['Arm']
-        for i, target in saved_targets.items():
-            try:
-                wrd.arm_exporterlist[i].arm_project_target = target
-            except Exception:
-                pass
-
-
-# =============================================================================
-# Patch arm.utils (get_gapi, target_to_gapi)
-# =============================================================================
-
-def _register_utils_patches():
-    """Patch arm.utils with N64-aware functions."""
-    import arm.utils
-
-    # --- Patch get_gapi() ---
-    _originals['get_gapi'] = arm.utils.get_gapi
-
-    def _patched_get_gapi():
-        import arm.make_state as state
-        wrd = bpy.data.worlds['Arm']
-        if state.is_export:
-            item = wrd.arm_exporterlist[wrd.arm_exporterlist_index]
-            if item.arm_project_target == 'n64':
-                return 'direct3d11' if arm.utils.get_os() == 'win' else 'opengl'
-        if hasattr(wrd, 'arm_runtime') and wrd.arm_runtime == 'Ares':
-            return 'direct3d11' if arm.utils.get_os() == 'win' else 'opengl'
-        return _originals['get_gapi']()
-
-    arm.utils.get_gapi = _patched_get_gapi
-
-    # --- Patch target_to_gapi() ---
-    _originals['target_to_gapi'] = arm.utils.target_to_gapi
-
-    def _patched_target_to_gapi(arm_project_target):
-        if arm_project_target == 'n64':
-            return 'arm_gapi_n64'
-        return _originals['target_to_gapi'](arm_project_target)
-
-    arm.utils.target_to_gapi = _patched_target_to_gapi
-
-
-def _unregister_utils_patches():
-    """Restore original arm.utils functions."""
-    import arm.utils
-
-    if 'get_gapi' in _originals:
-        arm.utils.get_gapi = _originals['get_gapi']
-    if 'target_to_gapi' in _originals:
-        arm.utils.target_to_gapi = _originals['target_to_gapi']
-
-
-
-# =============================================================================
-# Patch arm.make (runtime_to_target, build_success)
-# =============================================================================
-
-def _register_make_patches():
-    """Patch arm.make to support N64 build pipeline."""
-    import arm.make as make
-
-    # --- Patch runtime_to_target() ---
-    _originals['runtime_to_target'] = make.runtime_to_target
-
-    def _patched_runtime_to_target():
-        wrd = bpy.data.worlds['Arm']
-        if wrd.arm_runtime == 'Ares':
-            return 'custom'
-        return _originals['runtime_to_target']()
-
-    make.runtime_to_target = _patched_runtime_to_target
-
-    # --- Patch build_success() ---
-    _originals['build_success'] = make.build_success
-
-    def _patched_build_success():
-        import arm.make_state as state
-        import arm.log as log
-        import arm.n64.utils as n64_utils
-        from arm.n64.exporter import N64Exporter
-
-        if n64_utils.is_n64_build():
-            log.clear()
-            if state.is_play:
-                N64Exporter.play_project()
-            elif state.is_publish:
-                N64Exporter.publish_project()
-                if n64_utils.get_open_n64_rom_directory():
-                    arm.utils.open_folder(os.path.abspath(arm.utils.build_dir() + '/n64'))
-            else:
-                N64Exporter.export_project()
-                if n64_utils.get_open_n64_rom_directory():
-                    arm.utils.open_folder(os.path.abspath(arm.utils.build_dir() + '/n64'))
-            return
-        _originals['build_success']()
-
-    make.build_success = _patched_build_success
-
-
-def _unregister_make_patches():
-    """Restore original arm.make functions."""
-    import arm.make as make
-
-    if 'runtime_to_target' in _originals:
-        make.runtime_to_target = _originals['runtime_to_target']
-    if 'build_success' in _originals:
-        make.build_success = _originals['build_success']
-
-
-# =============================================================================
-# Patch Play / Export / Publish Operators
-# =============================================================================
-
-def _register_operator_patches():
-    """Patch Export/Publish operators to support N64 (Play needs nothing:
-    the Ares runtime builds the 'custom' target, see runtime_to_target)."""
-    import arm.props_ui as props_ui
-
-    # --- Patch ArmoryBuildProjectButton.execute ---
-    _originals['build_execute'] = props_ui.ArmoryBuildProjectButton.execute
-
-    def _patched_build_execute(self, context):
-        import arm.make_state as state
-        import arm.make as make
-        from arm import assets
-        wrd = bpy.data.worlds['Arm']
-        item = wrd.arm_exporterlist[wrd.arm_exporterlist_index]
-        if item.arm_project_target == 'n64':
-
-            # We need to override the target to 'custom' for Haxe macro execution.
-            # Save the original target, set to custom, call the build pipeline, then restore.
-            if item.arm_project_scene is None:
-                item.arm_project_scene = context.scene
-            rplist_index = wrd.arm_rplist_index
-            for i in range(0, len(wrd.arm_rplist)):
-                if wrd.arm_rplist[i].name == item.arm_project_rp:
-                    wrd.arm_rplist_index = i
-                    break
-
-            assets.invalidate_enabled = False
-            if wrd.arm_clear_on_compile:
-                os.system("cls")
-            make.build('custom', is_export=True)
-            make.compile()
-            wrd.arm_rplist_index = rplist_index
-            assets.invalidate_enabled = True
-            return {'FINISHED'}
-
-        return _originals['build_execute'](self, context)
-
-    props_ui.ArmoryBuildProjectButton.execute = _patched_build_execute
-
-    # --- Patch ArmoryPublishProjectButton.execute ---
-    _originals['publish_execute'] = props_ui.ArmoryPublishProjectButton.execute
-
-    def _patched_publish_execute(self, context):
-        import arm.make_state as state
-        import arm.make as make
-        from arm import assets
-        wrd = bpy.data.worlds['Arm']
-        item = wrd.arm_exporterlist[wrd.arm_exporterlist_index]
-        if item.arm_project_target == 'n64':
-
-            if item.arm_project_scene is None:
-                item.arm_project_scene = context.scene
-            rplist_index = wrd.arm_rplist_index
-            for i in range(0, len(wrd.arm_rplist)):
-                if wrd.arm_rplist[i].name == item.arm_project_rp:
-                    wrd.arm_rplist_index = i
-                    break
-
-            make.clean()
-            assets.invalidate_enabled = False
-            if wrd.arm_clear_on_compile:
-                os.system("cls")
-            make.build('custom', is_publish=True, is_export=True)
-            make.compile()
-            wrd.arm_rplist_index = rplist_index
-            assets.invalidate_enabled = True
-            return {'FINISHED'}
-
-        return _originals['publish_execute'](self, context)
-
-    props_ui.ArmoryPublishProjectButton.execute = _patched_publish_execute
-
-
-def _unregister_operator_patches():
-    """Restore original operator execute methods."""
-    import arm.props_ui as props_ui
-
-    if 'build_execute' in _originals:
-        props_ui.ArmoryBuildProjectButton.execute = _originals['build_execute']
-    if 'publish_execute' in _originals:
-        props_ui.ArmoryPublishProjectButton.execute = _originals['publish_execute']
 
 
 # =============================================================================
@@ -828,13 +461,8 @@ def _unregister_operators():
 
 def register():
     """Register the N64 exporter library. Called by Armory's load_py_libraries()."""
-    # Order matters: namespace first, then patches
+    # Order matters: namespace first
     _register_n64_namespace()
-    _register_runtime_enum()
-    _register_export_target()
-    _register_utils_patches()
-    _register_make_patches()
-    _register_operator_patches()
     _register_operators()
     _register_preferences()
     _register_preferences_ui()
@@ -847,11 +475,6 @@ def unregister():
     _unregister_preferences_ui()
     _unregister_preferences()
     _unregister_operators()
-    _unregister_operator_patches()
-    _unregister_make_patches()
-    _unregister_utils_patches()
-    _unregister_export_target()
-    _unregister_runtime_enum()
     _unregister_n64_namespace()
 
     _originals.clear()

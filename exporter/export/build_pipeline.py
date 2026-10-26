@@ -1,0 +1,196 @@
+"""
+N64 build: what runs after Armory's export for a build armor_64 owns
+(armory_hooks.py compile()).
+
+Haxe runs with armor_64's macros, which write the IR (n64_traits.json...);
+then the N64 export, make and, for Play, Ares. Haxe only has to type-check:
+nothing uses its output. So instead of Armory's khamake compile (shaders for
+this computer, the game as C++, a Visual Studio project):
+  1. khamake only writes the Haxe build file and the asset list
+     (--nohaxe --noshaders --noproject: a fraction of a second when warm)
+  2. armor_64 completes the asset list with the shaders as named, empty
+     placeholders (Kha builds kha.Shaders from it) and copies Koui's themes
+  3. Haxe runs directly, with --no-output
+"""
+
+import glob
+import json
+import os
+import re
+import shutil
+import subprocess
+import threading
+from typing import Callable, Optional
+
+import bpy
+
+import arm.log as log
+import arm.make as make
+import arm.make_state as state
+import arm.utils
+import arm.n64.utils as n64_utils
+
+# Haxe output name: Kha's asset list (<name>-resources) and Koui's themes (<name>) go next to it
+OUTPUT = 'n64haxe'
+
+_request = None
+_done: Optional[Callable[[bool], None]] = None
+
+
+def start(request, done: Callable[[bool], None]):
+    """Build `request` (library_hooks.BuildRequest), then call done(success)."""
+    global _request, _done
+    _request, _done = request, done
+    os.chdir(arm.utils.get_fp())
+    cmd = [arm.utils.get_node_path(), arm.utils.get_khamake_path(), '--nohaxe', '--noshaders', '--noproject']
+    if not bpy.data.worlds['Arm'].arm_verbose_output:
+        cmd.append('--quiet')
+    _run(cmd, _setup_done)
+
+
+def clean():
+    """Publish's clean: the N64 output only. khamake's cache (build/) stays, so
+    its next run is warm."""
+    n64_dir = os.path.join(arm.utils.build_dir(), 'n64')
+    if os.path.isdir(n64_dir):
+        shutil.rmtree(n64_dir, onerror=lambda f, p, e: (os.chmod(p, 0o777), f(p)))
+
+
+def _run(cmd, then: Callable[[int], None]):
+    """Run a process like Armory's make.run_proc() (a thread waits for it, then
+    `then` runs on Blender's main thread; in background mode it blocks), passing
+    its exit code. It's the build's process meanwhile, so Stop ends it."""
+    print(*cmd)
+    proc = subprocess.Popen(cmd)
+    state.proc_build = proc
+
+    def finished():
+        then(proc.returncode)
+
+    if bpy.app.background:
+        proc.wait()
+        finished()
+    else:
+        def wait():
+            proc.wait()
+            make.thread_callback_queue.put([threading.current_thread(), finished], block=True)
+        threading.Thread(target=wait).start()
+
+
+def _finish(success: bool):
+    done = _done
+    if done is not None:
+        done(success)
+
+
+def _setup_done(code: int):
+    if code != 0:
+        log.error('khamake failed')
+        _finish(False)
+        return
+    try:
+        hxml = _prepare_haxe()
+    except Exception as e:
+        log.error(f'N64: could not prepare the Haxe build: {e}')
+        _finish(False)
+        return
+    _run([arm.utils.get_haxe_path(), '--cwd', os.path.dirname(hxml), os.path.basename(hxml)], _haxe_done)
+
+
+def _prepare_haxe() -> str:
+    """Write armor_64's asset list, themes and Haxe build file next to khamake's;
+    returns the build file's path."""
+    fp = arm.utils.get_fp()
+    kha_build = os.path.join(fp, 'build')
+    hxmls = glob.glob(os.path.join(kha_build, 'project-*.hxml'))
+    if not hxmls:
+        raise RuntimeError(f'no Haxe build file from khamake in {kha_build}')
+    kha_hxml = max(hxmls, key=os.path.getmtime)
+    platform = os.path.basename(kha_hxml)[len('project-'):-len('.hxml')]
+
+    # Asset list: khamake's (without shaders), plus every shader as an empty placeholder
+    resources = os.path.join(kha_build, OUTPUT + '-resources')
+    os.makedirs(resources, exist_ok=True)
+    with open(os.path.join(kha_build, platform + '-resources', 'files.json'), encoding='utf-8') as f:
+        manifest = json.load(f)
+    placeholder = 'n64_placeholder'
+    open(os.path.join(resources, placeholder), 'wb').close()
+    files = [entry for entry in manifest['files'] if entry.get('type') != 'shader']
+    for name in sorted(_shader_names(fp, kha_hxml)):
+        files.append({'name': name, 'files': [placeholder], 'file_sizes': [0], 'type': 'shader', 'inputs': []})
+    manifest['files'] = files
+    n64_utils.write_if_changed(os.path.join(resources, 'files.json'), json.dumps(manifest, indent=2))
+
+    # Koui's themes (.ksn), read from the folder named like the output
+    assets_dir = os.path.join(kha_build, platform)
+    for theme in glob.glob(os.path.join(assets_dir, '**', '*.ksn'), recursive=True):
+        dest = os.path.join(kha_build, OUTPUT, os.path.relpath(theme, assets_dir))
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copyfile(theme, dest)
+
+    # khamake's build file, to armor_64's output and without writing code
+    with open(kha_hxml, encoding='utf-8') as f:
+        lines = f.read().split('\n')
+    out = []
+    for line in lines:
+        if re.match(r'^-(cpp|js|hl|java|jvm|cs|python|lua|php|neko|swf)\s', line):
+            out += [f'-cpp {OUTPUT}-build/Sources', '--no-output']
+        else:
+            out.append(line)
+    hxml = os.path.join(kha_build, OUTPUT + '.hxml')
+    n64_utils.write_if_changed(hxml, '\n'.join(out))
+    return hxml
+
+
+def _shader_names(fp: str, kha_hxml: str) -> set:
+    """kha.Shaders field names of every shader khamake would compile: the
+    project's and the libraries' (their khafile.js addShaders(), relative to
+    their folder), and Kha's and libraries' without a khafile.js
+    (Sources/Shaders)."""
+    sources = []
+
+    def add_khafile_shaders(root: str) -> bool:
+        khafile = os.path.join(root, 'khafile.js')
+        if not os.path.isfile(khafile):
+            return False
+        with open(khafile, encoding='utf-8') as f:
+            for pattern in re.findall(r'project\.addShaders\(\s*["\']([^"\']+)["\']', f.read()):
+                sources.extend(glob.glob(os.path.join(root, pattern), recursive=True))
+        return True
+
+    add_khafile_shaders(fp)
+    with open(kha_hxml, encoding='utf-8') as f:
+        for path in re.findall(r'^-cp\s+(.+?)\s*$', f.read(), re.M):
+            path = path.rstrip('/\\')
+            if os.path.basename(path) == 'Sources':
+                sources.extend(glob.glob(os.path.join(path, 'Shaders', '**', '*.glsl'), recursive=True))
+                add_khafile_shaders(os.path.dirname(path))
+    names = set()
+    for path in sources:
+        name = os.path.basename(path)
+        if name.endswith('.glsl'):
+            names.add(re.sub(r'[.-]', '_', name[:-len('.glsl')]))
+    return names
+
+
+def _haxe_done(code: int):
+    if code != 0:
+        log.error('N64: Haxe build failed (see the errors above)')
+        _finish(False)
+        return
+    state.proc_build = None
+    try:
+        from arm.n64.exporter import N64Exporter
+        if _request.is_play:
+            success = N64Exporter.play_project()
+        elif _request.is_publish:
+            success = N64Exporter.publish_project()
+        else:
+            success = N64Exporter.export_project()
+        if success and not _request.is_play and n64_utils.get_open_n64_rom_directory():
+            arm.utils.open_folder(os.path.abspath(os.path.join(arm.utils.build_dir(), 'n64')))
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        success = False
+    _finish(success)
