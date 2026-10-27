@@ -3,6 +3,10 @@
 #include <t3d/t3dmodel.h>
 
 #include "models.h"
+#include "../engine.h"
+#if ENGINE_ENABLE_AUDIO
+#include "../audio/audio.h"
+#endif
 
 static const char *MODEL_PATHS[MODEL_COUNT] = {{
 {mesh_paths}
@@ -54,6 +58,10 @@ T3DModel *models_get(ModelId id)
 
     ModelEntry *e = &g_models[id];
     if (!e->loaded) {{
+#if ENGINE_ENABLE_AUDIO
+        // Keep audio fed between loads (outside any rspq block: the mixer uses the RSP)
+        arm_audio_mixer_poll();
+#endif
         const char *path = MODEL_PATHS[id];
         e->model = t3d_model_load(path);
         if (!e->model) {{

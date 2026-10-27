@@ -94,6 +94,11 @@ int main(void)
             tween_clear_all();
             // Wait for RSP to finish before freeing display lists
             rspq_wait();
+#if ENGINE_ENABLE_AUDIO
+            // A scene switch takes many frames' time: keep audio fed between its steps
+            // (model loads feed it too)
+            arm_audio_mixer_poll();
+#endif
             scene_clear(current_scene);
             trait_events_clear();
 #if ENGINE_ENABLE_PHYSICS
@@ -101,10 +106,16 @@ int main(void)
 #endif
             // Free the models the new scene doesn't use (its own stay loaded)
             models_unload_except(scene_models(pending));
+#if ENGINE_ENABLE_AUDIO
+            arm_audio_mixer_poll();
+#endif
             fixed_time = 0.0f;
             current_scene = pending;
 #if ENGINE_ENABLE_UI
             canvas_scene_init(current_scene);  // Clears old labels and loads new canvas
+#endif
+#if ENGINE_ENABLE_AUDIO
+            arm_audio_mixer_poll();
 #endif
             scene_init(current_scene);
             scene = scene_get(current_scene);
