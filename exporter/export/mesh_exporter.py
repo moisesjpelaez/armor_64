@@ -17,7 +17,6 @@ exported again (assets/.mesh_cache.json, see _mesh_key).
 import hashlib
 import json
 import os
-import re
 import sys
 
 import bpy
@@ -524,11 +523,9 @@ DROPPED_EXTRA = 'arm_cached'
 
 
 def _stable_gltf(path):
-    """The same glTF for the same mesh on every export: material names without
-    Blender's .001 suffixes (the local copies of linked materials get them in
-    whatever order they're made), unless two would then share a name; no
-    DROPPED_EXTRA, and no scene extras (they hold every Blender scene's settings,
-    which Fast64 adds to while exporting; tiny3d only reads material extras)."""
+    """The same glTF for the same mesh on every export: no DROPPED_EXTRA, and no
+    scene extras (they hold every Blender scene's settings, which Fast64 adds to
+    while exporting; tiny3d only reads material extras)."""
     with open(path, encoding='utf-8') as f:
         gltf = json.load(f)
     for scene in gltf.get('scenes', []):
@@ -538,11 +535,6 @@ def _stable_gltf(path):
             extras = element.get('extras') if isinstance(element, dict) else None
             if isinstance(extras, dict) and extras.pop(DROPPED_EXTRA, None) is not None and not extras:
                 del element['extras']
-    materials = gltf.get('materials', [])
-    bare = [re.sub(r'\.\d{3}$', '', m.get('name', '')) for m in materials]
-    if len(set(bare)) == len(bare):
-        for material, name in zip(materials, bare):
-            material['name'] = name
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(gltf, f, indent=2, sort_keys=True)
 
