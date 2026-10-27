@@ -89,6 +89,7 @@ class N64Exporter:
         self.external_scene_names = []   # Appended scene names (for cleanup)
         self.external_blend_paths = []   # Source .blend file paths
         self.collection_original_names = {}  # {renamed: original} for Blender dedup renames
+        self.libraries_before = None     # Library names before appending them (None: nothing appended)
 
         self.assets_exported = False
         self.materials_converted = False
@@ -246,7 +247,7 @@ class N64Exporter:
             log.info('Cleaned up linked object temp data')
 
         # Cleanup external blend scenes
-        if self.external_scene_names:
+        if self.libraries_before is not None:
             self._clear_external_blends()
             log.info('Cleaned up external blend data')
 
@@ -317,6 +318,7 @@ class N64Exporter:
             log.warn(f'External blends path not found: {abs_path}')
             return
 
+        self.libraries_before = {lib.name for lib in bpy.data.libraries}
         existing_scenes = set(s.name for s in bpy.data.scenes)
 
         for root, dirs, files in os.walk(abs_path):
@@ -375,13 +377,15 @@ class N64Exporter:
                 except Exception as e:
                     log.error(f'Failed to remove external scene {scene_name}: {e}')
 
-        # Remove orphaned library references from appended data
+        # Remove the libraries the append brought in (the external blends and
+        # the ones they link): left behind empty, they'd be saved in the file,
+        # and Armory's library reload at the next build crashes on them
         for lib in list(bpy.data.libraries):
-            try:
-                if lib.users == 0:
+            if lib.name not in self.libraries_before:
+                try:
                     bpy.data.libraries.remove(lib)
-            except Exception:
-                pass
+                except Exception as e:
+                    log.error(f'Failed to remove library {lib.name}: {e}')
 
         try:
             bpy.ops.outliner.orphans_purge(
@@ -394,6 +398,7 @@ class N64Exporter:
 
         self.external_scene_names = []
         self.external_blend_paths = []
+        self.libraries_before = None
 
     # -------------------------------------------------------------------------
     # Material Conversion

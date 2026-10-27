@@ -511,7 +511,7 @@ def get_open_n64_rom_directory() -> bool:
 
 
 def get_n64_compilation_server_port() -> int:
-    return _preference('n64_compilation_server_port', 6464)
+    return _preference('n64_compilation_server_port', 7002)
 
 
 def get_n64_runtime_path() -> str:
