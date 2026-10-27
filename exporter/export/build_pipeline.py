@@ -10,7 +10,8 @@ this computer, the game as C++, a Visual Studio project):
      (--nohaxe --noshaders --noproject: a fraction of a second when warm)
   2. armor_64 completes the asset list with the shaders as named, empty
      placeholders (Kha builds kha.Shaders from it) and copies Koui's themes
-  3. Haxe runs directly, with --no-output
+  3. Haxe runs directly, with --no-output; meanwhile the meshes are exported
+     (they only need the .blend), and the rest of the export follows Haxe
 """
 
 import glob
@@ -20,6 +21,7 @@ import re
 import shutil
 import subprocess
 import threading
+import traceback
 from typing import Callable, Optional
 
 import bpy
@@ -35,6 +37,7 @@ OUTPUT = 'n64haxe'
 
 _request = None
 _done: Optional[Callable[[bool], None]] = None
+_exporter = None  # N64Exporter of the running build (None once its asset export failed)
 
 
 def start(request, done: Callable[[bool], None]):
@@ -56,13 +59,17 @@ def clean():
         shutil.rmtree(n64_dir, onerror=lambda f, p, e: (os.chmod(p, 0o777), f(p)))
 
 
-def _run(cmd, then: Callable[[int], None]):
+def _run(cmd, then: Callable[[int], None], meanwhile: Optional[Callable[[], bool]] = None):
     """Run a process like Armory's make.run_proc() (a thread waits for it, then
     `then` runs on Blender's main thread; in background mode it blocks), passing
-    its exit code. It's the build's process meanwhile, so Stop ends it."""
+    its exit code. It's the build's process meanwhile, so Stop ends it.
+    `meanwhile` runs on the main thread while the process does; if it returns
+    False, the process is stopped."""
     print(*cmd)
     proc = subprocess.Popen(cmd)
     state.proc_build = proc
+    if meanwhile is not None and not meanwhile():
+        proc.terminate()
 
     def finished():
         then(proc.returncode)
@@ -84,6 +91,7 @@ def _finish(success: bool):
 
 
 def _setup_done(code: int):
+    global _exporter
     if code != 0:
         log.error('khamake failed')
         _finish(False)
@@ -94,7 +102,23 @@ def _setup_done(code: int):
         log.error(f'N64: could not prepare the Haxe build: {e}')
         _finish(False)
         return
-    _run([arm.utils.get_haxe_path(), '--cwd', os.path.dirname(hxml), os.path.basename(hxml)], _haxe_done)
+    from arm.n64.exporter import N64Exporter
+    _exporter = N64Exporter()
+    _run([arm.utils.get_haxe_path(), '--cwd', os.path.dirname(hxml), os.path.basename(hxml)], _haxe_done,
+         meanwhile=_export_assets)
+
+
+def _export_assets() -> bool:
+    """The meshes (and what they need), exported while Haxe compiles."""
+    global _exporter
+    try:
+        _exporter.export_assets()
+        return True
+    except Exception:
+        traceback.print_exc()
+        log.error('N64: the mesh export failed (see the errors above)')
+        _exporter = None
+        return False
 
 
 def _prepare_haxe() -> str:
@@ -174,23 +198,27 @@ def _shader_names(fp: str, kha_hxml: str) -> set:
 
 
 def _haxe_done(code: int):
+    exporter = _exporter
+    if exporter is None:  # the mesh export failed (and stopped Haxe)
+        _finish(False)
+        return
     if code != 0:
+        exporter.cleanup()
         log.error('N64: Haxe build failed (see the errors above)')
         _finish(False)
         return
     state.proc_build = None
     try:
-        from arm.n64.exporter import N64Exporter
         if _request.is_play:
-            success = N64Exporter.play_project()
+            success = exporter.play()
         elif _request.is_publish:
-            success = N64Exporter.publish_project()
+            success = exporter.publish()
         else:
-            success = N64Exporter.export_project()
+            exporter.export()
+            success = True
         if success and not _request.is_play and n64_utils.get_open_n64_rom_directory():
             arm.utils.open_folder(os.path.abspath(os.path.join(arm.utils.build_dir(), 'n64')))
     except Exception:
-        import traceback
         traceback.print_exc()
         success = False
     _finish(success)

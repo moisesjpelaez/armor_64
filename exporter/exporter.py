@@ -90,28 +90,7 @@ class N64Exporter:
         self.external_blend_paths = []   # Source .blend file paths
         self.collection_original_names = {}  # {renamed: original} for Blender dedup renames
 
-    # -------------------------------------------------------------------------
-    # Class Methods (Entry Points)
-    # -------------------------------------------------------------------------
-
-    @classmethod
-    def export_project(cls) -> bool:
-        """Export project without building."""
-        exporter = cls()
-        exporter.export()
-        return True
-
-    @classmethod
-    def publish_project(cls) -> bool:
-        """Export and build project to ROM."""
-        exporter = cls()
-        return exporter.publish()
-
-    @classmethod
-    def play_project(cls) -> bool:
-        """Export, build, and run in emulator."""
-        exporter = cls()
-        return exporter.play()
+        self.assets_exported = False
 
     # -------------------------------------------------------------------------
     # Main Export Pipeline
@@ -119,12 +98,15 @@ class N64Exporter:
 
     def export(self):
         """Run the complete export pipeline."""
-        log.info('Starting N64 export...')
+        if not self.assets_exported:
+            self.export_assets()
+        self.export_code()
 
-        # Load trait metadata from Haxe macro output
-        self.trait_info = codegen.get_trait_info()
-        if not self.trait_info.get('traits'):
-            log.warn("No traits found in n64_traits.json. Make sure arm_target_n64 is defined during build.")
+    def export_assets(self):
+        """The part that only needs the .blend, not Haxe's output (the build runs
+        it while Haxe compiles). Leaves the scene prepared for export_code(), or
+        cleaned up if it fails."""
+        log.info('Starting N64 export...')
 
         # Load external blend scenes (append with suffix naming)
         self._load_external_blends()
@@ -141,7 +123,20 @@ class N64Exporter:
 
             # Phase 2: Export meshes to GLTF/T3D
             mesh_exporter.export_meshes(self)
+        except Exception:
+            self.cleanup()
+            raise
+        self.assets_exported = True
 
+    def export_code(self):
+        """The rest of the export, from Haxe's output (IR) and the prepared scene;
+        cleans up the scene at the end."""
+        # Load trait metadata from Haxe macro output
+        self.trait_info = codegen.get_trait_info()
+        if not self.trait_info.get('traits'):
+            log.warn("No traits found in n64_traits.json. Make sure arm_target_n64 is defined during build.")
+
+        try:
             # Phase 3: Build scene data (sets has_physics flag)
             for scene in bpy.data.scenes:
                 if scene.library:
@@ -230,21 +225,25 @@ class N64Exporter:
             self._write_tween()
             self._write_containers()
 
-            # Phase 14: Cleanup materials
-            self._reset_materials_to_bsdf()
-
         finally:
-            # Phase 15: Cleanup linked object temp data (always runs)
-            if self.linked_objects:
-                linked_export.cleanup_linked_export()
-                log.info('Cleaned up linked object temp data')
-
-            # Cleanup external blend scenes
-            if self.external_scene_names:
-                self._clear_external_blends()
-                log.info('Cleaned up external blend data')
+            self.cleanup()
 
         log.info('N64 export completed.')
+
+    def cleanup(self):
+        """Undo export_assets()'s changes to the .blend (also after a failed build)."""
+        # Phase 14: Cleanup materials
+        self._reset_materials_to_bsdf()
+
+        # Phase 15: Cleanup linked object temp data
+        if self.linked_objects:
+            linked_export.cleanup_linked_export()
+            log.info('Cleaned up linked object temp data')
+
+        # Cleanup external blend scenes
+        if self.external_scene_names:
+            self._clear_external_blends()
+            log.info('Cleaned up external blend data')
 
     def publish(self):
         """Export and build the project."""
