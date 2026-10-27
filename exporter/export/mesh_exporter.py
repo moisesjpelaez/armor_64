@@ -11,7 +11,10 @@ and debuggability. For skinned meshes, additional export options are set:
   - Both mesh AND armature objects are selected for export
 """
 
+import json
 import os
+import re
+
 import bpy
 
 import arm.utils
@@ -264,9 +267,16 @@ def _export_mesh_to_gltf(obj, output_path, armature=None):
         armature.select_set(True)
         view_layer.objects.active = armature
 
+    # Exported to a staging folder, then only the files whose content changed
+    # replace those in assets/ (make converts a model again only when it changed)
+    staging = os.path.join(os.path.dirname(output_path), '.export')
+    os.makedirs(staging, exist_ok=True)
+    for old in os.listdir(staging):
+        os.remove(os.path.join(staging, old))
+
     # --- Same settings as manual export ---
     bpy.ops.export_scene.gltf(
-        filepath=output_path,
+        filepath=os.path.join(staging, os.path.basename(output_path)),
         export_format='GLTF_SEPARATE',
         use_selection=True,
         export_yup=True,
@@ -278,6 +288,12 @@ def _export_mesh_to_gltf(obj, output_path, armature=None):
         export_def_bones=is_skinned,     # only deform bones (skip IK helpers)
         export_animation_mode='ACTIONS',
     )
+    for file in os.listdir(staging):
+        staged = os.path.join(staging, file)
+        if file.endswith('.gltf'):
+            _stable_gltf(staged)
+        n64_utils.copy_if_changed(staged, os.path.join(os.path.dirname(output_path), file))
+        os.remove(staged)
 
     # Restore transforms and parent
     obj.location, obj.rotation_euler, obj.scale = orig
@@ -302,6 +318,21 @@ def _export_mesh_to_gltf(obj, output_path, armature=None):
     # Restore stashed/cleaned actions
     if restore_actions:
         restore_actions()
+
+
+def _stable_gltf(path):
+    """The same glTF for the same mesh on every export: material names without
+    Blender's .001 suffixes (the local copies of linked materials get them in
+    whatever order they're made), unless two would then share a name."""
+    with open(path, encoding='utf-8') as f:
+        gltf = json.load(f)
+    materials = gltf.get('materials', [])
+    bare = [re.sub(r'\.\d{3}$', '', m.get('name', '')) for m in materials]
+    if len(set(bare)) == len(bare):
+        for material, name in zip(materials, bare):
+            material['name'] = name
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(gltf, f, indent=2, sort_keys=True)
 
 
 def export_meshes(exporter):

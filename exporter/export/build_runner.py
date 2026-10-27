@@ -119,8 +119,7 @@ def write_makefile(exporter):
         audio_rules=audio_rules
     )
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def _tiny3d_relpath():

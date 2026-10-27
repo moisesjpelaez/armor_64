@@ -27,8 +27,7 @@ def write_types(exporter):
     debug_hud_define = '\n#define ARM_DEBUG_HUD' if wrd and wrd.arm_debug_console else ''
     output = tmpl_content.format(debug_hud_define=debug_hud_define)
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_limits(exporter):
@@ -41,14 +40,12 @@ def write_limits(exporter):
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl_content = f.read()
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(tmpl_content.format(**limits.header_data(exporter.limits)))
+    n64_utils.write_if_changed(out_path, tmpl_content.format(**limits.header_data(exporter.limits)))
 
     # The report: completed with the RAM once the game is built (build_runner)
     report_path = os.path.join(arm.utils.build_dir(), 'n64', 'limits.txt')
-    with open(report_path, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(['N64 engine limits (exporter/codegen/limits.py)', '']
-                          + limits.report_lines(exporter.limits, exporter.limit_notes)) + '\n')
+    n64_utils.write_if_changed(report_path, '\n'.join(['N64 engine limits (exporter/codegen/limits.py)', '']
+                               + limits.report_lines(exporter.limits, exporter.limit_notes)) + '\n')
 
 
 def write_traits(exporter):
@@ -69,8 +66,7 @@ def write_traits(exporter):
     # Payload structs and static signals, included through system/signal.h
     signals = codegen.signals_context()
     signals_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'signals.h')
-    with open(signals_path, 'w', encoding='utf-8') as f:
-        f.write(signals.header())
+    n64_utils.write_if_changed(signals_path, signals.header())
 
     # Write files
     if template_data is None:
@@ -92,8 +88,7 @@ def _write_traits_h(template_data: dict):
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         template = f.read()
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(template.format(**template_data))
+    n64_utils.write_if_changed(out_path, template.format(**template_data))
 
 
 def _write_traits_c(template_data: dict):
@@ -104,23 +99,20 @@ def _write_traits_c(template_data: dict):
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         template = f.read()
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(template.format(**template_data))
+    n64_utils.write_if_changed(out_path, template.format(**template_data))
 
 
 def _write_traits_h_empty():
     """Generate empty traits.h stub."""
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'traits.h')
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write("// Auto-generated empty traits header\n#ifndef _TRAITS_H_\n#define _TRAITS_H_\n#endif\n")
+    n64_utils.write_if_changed(out_path, "// Auto-generated empty traits header\n#ifndef _TRAITS_H_\n#define _TRAITS_H_\n#endif\n")
 
 
 def _write_traits_c_empty(signals):
     """Generate traits.c without traits: still defines the static signals."""
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'traits.c')
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write("// Auto-generated traits implementation (no traits)\n#include \"traits.h\"\n\n")
-        f.write(signals.static_definitions() + "\n")
+    n64_utils.write_if_changed(out_path, "// Auto-generated traits implementation (no traits)\n#include \"traits.h\"\n\n"
+                               + signals.static_definitions() + "\n")
 
 
 def _collect_type_overrides(exporter) -> dict:
@@ -206,8 +198,7 @@ def _write_autoload_h(c_name: str, template_data: dict):
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         template = f.read()
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(template.format(**template_data))
+    n64_utils.write_if_changed(out_path, template.format(**template_data))
 
 
 def _write_autoload_c(c_name: str, template_data: dict):
@@ -218,8 +209,7 @@ def _write_autoload_c(c_name: str, template_data: dict):
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         template = f.read()
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(template.format(**template_data))
+    n64_utils.write_if_changed(out_path, template.format(**template_data))
 
 
 def _write_autoloads_h(template_data: dict):
@@ -230,8 +220,7 @@ def _write_autoloads_h(template_data: dict):
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         template = f.read()
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(template.format(**template_data))
+    n64_utils.write_if_changed(out_path, template.format(**template_data))
 
 
 def write_engine(exporter):
@@ -261,5 +250,4 @@ def write_engine(exporter):
         enable_audio=1 if exporter.has_audio else 0
     )
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)

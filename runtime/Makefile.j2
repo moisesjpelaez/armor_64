@@ -9,6 +9,8 @@ GAME_TITLE := {game_title}
 ROM_NAME := {game_title}
 
 N64_CFLAGS += -std=gnu2x
+# A rule for each header in the .d files: a removed or renamed header doesn't stop the build
+N64_CFLAGS += -MP
 
 src = \
     src/main.c \
@@ -97,6 +99,7 @@ build_lib:
 	make -C $(T3D_INST)
 	make all
 
--include $(wildcard $(BUILD_DIR)/*.d)
+# Every object's header dependencies (written next to it, also in subfolders)
+-include $(src:%.c=$(BUILD_DIR)/%.d)
 
 .PHONY: all clean

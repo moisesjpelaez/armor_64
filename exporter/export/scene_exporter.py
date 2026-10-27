@@ -772,8 +772,7 @@ def write_scene_c(exporter, scene):
         scene_traits_block=codegen.generate_scene_traits_block(scene_traits, exporter.trait_info, scene_name)
     )
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_scenes_c(exporter):
@@ -847,8 +846,7 @@ def write_scenes_c(exporter):
         scene_group_lookup=scene_group_lookup
     )
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_scenes_h(exporter):
@@ -884,8 +882,7 @@ def write_scenes_h(exporter):
         scene_count=scene_count
     )
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_main(exporter):
@@ -920,8 +917,7 @@ def write_main(exporter):
         autoloads_init=autoloads_init
     )
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_models(exporter):
@@ -934,6 +930,13 @@ def write_models(exporter):
     write_models_h(exporter)
 
 
+def _model_names(exporter) -> list:
+    """The exported models, in a stable order (by name): models.c and models.h
+    don't change between exports of the same scenes, so make doesn't rebuild
+    what includes them."""
+    return sorted(exporter.exported_meshes.values())
+
+
 def write_models_c(exporter):
     """Generate models.c from template."""
     tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'data', 'models.c.j2')
@@ -943,7 +946,7 @@ def write_models_c(exporter):
         tmpl_content = f.read()
 
     lines = []
-    for model_name in exporter.exported_meshes.values():
+    for model_name in _model_names(exporter):
         lines.append(f'    "rom:/{model_name}.t3dm"')
     mesh_paths = ',\n'.join(lines)
 
@@ -952,8 +955,7 @@ def write_models_c(exporter):
         model_count=len(exporter.exported_meshes)
     )
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_models_h(exporter):
@@ -965,7 +967,7 @@ def write_models_h(exporter):
         tmpl_content = f.read()
 
     lines = []
-    for i, model_name in enumerate(exporter.exported_meshes.values()):
+    for i, model_name in enumerate(_model_names(exporter)):
         lines.append(f'    MODEL_{model_name.upper()} = {i},')
     model_enum_entries = '\n'.join(lines)
 
@@ -974,5 +976,4 @@ def write_models_h(exporter):
         model_count=len(exporter.exported_meshes)
     )
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)

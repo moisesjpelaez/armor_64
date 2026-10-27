@@ -58,7 +58,7 @@ def scan_and_copy_audio(exporter):
         is_music = 'music' in rel_path
 
         if not os.path.exists(dst_path):
-            shutil.copy(src_path, dst_path)
+            n64_utils.copy_if_changed(src_path, dst_path)
             log.info(f'Copied audio: {safe_name} (music={is_music})')
 
         # Store audio info (without extension, as audioconv64 changes it)
@@ -86,8 +86,7 @@ def write_audio_config(exporter):
         tmpl_content = f.read()
 
     data = audio_codegen.audio_config_data(audio_codegen.load_audio_json())
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(tmpl_content.format(**data))
+    n64_utils.write_if_changed(out_path, tmpl_content.format(**data))
 
 
 def generate_audio_makefile_entries(exported_audio):

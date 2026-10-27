@@ -67,7 +67,8 @@ def detect_ui_canvas(exporter):
     # Parse Koui theme files for style information
     _parse_koui_themes(exporter)
 
-    for canvas_name in referenced_canvases:
+    # Sorted: the generated UI files must not change between exports (make)
+    for canvas_name in sorted(referenced_canvases):
         json_path = os.path.join(bundled_dir, f'{canvas_name}.json')
         if not os.path.exists(json_path):
             log.warn(f'UI Canvas "{canvas_name}" not found at {json_path}')
@@ -910,7 +911,7 @@ def copy_canvas_images(exporter):
                     image_index[basename.lower()] = os.path.join(root, f)
 
     copied_count = 0
-    for image_name in exporter.ui_images:
+    for image_name in sorted(exporter.ui_images):
         # Try exact match first, then lowercase
         png_path = image_index.get(image_name) or image_index.get(image_name.lower())
 
@@ -920,7 +921,7 @@ def copy_canvas_images(exporter):
             dst_path = os.path.join(n64_assets, f'{safe_name}.png')
 
             if not os.path.exists(dst_path):
-                shutil.copy(png_path, dst_path)
+                n64_utils.copy_if_changed(png_path, dst_path)
                 log.info(f'Copied canvas image: {safe_name}.png')
                 copied_count += 1
         else:
@@ -968,8 +969,7 @@ def write_label_h(exporter):
         max_labels=exporter.limits['UI_MAX_LABELS'],
         max_label_text_size=exporter.limits['UI_LABEL_TEXT_SIZE'],
     )
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_label_c(exporter):
@@ -1021,8 +1021,7 @@ def write_label_c(exporter):
         canvas_label_arrays='\n'.join(canvas_label_arrays) if canvas_label_arrays else '// No labels defined',
         label_scene_init_cases='\n'.join(label_scene_init_cases),
     )
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_image_h(exporter):
@@ -1060,8 +1059,7 @@ def write_image_h(exporter):
         image_count=total_image_count,
         max_images=exporter.limits['UI_MAX_IMAGES'],
     )
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_image_c(exporter):
@@ -1110,8 +1108,7 @@ def write_image_c(exporter):
         canvas_image_arrays='\n'.join(canvas_image_arrays) if canvas_image_arrays else '// No images defined',
         image_scene_init_cases='\n'.join(image_scene_init_cases),
     )
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_button_h(exporter):
@@ -1151,8 +1148,7 @@ def write_button_h(exporter):
         max_buttons=exporter.limits['UI_MAX_BUTTONS'],
         button_text_size=exporter.limits['UI_BUTTON_TEXT_SIZE'],
     )
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_button_c(exporter):
@@ -1224,8 +1220,7 @@ def write_button_c(exporter):
         canvas_button_arrays='\n'.join(canvas_button_arrays) if canvas_button_arrays else '// No buttons defined',
         button_scene_init_cases='\n'.join(button_scene_init_cases),
     )
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_panel_h(exporter):
@@ -1263,8 +1258,7 @@ def write_panel_h(exporter):
         panel_count=total_panel_count,
         max_panels=exporter.limits['UI_MAX_PANELS'],
     )
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_panel_c(exporter):
@@ -1314,8 +1308,7 @@ def write_panel_c(exporter):
         canvas_panel_arrays='\n'.join(canvas_panel_arrays) if canvas_panel_arrays else '// No panels defined',
         panel_scene_init_cases='\n'.join(panel_scene_init_cases),
     )
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_canvas_h(exporter):
@@ -1380,8 +1373,7 @@ def write_canvas_h(exporter):
         ui_scene_count=max_ui_scene_count,
     )
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_canvas_c(exporter):
@@ -1527,8 +1519,7 @@ def write_canvas_c(exporter):
         font_style_registration='\n'.join(style_registration_lines) if style_registration_lines else '    // No custom styles defined'
     )
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_fonts(exporter):
@@ -1580,7 +1571,7 @@ def write_fonts(exporter):
         if base_font_path:
             dst = os.path.join(n64_assets, f'{font_key}.ttf')
             if not os.path.exists(dst):
-                shutil.copy(base_font_path, dst)
+                n64_utils.copy_if_changed(base_font_path, dst)
                 log.info(f'Copied font: {font_key}.ttf (size {size})')
 
         exporter.exported_fonts[font_key] = {
@@ -1616,8 +1607,7 @@ def write_fonts_c(exporter):
         font_count=len(exporter.exported_fonts)
     )
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def write_fonts_h(exporter):
@@ -1640,8 +1630,7 @@ def write_fonts_h(exporter):
         font_count=len(exporter.exported_fonts)
     )
 
-    with open(out_path, 'w', encoding='utf-8') as f:
-        f.write(output)
+    n64_utils.write_if_changed(out_path, output)
 
 
 def _assign_font_ids_to_labels(exporter):
@@ -1713,7 +1702,7 @@ def generate_ui_sprite_rules(exporter):
         return '# No UI sprites'
 
     rules = []
-    for image_name in exporter.ui_images:
+    for image_name in sorted(exporter.ui_images):
         safe_name = image_name.lower().replace(' ', '_')
         rules.append(
             f'filesystem/{safe_name}.sprite: MKSPRITE_FLAGS=--format RGBA32'

@@ -46,7 +46,9 @@ def _collect_linked_instance_collections():
                 coll = obj.instance_collection
                 if any(cobj.library for cobj in coll.all_objects):
                     collections.add(coll)
-    return list(collections)
+    # A set of IDs iterates in memory order (different each run): sort, so the same
+    # copies of meshes and materials get the same names and are exported every time
+    return sorted(collections, key=lambda c: (c.library.filepath if c.library else '', c.name))
 
 
 def prepare_linked_for_export():

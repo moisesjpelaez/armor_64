@@ -1,5 +1,6 @@
 """N64 Utilities"""
 
+import filecmp
 import os
 import shutil
 from typing import List, Optional
@@ -57,16 +58,18 @@ def get_physics_debug_mode() -> int:
 def copy_src(name, path=''):
     tmpl_path = os.path.join(get_n64_runtime_path(), path, name)
     out_path = os.path.join(arm.utils.build_dir(), 'n64', path, name)
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    shutil.copyfile(tmpl_path, out_path)
+    copy_if_changed(tmpl_path, out_path)
 
 def copy_dir(name, path=''):
+    """A runtime folder into the build, file by file, only those that changed
+    (.j2 templates are rendered by the exporters)."""
     tmpl_path = os.path.join(get_n64_runtime_path(), path, name)
     out_path = os.path.join(arm.utils.build_dir(), 'n64', path, name)
-    if os.path.exists(out_path):
-        shutil.rmtree(out_path)
-    # Skip .j2 template files - they are rendered separately by exporters
-    shutil.copytree(tmpl_path, out_path, ignore=shutil.ignore_patterns('*.j2'))
+    for folder, _, files in os.walk(tmpl_path):
+        for file in files:
+            if not file.endswith('.j2'):
+                src = os.path.join(folder, file)
+                copy_if_changed(src, os.path.join(out_path, os.path.relpath(src, tmpl_path)))
 
 
 # =============================================================================
@@ -449,13 +452,24 @@ def write_if_changed(path: str, text: str) -> bool:
     its modification time, so make doesn't rebuild what depends on it).
     Returns whether it was written."""
     try:
-        with open(path, encoding='utf-8', newline='') as f:
+        with open(path, encoding='utf-8') as f:
             if f.read() == text:
                 return False
     except OSError:
         pass
-    with open(path, 'w', encoding='utf-8', newline='') as f:
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    with open(path, 'w', encoding='utf-8') as f:
         f.write(text)
+    return True
+
+
+def copy_if_changed(src: str, dst: str) -> bool:
+    """Copy a file only if the destination's content differs (see
+    write_if_changed). Returns whether it was copied."""
+    if os.path.isfile(dst) and filecmp.cmp(src, dst, shallow=False):
+        return False
+    os.makedirs(os.path.dirname(dst) or '.', exist_ok=True)
+    shutil.copyfile(src, dst)
     return True
 
 
