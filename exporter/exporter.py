@@ -91,6 +91,8 @@ class N64Exporter:
         self.collection_original_names = {}  # {renamed: original} for Blender dedup renames
 
         self.assets_exported = False
+        self.materials_converted = False
+        self.mesh_plan = {}  # glTF file -> {key, entry} (mesh_exporter.plan_meshes)
 
     # -------------------------------------------------------------------------
     # Main Export Pipeline
@@ -117,9 +119,11 @@ class N64Exporter:
             log.info(f'Prepared {len(self.linked_objects)} linked object(s) for export')
 
         try:
-            # Phase 1: Prepare materials and directories
-            self._convert_materials_to_f3d()
+            # Phase 1: Directories, and the F3D materials if a mesh changed
             self._make_directories()
+            if mesh_exporter.plan_meshes(self):
+                self.materials_converted = True
+                self._convert_materials_to_f3d()
 
             # Phase 2: Export meshes to GLTF/T3D
             mesh_exporter.export_meshes(self)
@@ -233,7 +237,8 @@ class N64Exporter:
     def cleanup(self):
         """Undo export_assets()'s changes to the .blend (also after a failed build)."""
         # Phase 14: Cleanup materials
-        self._reset_materials_to_bsdf()
+        if self.materials_converted:
+            self._reset_materials_to_bsdf()
 
         # Phase 15: Cleanup linked object temp data
         if self.linked_objects:

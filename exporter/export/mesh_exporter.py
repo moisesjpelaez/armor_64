@@ -11,7 +11,8 @@ and debuggability. For skinned meshes, additional export options are set:
   - Both mesh AND armature objects are selected for export
 
 A mesh whose export inputs didn't change since the last export isn't
-exported again (assets/.mesh_cache.json, see _mesh_key).
+exported again (assets/.mesh_cache.json, see _mesh_key); when none changed,
+the materials aren't even converted to F3D (plan_meshes).
 """
 
 import hashlib
@@ -218,12 +219,11 @@ def _collect_all_objects(scene):
     return objects
 
 
-def _export_mesh_to_gltf(obj, output_path, cache, armature=None) -> bool:
-    """Export a mesh to GLTF_SEPARATE format.
+def _export_mesh_to_gltf(obj, output_path, armature=None) -> list:
+    """Export a mesh to GLTF_SEPARATE format; returns the files written.
 
     Replicates the same settings as a manual File > Export > glTF 2.0.
     If armature is provided, includes skin/animation data.
-    Returns False when the cache had it (the files from last time are kept).
     """
     is_skinned = armature is not None
     view_layer = bpy.context.view_layer
@@ -273,20 +273,7 @@ def _export_mesh_to_gltf(obj, output_path, cache, armature=None) -> bool:
         armature.select_set(True)
         view_layer.objects.active = armature
 
-    # Skinned meshes are always exported (their animations aren't in the key)
-    assets_dir = os.path.dirname(output_path)
-    name = os.path.basename(output_path)
-    _settle_scene(cache)
-    key = None if armature else _mesh_key(obj)
-    entry = cache['old'].get(name)
-    exported = not (key is not None and entry and entry['key'] == key
-                    and all(os.path.isfile(os.path.join(assets_dir, f)) for f in entry['files']))
-    if exported:
-        files = _gltf_export(output_path, is_skinned)
-        if key is not None:
-            cache['new'][name] = {'key': key, 'files': files}
-    else:
-        cache['new'][name] = entry
+    files = _gltf_export(output_path, is_skinned)
 
     # Restore transforms and parent
     obj.location, obj.rotation_euler, obj.scale = orig
@@ -311,7 +298,7 @@ def _export_mesh_to_gltf(obj, output_path, cache, armature=None) -> bool:
     # Restore stashed/cleaned actions
     if restore_actions:
         restore_actions()
-    return exported
+    return files
 
 
 def _gltf_export(output_path, is_skinned):
@@ -347,10 +334,11 @@ def _gltf_export(output_path, is_skinned):
     return files
 
 
-def _mesh_key(obj):
-    """Hash of everything the glTF export of `obj` reads (as prepared for it:
-    at the origin, alone and selected), or None if something can't be hashed
-    (then it's exported). The same key means the same glTF files."""
+def _mesh_key(obj, conversion_scene):
+    """Hash of everything the glTF export of `obj` depends on, read before the
+    F3D conversion and the export's preparation (both are functions of it), or
+    None if something can't be hashed (then it's exported). The same key means
+    the same glTF files."""
     from io_scene_gltf2.blender.com import extras
 
     def generate_extras(element):  # As written in the glTF (_stable_gltf)
@@ -359,18 +347,28 @@ def _mesh_key(obj):
             values.pop(DROPPED_EXTRA, None)
         return values
 
+    def scene_info(scene):  # Not written (_stable_gltf), but Fast64's settings there change the output
+        return [scene.name, _without_empty(generate_extras(scene)),
+                _without_empty(generate_extras(scene.world)) if scene.world else None]
+
+    def material_info(material):
+        return [material.name, generate_extras(material), _rna_values(material, {DROPPED_EXTRA}),
+                _tree_info(material.node_tree)]
+
     try:
+        if obj.constraints:
+            raise ValueError('constraints')
         h = hashlib.sha1()
         h.update(_KEY_SALT.encode())
-        scene = bpy.context.scene
-        materials = [slot.material for slot in obj.material_slots]
+        parent = obj.parent
         info = {
-            'object': [obj.name, [list(row) for row in obj.matrix_world], generate_extras(obj)],
+            # Exported at the origin: only the parent's transform is left
+            'object': [obj.name, obj.hide_viewport, generate_extras(obj), None if parent is None else [
+                obj.parent_type, obj.parent_bone, parent.name, parent.matrix_world, obj.matrix_parent_inverse]],
             'mesh': [obj.data.name, generate_extras(obj.data)],
-            # Not written (_stable_gltf), but Fast64's settings there change the output
-            'scene': [_without_empty(generate_extras(scene)), _without_empty(generate_extras(scene.world))],
-            'materials': [None if m is None else [m.name, generate_extras(m), _rna_values(m), _node_images(m)]
-                          for m in materials],
+            'scene': [scene_info(bpy.context.scene), scene_info(conversion_scene)],
+            'materials': [None if slot.material is None else material_info(slot.material)
+                          for slot in obj.material_slots],
         }
         h.update(json.dumps(info, sort_keys=True, default=_key_value).encode())
         evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
@@ -424,21 +422,49 @@ def _without_empty(value):
     return value
 
 
-def _rna_values(struct):
+def _rna_values(struct, skip=()):
     """The settable non-pointer RNA values of `struct` (blend mode, culling...)."""
     values = {}
     for prop in struct.bl_rna.properties:
-        if prop.is_readonly or prop.type in ('POINTER', 'COLLECTION'):
+        if prop.is_readonly or prop.type in ('POINTER', 'COLLECTION') or prop.identifier in skip:
             continue
-        value = getattr(struct, prop.identifier)
-        values[prop.identifier] = list(value) if hasattr(value, '__len__') and not isinstance(value, str) else value
+        values[prop.identifier] = _plain(getattr(struct, prop.identifier))
     return values
 
 
-def _node_images(material):
-    if not material.node_tree:
-        return []
-    return [node.image for node in material.node_tree.nodes if getattr(node, 'image', None) is not None]
+def _plain(value):
+    """Arrays (colors, vectors...) as lists."""
+    return list(value) if hasattr(value, '__len__') and not isinstance(value, str) else value
+
+
+# Node settings that only change how the node editor shows it
+_NODE_UI = {'location', 'location_absolute', 'width', 'height', 'select', 'hide', 'show_options',
+            'show_preview', 'show_texture', 'color', 'use_custom_color', 'label', 'warning_propagation'}
+
+
+def _tree_info(tree):
+    """A node tree as the F3D conversion and the export read it: each node's
+    settings, input values, images, textures settings and groups, and the links."""
+    if tree is None:
+        return None
+    nodes = []
+    for node in sorted(tree.nodes, key=lambda n: n.name):
+        pointers = {}
+        for prop in node.bl_rna.properties:
+            if prop.type != 'POINTER' or prop.identifier == 'rna_type':
+                continue
+            value = getattr(node, prop.identifier)
+            if isinstance(value, bpy.types.NodeTree):
+                pointers[prop.identifier] = [value.name, _tree_info(value)]
+            elif isinstance(value, bpy.types.Node):
+                pointers[prop.identifier] = value.name
+            elif value is not None:  # An ID (image...) or settings (texture mapping, image user...)
+                pointers[prop.identifier] = value if isinstance(value, bpy.types.ID) else _rna_values(value)
+        inputs = [[socket.identifier, _plain(getattr(socket, 'default_value', None))] for socket in node.inputs]
+        nodes.append([node.bl_idname, node.name, _rna_values(node, _NODE_UI), pointers, inputs])
+    links = sorted([link.from_node.name, link.from_socket.identifier, link.to_node.name,
+                    link.to_socket.identifier, link.is_muted] for link in tree.links)
+    return [nodes, links]
 
 
 def _key_value(value):
@@ -448,7 +474,7 @@ def _key_value(value):
         if isinstance(value, bpy.types.Image):
             path = bpy.path.abspath(value.filepath, library=value.library)
             stat = os.stat(path) if os.path.isfile(path) else None
-            result += [value.filepath, value.source, list(value.size),
+            result += [value.filepath, value.source, list(value.size), value.colorspace_settings.name, value.alpha_mode,
                        value.packed_file.size if value.packed_file else None,
                        [stat.st_size, stat.st_mtime_ns] if stat else None]
         return result
@@ -468,21 +494,22 @@ def _addon_version(module_name):
 
 def _key_salt():
     """Changes to what produces the glTF from the same data: Blender, its glTF
-    exporter, Fast64 (its glTF extension writes the materials) and this file."""
+    exporter, Fast64 (converts the materials, its glTF extension writes them)
+    and this file."""
     with open(__file__, 'rb') as f:
         source = hashlib.sha1(f.read()).hexdigest()
     return '|'.join([bpy.app.version_string, _addon_version('io_scene_gltf2'), _addon_version('fast64'), source])
 
 
-def _settle_fast64(cache):
+def _settle_fast64(state):
     """Fast64's glTF export changes what it reads: the first time, it stores
     every F3D property of the materials it writes and adds its settings to the
     scene; each time, it sets up the nodes and render modes of all F3D materials
     for the current scene. A mesh's glTF would then depend on which meshes were
     exported before it (the cache skips some): make the first changes to all of
     them now, and the others when the scene changes (_settle_scene)."""
-    cache['scene'] = None
-    cache['modify_nodes'] = None
+    state['scene'] = None
+    state['modify_nodes'] = None
     try:
         from fast64.fast64_internal.utility import fix_invalid_props
         from fast64.fast64_internal.f3d.glTF.f3d_gltf import is_mat_f3d, modify_f3d_nodes_for_export
@@ -494,16 +521,16 @@ def _settle_fast64(cache):
     for material in bpy.data.materials:
         if is_mat_f3d(material) and not material.library:
             fix_invalid_props(material.f3d_mat)
-    cache['modify_nodes'] = modify_f3d_nodes_for_export
+    state['modify_nodes'] = modify_f3d_nodes_for_export
 
 
-def _settle_scene(cache):
+def _settle_scene(state):
     """The F3D materials as Fast64's export leaves them in the current scene."""
     scene = bpy.context.scene
-    if cache['modify_nodes'] is not None and cache['scene'] != scene:
-        cache['modify_nodes'](False)
-        cache['modify_nodes'](True)
-        cache['scene'] = scene
+    if state['modify_nodes'] is not None and state['scene'] != scene:
+        state['modify_nodes'](False)
+        state['modify_nodes'](True)
+        state['scene'] = scene
 
 
 _KEY_SALT = ''
@@ -539,8 +566,33 @@ def _stable_gltf(path):
         json.dump(gltf, f, indent=2, sort_keys=True)
 
 
+def _assets_dir():
+    return os.path.join(arm.utils.build_dir(), 'n64', 'assets')
+
+
+def plan_meshes(exporter) -> bool:
+    """Before the F3D conversion: which meshes changed since the last export
+    (exporter.mesh_plan, by glTF file); returns whether any has to be exported."""
+    global _KEY_SALT
+    _KEY_SALT = _key_salt()
+    assets_dir = _assets_dir()
+    old = _load_cache(assets_dir)
+    conversion_scene = bpy.context.scene
+    exporter.mesh_plan = {}
+    for obj, mesh_name, _, armature, _ in _mesh_jobs(exporter):
+        file = f'{mesh_name}.gltf'
+        # Skinned meshes are always exported (their animations aren't in the key)
+        key = None if armature else _mesh_key(obj, conversion_scene)
+        entry = old.get(file)
+        cached = (key is not None and entry is not None and entry['key'] == key
+                  and all(os.path.isfile(os.path.join(assets_dir, f)) for f in entry['files']))
+        exporter.mesh_plan[file] = {'key': key, 'entry': entry if cached else None}
+    return any(plan['entry'] is None for plan in exporter.mesh_plan.values())
+
+
 def export_meshes(exporter):
-    """Export all meshes from all scenes to GLTF format.
+    """Export the meshes plan_meshes found changed (after the F3D conversion,
+    if any), keep the others' files.
 
     Exports linked objects from temp scene first (with F3D materials),
     then local objects from user scenes.
@@ -548,115 +600,90 @@ def export_meshes(exporter):
     Updates exporter.exported_meshes with {mesh: mesh_name} mapping.
     Updates exporter.skinned_meshes with {mesh_name: {"armature_clips": [...]}} for skinned models.
     """
-    global _KEY_SALT
-    assets_dir = os.path.join(arm.utils.build_dir(), 'n64', 'assets')
+    assets_dir = _assets_dir()
     exporter.exported_meshes = {}
     exporter.skinned_meshes = {}  # mesh_name -> {"anim_clips": [...]}
 
     # Cache entries by glTF file name: the ones of this export replace the old ones
-    _KEY_SALT = _key_salt()
-    cache = {'old': _load_cache(assets_dir), 'new': {}}
-    _settle_fast64(cache)
-    _export_linked_meshes(exporter, assets_dir, cache)
-    _export_scene_meshes(exporter, assets_dir, cache)
-    n64_utils.write_if_changed(os.path.join(assets_dir, CACHE_FILE),
-                               json.dumps(cache['new'], indent=1, sort_keys=True))
-
-
-def _export_linked_meshes(exporter, assets_dir, cache):
-    """Export meshes from temp scene (localized linked objects)."""
-    if not exporter.linked_objects:
-        return
-
-    temp_scene = linked_export.get_temp_scene()
-    if not temp_scene:
-        return
-
-    n64_utils.deselect_from_all_viewlayers()
-    main_scene = bpy.context.scene
-    main_view_layer = bpy.context.view_layer
-
-    # Switch to temp scene
-    bpy.context.window.scene = temp_scene
-    bpy.context.window.view_layer = temp_scene.view_layers[0]
-
-    for local_obj_name, original_mesh_name in exporter.linked_objects:
-        bpy.ops.object.select_all(action='DESELECT')
-        bpy.context.view_layer.update()
-
-        local_obj = bpy.data.objects.get(local_obj_name)
-        if not local_obj or local_obj.type != 'MESH':
-            if not local_obj:
-                log.warn(f'Linked object not found: {local_obj_name}')
-            continue
-
-        mesh_name = arm.utils.safesrc(original_mesh_name)
-        if mesh_name in exporter.exported_meshes.values():
-            continue
-
-        # Check for armature (skinned mesh)
-        armature = _find_armature(local_obj)
-        output_path = os.path.join(assets_dir, f'{mesh_name}.gltf')
-        exported = _export_mesh_to_gltf(local_obj, output_path, cache, armature=armature)
+    cache = {}
+    # When some mesh is exported: Fast64 set up in every scene in turn, also for
+    # the unchanged meshes, as for an export of all (a material keeps some of a
+    # scene's setup in the next one)
+    settle = None
+    if any(plan['entry'] is None for plan in exporter.mesh_plan.values()):
+        settle = {}
+        _settle_fast64(settle)
+    for obj, mesh_name, mesh, armature, linked in _mesh_jobs(exporter):
+        file = f'{mesh_name}.gltf'
+        plan = exporter.mesh_plan.get(file, {'key': None, 'entry': None})
+        kind = 'linked mesh' if linked else 'mesh'
+        if settle is not None:
+            _settle_scene(settle)
+        if plan['entry'] is not None:
+            cache[file] = plan['entry']
+            log.info(f'Unchanged {kind}: {mesh_name}')
+        else:
+            files = _export_mesh_to_gltf(obj, os.path.join(assets_dir, file), armature=armature)
+            if plan['key'] is not None:
+                cache[file] = {'key': plan['key'], 'files': files}
+            log.info(f'Exported {kind}: {mesh_name}')
 
         if armature:
             anim_clips = _get_animation_names(armature)
             exporter.skinned_meshes[mesh_name] = {"anim_clips": anim_clips}
-            log.info(f'Exported linked skinned mesh: {mesh_name} (clips: {anim_clips})')
-        else:
-            log.info(f'{"Exported" if exported else "Unchanged"} linked mesh: {mesh_name}')
-
-        # Store by original mesh for scene_exporter lookup
-        original_mesh = linked_export.get_original_mesh(original_mesh_name)
-        if original_mesh:
-            exporter.exported_meshes[original_mesh] = mesh_name
-        else:
-            log.warn(f'Could not find original mesh for: {original_mesh_name}')
-
-    # Restore original scene
-    bpy.context.window.scene = main_scene
-    bpy.context.window.view_layer = main_view_layer
-
-
-def _export_scene_meshes(exporter, assets_dir, cache):
-    """Export meshes from local objects in user scenes."""
-    for scene in bpy.data.scenes:
-        if scene.library or linked_export.is_temp_scene(scene):
-            continue
-
-        n64_utils.deselect_from_all_viewlayers()
-        main_scene = bpy.context.scene
-        main_view_layer = bpy.context.view_layer
-
-        for obj, _ in _collect_all_objects(scene):
-            if obj.type != 'MESH' or obj.library:
-                continue
-
-            mesh = obj.data
-            if mesh in exporter.exported_meshes:
-                continue
-
-            bpy.ops.object.select_all(action='DESELECT')
-            bpy.context.view_layer.update()
-
-            mesh_name = arm.utils.safesrc(linked_utils.asset_name(mesh))
-
-            bpy.context.window.scene = scene
-            bpy.context.window.view_layer = scene.view_layers[0]
-
-            # Check for armature (skinned mesh)
-            armature = _find_armature(obj)
-            output_path = os.path.join(assets_dir, f'{mesh_name}.gltf')
-            exported = _export_mesh_to_gltf(obj, output_path, cache, armature=armature)
-
-            if armature:
-                anim_clips = _get_animation_names(armature)
-                exporter.skinned_meshes[mesh_name] = {"anim_clips": anim_clips}
-                log.info(f'Exported skinned mesh: {mesh_name} (clips: {anim_clips})')
-            else:
-                log.info(f'{"Exported" if exported else "Unchanged"} mesh: {mesh_name}')
-
+            log.info(f'  skinned, clips: {anim_clips}')
+        if mesh is not None:
             exporter.exported_meshes[mesh] = mesh_name
+    n64_utils.write_if_changed(os.path.join(assets_dir, CACHE_FILE), json.dumps(cache, indent=1, sort_keys=True))
 
-        bpy.context.window.scene = main_scene
-        bpy.context.window.view_layer = main_view_layer
+
+def _mesh_jobs(exporter):
+    """(object, glTF name, mesh for exporter.exported_meshes, armature, linked) of each
+    mesh to export, in export order, with the window on the object's scene:
+    first the linked objects' local copies (temp scene), then the user scenes'
+    objects. Objects are looked up each time (the F3D conversion replaces them)."""
+    window = bpy.context.window
+    main_scene, main_view_layer = window.scene, window.view_layer
+
+    def use_scene(scene):
+        # Nothing selected elsewhere: the glTF export of the selection could take it
+        if window.scene != scene:
+            n64_utils.deselect_from_all_viewlayers()
+            window.scene = scene
+            window.view_layer = scene.view_layers[0]
+
+    names = set()
+    meshes = set()
+    try:
+        temp_scene = linked_export.get_temp_scene() if exporter.linked_objects else None
+        for local_obj_name, original_mesh_name in exporter.linked_objects if temp_scene else []:
+            local_obj = bpy.data.objects.get(local_obj_name)
+            if not local_obj or local_obj.type != 'MESH':
+                if not local_obj:
+                    log.warn(f'Linked object not found: {local_obj_name}')
+                continue
+            mesh_name = arm.utils.safesrc(original_mesh_name)
+            if mesh_name in names:
+                continue
+            names.add(mesh_name)
+            # Stored by original mesh for scene_exporter lookup
+            original_mesh = linked_export.get_original_mesh(original_mesh_name)
+            if original_mesh is None:
+                log.warn(f'Could not find original mesh for: {original_mesh_name}')
+            else:
+                meshes.add(original_mesh)
+            use_scene(temp_scene)
+            yield local_obj, mesh_name, original_mesh, _find_armature(local_obj), True
+
+        for scene in bpy.data.scenes:
+            if scene.library or linked_export.is_temp_scene(scene):
+                continue
+            for obj, _ in _collect_all_objects(scene):
+                if obj.type != 'MESH' or obj.library or obj.data in meshes:
+                    continue
+                meshes.add(obj.data)
+                use_scene(scene)
+                yield obj, arm.utils.safesrc(linked_utils.asset_name(obj.data)), obj.data, _find_armature(obj), False
+    finally:
+        window.scene = main_scene
+        window.view_layer = main_view_layer

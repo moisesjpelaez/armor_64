@@ -226,7 +226,10 @@ class N64MacroBase {
                 if (t == null && i < def.emitTypes.length) t = def.emitTypes[i];
                 t != null ? t : "void*";
             }];
-            var entry:Dynamic = {owner: def.owner, name: def.name, is_static: def.isStatic, arg_types: argTypes, connect_sites: def.connectSites};
+            // Sorted: they're found in Haxe's typing order, which can change between builds
+            var sites = def.connectSites.copy();
+            sites.sort(Reflect.compare);
+            var entry:Dynamic = {owner: def.owner, name: def.name, is_static: def.isStatic, arg_types: argTypes, connect_sites: sites};
             if (def.cSymbol != null) entry.c_symbol = def.cSymbol;
             Reflect.setField(out, key, entry);
         }
