@@ -25,18 +25,16 @@ import re
 import shutil
 import socket
 import subprocess
-import threading
 import time
 import traceback
 from typing import Callable, Optional
 
 import bpy
 
+import arm.library_hooks as library_hooks
 import arm.log as log
-import arm.make as make
-import arm.make_state as state
 import arm.utils
-import arm.n64.utils as n64_utils
+import armor64.utils as n64_utils
 
 # Haxe output name: Kha's asset list (<name>-resources) and Koui's themes (<name>) go next to it
 OUTPUT = 'n64haxe'
@@ -55,7 +53,7 @@ def start(request, done: Callable[[bool], None]):
     cmd = [arm.utils.get_node_path(), arm.utils.get_khamake_path(), '--nohaxe', '--noshaders', '--noproject']
     if not bpy.data.worlds['Arm'].arm_verbose_output:
         cmd.append('--quiet')
-    _run(cmd, _setup_done)
+    library_hooks.run_process(cmd, _setup_done)
 
 
 def clean():
@@ -72,31 +70,6 @@ def clean_project():
     by a Blender session that crashed."""
     stop_server()
     _stop_orphan_servers(n64_utils.get_n64_compilation_server_port())
-
-
-def _run(cmd, then: Callable[[int], None], meanwhile: Optional[Callable[[], bool]] = None):
-    """Run a process like Armory's make.run_proc() (a thread waits for it, then
-    `then` runs on Blender's main thread; in background mode it blocks), passing
-    its exit code. It's the build's process meanwhile, so Stop ends it.
-    `meanwhile` runs on the main thread while the process does; if it returns
-    False, the process is stopped."""
-    print(*cmd)
-    proc = subprocess.Popen(cmd)
-    state.proc_build = proc
-    if meanwhile is not None and not meanwhile():
-        proc.terminate()
-
-    def finished():
-        then(proc.returncode)
-
-    if bpy.app.background:
-        proc.wait()
-        finished()
-    else:
-        def wait():
-            proc.wait()
-            make.thread_callback_queue.put([threading.current_thread(), finished], block=True)
-        threading.Thread(target=wait).start()
 
 
 def _finish(success: bool):
@@ -117,9 +90,9 @@ def _setup_done(code: int):
         log.error(f'N64: could not prepare the Haxe build: {e}')
         _finish(False)
         return
-    from arm.n64.exporter import N64Exporter
+    from armor64.exporter import N64Exporter
     _exporter = N64Exporter()
-    _run(_haxe_cmd(hxml), _haxe_done, meanwhile=_export_assets)
+    library_hooks.run_process(_haxe_cmd(hxml), _haxe_done, meanwhile=_export_assets)
 
 
 def _haxe_cmd(hxml: str) -> list:
@@ -312,7 +285,6 @@ def _haxe_done(code: int):
         log.error('N64: Haxe build failed (see the errors above)')
         _finish(False)
         return
-    state.proc_build = None
     try:
         if _request.is_play:
             success = exporter.play()

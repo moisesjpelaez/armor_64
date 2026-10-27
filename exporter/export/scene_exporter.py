@@ -13,9 +13,9 @@ import bpy
 import arm.utils
 import arm.log as log
 import arm.linked_utils as linked_utils
-import arm.n64.codegen as codegen
-import arm.n64.utils as n64_utils
-from arm.n64.export import linked_export
+import armor64.codegen as codegen
+import armor64.utils as n64_utils
+from armor64.export import linked_export
 
 
 def _collect_all_objects(scene):

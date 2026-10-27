@@ -12,8 +12,8 @@ import bpy
 
 import arm.utils
 import arm.log as log
-import arm.n64.utils as n64_utils
-from arm.n64.export import linked_export
+import armor64.utils as n64_utils
+from armor64.export import linked_export
 
 
 def write_makefile(exporter):
@@ -23,7 +23,7 @@ def write_makefile(exporter):
         exporter: N64Exporter instance with all export state
     """
     # Import sibling modules here to avoid circular imports
-    from arm.n64.export import audio_exporter, ui_exporter
+    from armor64.export import audio_exporter, ui_exporter
 
     wrd = bpy.data.worlds['Arm']
     tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'Makefile.j2')
@@ -183,7 +183,7 @@ def run_make():
 
 def _write_memory_report():
     """Complete build/n64/limits.txt with the RAM the built game uses, and print it."""
-    from arm.n64.codegen import limits
+    from armor64.codegen import limits
     n64_dir = os.path.join(arm.utils.get_fp(), arm.utils.build_dir(), 'n64')
     report_path = os.path.join(n64_dir, 'limits.txt')
     elf = os.path.join(n64_dir, 'build', f'{arm.utils.safestr(bpy.data.worlds["Arm"].arm_project_name)}.elf')

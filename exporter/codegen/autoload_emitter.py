@@ -6,7 +6,7 @@ Autoloads use global variables prefixed with c_name instead of a data pointer.
 
 from typing import Dict, List
 
-from arm.n64.codegen.trait_emitter import TraitEmitter
+from armor64.codegen.trait_emitter import TraitEmitter
 
 
 class AutoloadEmitter(TraitEmitter):

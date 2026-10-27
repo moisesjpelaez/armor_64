@@ -8,14 +8,14 @@ C files from Haxe IR data.
 import os
 
 import arm.utils
-import arm.n64.utils as n64_utils
-import arm.n64.codegen as codegen
+import armor64.utils as n64_utils
+import armor64.codegen as codegen
 
 
 def write_types(exporter):
     """Generate types.h from template with debug HUD settings."""
     import bpy  # Import here to avoid circular imports at module level
-    import arm.n64.utils as n64_utils
+    import armor64.utils as n64_utils
 
     tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'types.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'types.h')
@@ -32,7 +32,7 @@ def write_types(exporter):
 
 def write_limits(exporter):
     """Generate limits.h: the engine limits computed for this project (codegen/limits.py)."""
-    from arm.n64.codegen import limits
+    from armor64.codegen import limits
 
     tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'limits.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'limits.h')
@@ -124,7 +124,7 @@ def _collect_type_overrides(exporter) -> dict:
     Returns:
         dict mapping trait_class -> member_name -> c_type
     """
-    import arm.n64.utils as n64_utils
+    import armor64.utils as n64_utils
 
     overrides = {}
 
@@ -229,7 +229,7 @@ def write_engine(exporter):
     Args:
         exporter: N64Exporter instance with has_physics, has_ui, has_audio flags
     """
-    import arm.n64.utils as n64_utils
+    import armor64.utils as n64_utils
 
     n64_utils.copy_src('engine.c', 'src')
 

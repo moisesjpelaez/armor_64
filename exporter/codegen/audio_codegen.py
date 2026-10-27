@@ -6,7 +6,7 @@ the mixer channel count (Aura.init({channelSize: N})).
 
 from typing import Dict
 
-from arm.n64.codegen.trait_generator import _load_ir_json
+from armor64.codegen.trait_generator import _load_ir_json
 
 # Aura's own mix channels, always defined (index 0 is the master)
 DEFAULT_MIX_CHANNELS = ["MASTER", "MUSIC", "FX"]

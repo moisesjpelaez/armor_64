@@ -10,9 +10,9 @@ import os
 from typing import Dict, List
 
 from arm import log
-from arm.n64.codegen.trait_emitter import TraitEmitter
-from arm.n64.codegen import tween_helper
-from arm.n64.codegen.signal_codegen import SignalContext, find_signal_bindings
+from armor64.codegen.trait_emitter import TraitEmitter
+from armor64.codegen import tween_helper
+from armor64.codegen.signal_codegen import SignalContext, find_signal_bindings
 
 
 # =============================================================================
@@ -150,7 +150,7 @@ def load_signals_json(build_dir: str = None) -> dict:
 def signals_context(traits: dict = None) -> SignalContext:
     """Signal definitions with the trait and autoload info to render them."""
     import arm.utils
-    from arm.n64.codegen.autoload_generator import load_autoloads_json
+    from armor64.codegen.autoload_generator import load_autoloads_json
 
     build_dir = arm.utils.build_dir()
     if traits is None:
@@ -1214,7 +1214,7 @@ def _prepare_traits_template_data(traits: dict, type_overrides: dict = None) -> 
         tuple of (template_data dict, features dict)
     """
     import arm.utils
-    from arm.n64.codegen.autoload_generator import load_autoloads_json
+    from armor64.codegen.autoload_generator import load_autoloads_json
 
     # Validate all ancestors are present before proceeding
     _validate_ancestor_chain(traits)

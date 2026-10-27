@@ -3,8 +3,7 @@ N64 Exporter - Standalone Library Integration for Armory3D
 
 This module is loaded by Armory's library system (handlers.py load_py_libraries).
 On register():
-  - Registers the arm.n64 Python namespace (pointing to this library's modules)
-  - Injects N64 preferences into Armory addon settings
+  - Registers the armor64 Python package (exporter/)
   - Registers N64 build operators (Install Dependencies, Build libdragon, Build Tiny3D)
 The builds themselves ("Ares" runtime, "Nintendo 64" target) go through
 Armory's library hooks: see armory_hooks.py.
@@ -12,14 +11,13 @@ Armory's library hooks: see armory_hooks.py.
 On unregister(), all of it is cleanly reversed.
 """
 
-import importlib
+import importlib.util
 import os
 import subprocess
 import sys
 
 
 import bpy
-from bpy.props import StringProperty, BoolProperty, IntProperty
 
 # ---------------------------------------------------------------------------
 # Library path (determined at import time — Armory adds our dir to sys.path)
@@ -27,250 +25,31 @@ from bpy.props import StringProperty, BoolProperty, IntProperty
 _LIBRARY_DIR = os.path.dirname(os.path.abspath(__file__))
 _EXPORTER_DIR = os.path.join(_LIBRARY_DIR, 'exporter')
 
-# ---------------------------------------------------------------------------
-# Saved originals for clean unregister
-# ---------------------------------------------------------------------------
-_originals = {}
 _registered_classes = []
 
 
 # =============================================================================
-# arm.n64 Namespace Registration
+# armor64 Package Registration
 # =============================================================================
 
-def _register_n64_namespace():
-    """Register the library's exporter package into the arm.n64 namespace
-    (each module is loaded by its path: nothing is added to sys.path)."""
-    import arm
-
-    n64_pkg_dir = _EXPORTER_DIR
-    codegen_dir = os.path.join(n64_pkg_dir, 'codegen')
-    export_dir = os.path.join(n64_pkg_dir, 'export')
-
-    def _make_stub_package(dotted_name, file_path):
-        """Create a stub package module in sys.modules without executing it."""
-        spec = importlib.util.spec_from_file_location(
-            dotted_name, file_path,
-            submodule_search_locations=[os.path.dirname(file_path)]
-        )
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[dotted_name] = mod
-        parts = dotted_name.rsplit('.', 1)
-        if len(parts) == 2 and parts[0] in sys.modules:
-            setattr(sys.modules[parts[0]], parts[1], mod)
-        return mod, spec
-
-    def _load_module(dotted_name, file_path):
-        """Load and execute a module, registering it in sys.modules."""
-        spec = importlib.util.spec_from_file_location(dotted_name, file_path)
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[dotted_name] = mod
-        parts = dotted_name.rsplit('.', 1)
-        if len(parts) == 2 and parts[0] in sys.modules:
-            setattr(sys.modules[parts[0]], parts[1], mod)
-        spec.loader.exec_module(mod)
-        return mod
-
-    # Step 1: Create stub packages (registered in sys.modules but NOT executed)
-    # This allows submodule imports like "from arm.n64.codegen import ..." to resolve
-    n64_mod, n64_spec = _make_stub_package('arm.n64', os.path.join(n64_pkg_dir, '__init__.py'))
-    codegen_mod, codegen_spec = _make_stub_package('arm.n64.codegen', os.path.join(codegen_dir, '__init__.py'))
-    export_mod, export_spec = _make_stub_package('arm.n64.export', os.path.join(export_dir, '__init__.py'))
-
-    # Step 2: Load leaf modules (these can import from arm.n64.* since stubs exist)
-    _load_module('arm.n64.utils', os.path.join(n64_pkg_dir, 'utils.py'))
-
-    # Codegen leaves (order: no-deps first, then modules that depend on them)
-    for fname in ['limits', 'signal_codegen', 'trait_emitter', 'tween_helper', 'autoload_emitter', 'trait_generator', 'autoload_generator', 'audio_codegen', 'scene_generator']:
-        fpath = os.path.join(codegen_dir, f'{fname}.py')
-        if os.path.isfile(fpath):
-            _load_module(f'arm.n64.codegen.{fname}', fpath)
-
-    # Export leaves (order: no-deps first)
-    for fname in ['koui_theme_parser', 'linked_export', 'mesh_exporter', 'scene_exporter',
-                  'traits_exporter', 'ui_exporter', 'physics_exporter', 'audio_exporter', 'build_runner', 'build_pipeline']:
-        fpath = os.path.join(export_dir, f'{fname}.py')
-        if os.path.isfile(fpath):
-            _load_module(f'arm.n64.export.{fname}', fpath)
-
-    # Step 3: Execute package __init__.py files (all submodules now available)
-    codegen_spec.loader.exec_module(codegen_mod)
-    export_spec.loader.exec_module(export_mod)
-
-    # Step 4: Load exporter (depends on codegen + export)
-    _load_module('arm.n64.exporter', os.path.join(n64_pkg_dir, 'exporter.py'))
-
-    # Step 5: Execute arm.n64 __init__ (utils, codegen, exporter all available)
-    n64_spec.loader.exec_module(n64_mod)
+PACKAGE = 'armor64'
 
 
-def _unregister_n64_namespace():
-    """Remove arm.n64 namespace from sys.modules."""
-    import arm
-
-    keys_to_remove = [k for k in sys.modules if k == 'arm.n64' or k.startswith('arm.n64.')]
-    for k in keys_to_remove:
-        del sys.modules[k]
-
-    if hasattr(arm, 'n64'):
-        delattr(arm, 'n64')
-
-
-# =============================================================================
-# N64 Addon Preferences (injected into ArmoryAddonPreferences)
-# =============================================================================
-
-def _get_prefs_class():
-    """Get the ArmoryAddonPreferences class."""
-    addon_prefs = bpy.context.preferences.addons.get("armory")
-    if addon_prefs:
-        return addon_prefs.preferences.__class__
-    return None
+def _register_package():
+    """Register the library's Python code (exporter/) as the `armor64` package;
+    its modules are imported when used."""
+    spec = importlib.util.spec_from_file_location(
+        PACKAGE, os.path.join(_EXPORTER_DIR, '__init__.py'),
+        submodule_search_locations=[_EXPORTER_DIR])
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[PACKAGE] = module
+    spec.loader.exec_module(module)
 
 
-def _path_update_factory(prop_name):
-    """Create a path update callback for a given property name."""
-    def update(self, context):
-        if getattr(self, 'skip_update', False):
-            return
-        self.skip_update = True
-        setattr(self, prop_name,
-                bpy.path.reduce_dirs([bpy.path.abspath(getattr(self, prop_name))])[0])
-        self.skip_update = False
-    return update
-
-
-def _register_preferences():
-    """Inject N64 preference properties into ArmoryAddonPreferences.
-
-    Uses unregister/re-register to properly register properties with
-    Blender's RNA system. This is safe for AddonPreferences (singleton).
-    Saved values are preserved across the re-registration.
-    """
-    prefs_cls = _get_prefs_class()
-    if prefs_cls is None:
-        return
-
-    # Save current values before re-registration
-    saved_values = {}
-    try:
-        prefs = bpy.context.preferences.addons["armory"].preferences
-        for prop_name in ['n64_toolchain_path', 'msys2_bash_executable', 'mingw64_path',
-                          'ares_emulator_executable', 'open_n64_rom_directory',
-                          'n64_compilation_server_port']:
-            if hasattr(prefs, prop_name):
-                saved_values[prop_name] = getattr(prefs, prop_name)
-    except Exception:
-        pass
-
-    bpy.utils.unregister_class(prefs_cls)
-
-    prefs_cls.__annotations__['n64_toolchain_path'] = StringProperty(
-        name="N64 Toolchain Path",
-        description="Path to the N64 Toolchain installation directory",
-        default="", subtype="FILE_PATH",
-        update=_path_update_factory('n64_toolchain_path')
-    )
-    prefs_cls.__annotations__['msys2_bash_executable'] = StringProperty(
-        name="MSYS2 Bash Executable",
-        description="Path to the MSYS2 Bash executable",
-        default="", subtype="FILE_PATH",
-        update=_path_update_factory('msys2_bash_executable')
-    )
-    prefs_cls.__annotations__['mingw64_path'] = StringProperty(
-        name="MinGW64 Path",
-        description="Path to the MinGW64 directory",
-        default="", subtype="FILE_PATH",
-        update=_path_update_factory('mingw64_path')
-    )
-    prefs_cls.__annotations__['ares_emulator_executable'] = StringProperty(
-        name="Ares Emulator Executable",
-        description="Path to the Ares Emulator executable",
-        default="", subtype="FILE_PATH",
-        update=_path_update_factory('ares_emulator_executable')
-    )
-    prefs_cls.__annotations__['open_n64_rom_directory'] = BoolProperty(
-        name="Open Nintendo 64 ROM Directory",
-        description="Open the Nintendo 64 ROM directory after successfully build",
-        default=False
-    )
-    prefs_cls.__annotations__['n64_compilation_server_port'] = IntProperty(
-        name="N64 Compilation Server Port",
-        description="Port of the Haxe compilation server of Nintendo 64 builds (used when "
-                    "Armory's compilation server is on; different from Armory's port)",
-        default=6464, min=1024, max=65535
-    )
-
-    bpy.utils.register_class(prefs_cls)
-
-    # Restore saved values
-    try:
-        prefs = bpy.context.preferences.addons["armory"].preferences
-        for prop_name, value in saved_values.items():
-            setattr(prefs, prop_name, value)
-    except Exception:
-        pass
-
-
-def _unregister_preferences():
-    """Remove N64 preference properties from ArmoryAddonPreferences."""
-    prefs_cls = _get_prefs_class()
-    if prefs_cls is None:
-        return
-
-    bpy.utils.unregister_class(prefs_cls)
-
-    for prop_name in ['n64_toolchain_path', 'msys2_bash_executable', 'mingw64_path',
-                      'ares_emulator_executable', 'open_n64_rom_directory',
-                      'n64_compilation_server_port']:
-        if prop_name in prefs_cls.__annotations__:
-            del prefs_cls.__annotations__[prop_name]
-
-    bpy.utils.register_class(prefs_cls)
-
-
-# =============================================================================
-# Preferences UI Patch (draw Nintendo 64 Settings section)
-# =============================================================================
-
-def _register_preferences_ui():
-    """Patch ArmoryAddonPreferences.draw to append N64 settings."""
-    prefs_cls = _get_prefs_class()
-    if prefs_cls is None:
-        return
-
-    _originals['prefs_draw'] = prefs_cls.draw
-
-    def _patched_draw(self, context):
-        _originals['prefs_draw'](self, context)
-
-        layout = self.layout
-        box = layout.box().column()
-        box.label(text="Nintendo 64 Settings")
-        box.prop(self, "n64_toolchain_path")
-        box.prop(self, "msys2_bash_executable")
-        box.prop(self, "mingw64_path")
-        box.prop(self, "ares_emulator_executable")
-        box.prop(self, "open_n64_rom_directory")
-        if getattr(self, "compilation_server", False):
-            box.prop(self, "n64_compilation_server_port")
-        box.label(text="Libraries:")
-        row = box.row(align=True)
-        row.operator("n64_exporter.install_libdragon_dependencies", icon="IMPORT")
-        row.operator("n64_exporter.build_libdragon", icon="MOD_BUILD")
-        row.operator("n64_exporter.build_tiny3d", icon="MOD_BUILD")
-
-    prefs_cls.draw = _patched_draw
-
-
-def _unregister_preferences_ui():
-    """Restore original preferences draw method."""
-    prefs_cls = _get_prefs_class()
-    if prefs_cls is None:
-        return
-
-    if 'prefs_draw' in _originals:
-        prefs_cls.draw = _originals['prefs_draw']
+def _unregister_package():
+    """Forget the package and its modules (loaded again on the next register)."""
+    for name in [n for n in sys.modules if n == PACKAGE or n.startswith(PACKAGE + '.')]:
+        del sys.modules[name]
 
 
 # =============================================================================
@@ -284,7 +63,7 @@ class N64_OT_InstallLibdragonDependencies(bpy.types.Operator):
     bl_description = "Install libdragon dependencies (base-devel, mingw-w64-x86_64-gcc, mingw-w64-x86_64-make, git)"
 
     def execute(self, context):
-        import arm.n64.utils as n64_utils
+        import armor64.utils as n64_utils
         import arm.utils
 
         sdk_path = arm.utils.get_sdk_path()
@@ -325,7 +104,7 @@ class N64_OT_BuildLibdragon(bpy.types.Operator):
     bl_description = "Build libdragon for Nintendo 64 development"
 
     def execute(self, context):
-        import arm.n64.utils as n64_utils
+        import armor64.utils as n64_utils
         import arm.utils
 
         sdk_path = arm.utils.get_sdk_path()
@@ -386,7 +165,7 @@ class N64_OT_BuildTiny3d(bpy.types.Operator):
     bl_description = "Build Tiny3D rendering library for Nintendo 64 development"
 
     def execute(self, context):
-        import arm.n64.utils as n64_utils
+        import armor64.utils as n64_utils
         import arm.utils
 
         sdk_path = arm.utils.get_sdk_path()
@@ -471,21 +250,16 @@ def _unregister_operators():
 
 def register():
     """Register the N64 exporter library. Called by Armory's load_py_libraries()."""
-    # Order matters: namespace first
-    _register_n64_namespace()
+    # Order matters: the package first
+    _register_package()
     _register_operators()
-    _register_preferences()
-    _register_preferences_ui()
 
     print('N64 Exporter library registered')
 
 
 def unregister():
     """Unregister the N64 exporter library. Called by Armory's unload_py_libraries()."""
-    _unregister_preferences_ui()
-    _unregister_preferences()
     _unregister_operators()
-    _unregister_n64_namespace()
+    _unregister_package()
 
-    _originals.clear()
     print('N64 Exporter library unregistered')

@@ -8,7 +8,7 @@ engine files for N64 export.
 import os
 
 import arm.utils
-import arm.n64.utils as n64_utils
+import armor64.utils as n64_utils
 
 
 def write_physics(exporter):

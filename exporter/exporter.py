@@ -18,31 +18,20 @@ Export Modules:
 import os
 import bpy
 
-import arm
 import arm.utils
 import arm.log as log
 
-# Use direct module imports to avoid circular imports through arm.n64.__init__
-import arm.n64.codegen as codegen
-import arm.n64.utils as n64_utils
+import armor64.codegen as codegen
+import armor64.utils as n64_utils
 
-# Import export submodules directly (not through arm.n64.export.__init__)
-from arm.n64.export import mesh_exporter
-from arm.n64.export import scene_exporter
-from arm.n64.export import traits_exporter
-from arm.n64.export import ui_exporter
-from arm.n64.export import physics_exporter
-from arm.n64.export import audio_exporter
-from arm.n64.export import build_runner
-from arm.n64.export import linked_export
-
-if arm.is_reload(__name__):
-    arm.utils = arm.reload_module(arm.utils)
-    log = arm.reload_module(log)
-    codegen = arm.reload_module(codegen)
-    n64_utils = arm.reload_module(n64_utils)
-else:
-    arm.enable_reload(__name__)
+from armor64.export import mesh_exporter
+from armor64.export import scene_exporter
+from armor64.export import traits_exporter
+from armor64.export import ui_exporter
+from armor64.export import physics_exporter
+from armor64.export import audio_exporter
+from armor64.export import build_runner
+from armor64.export import linked_export
 
 
 class N64Exporter:
@@ -166,9 +155,9 @@ class N64Exporter:
             ui_exporter.detect_ui_canvas(self)
 
             # Engine limits for this project (codegen/limits.py)
-            from arm.n64.codegen import limits
-            from arm.n64.codegen.trait_generator import load_signals_json, _load_ir_json
-            from arm.n64.codegen.autoload_generator import load_autoloads_json
+            from armor64.codegen import limits
+            from armor64.codegen.trait_generator import load_signals_json, _load_ir_json
+            from armor64.codegen.autoload_generator import load_autoloads_json
             traits = self.trait_info.get("traits", {})
 
             def trait_key(class_name):

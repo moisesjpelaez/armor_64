@@ -13,7 +13,7 @@ Public API:
 """
 
 # Re-export public API from submodules
-from arm.n64.codegen.trait_generator import (
+from armor64.codegen.trait_generator import (
     get_trait_info,
     load_traits_json,
     prepare_traits_template_data,
@@ -21,12 +21,12 @@ from arm.n64.codegen.trait_generator import (
     TraitCodeGenerator,
 )
 
-from arm.n64.codegen.autoload_generator import (
+from armor64.codegen.autoload_generator import (
     load_autoloads_json,
     prepare_autoload_template_data,
 )
 
-from arm.n64.codegen.scene_generator import (
+from armor64.codegen.scene_generator import (
     convert_scene_data,
     generate_transform_block,
     generate_trait_block,
@@ -38,8 +38,8 @@ from arm.n64.codegen.scene_generator import (
     generate_scene_traits_block,
 )
 
-from arm.n64.codegen.trait_emitter import TraitEmitter
-from arm.n64.codegen.autoload_emitter import AutoloadEmitter
+from armor64.codegen.trait_emitter import TraitEmitter
+from armor64.codegen.autoload_emitter import AutoloadEmitter
 
 __all__ = [
     # Trait functions

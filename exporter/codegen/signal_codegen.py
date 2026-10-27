@@ -159,7 +159,7 @@ class SignalContext:
         owner, name = handler["owner"], handler["name"]
         if handler.get("kind") == "static":
             return f"{self.class_c_name(owner)}_{name}({', '.join(args)})"
-        from arm.n64.codegen.trait_generator import visible_vtable_owners
+        from armor64.codegen.trait_generator import visible_vtable_owners
         call_args = ", ".join(["obj", "data"] + args)
         vtable_owner = visible_vtable_owners(self.traits, owner).get(name)
         if vtable_owner:

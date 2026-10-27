@@ -11,9 +11,9 @@ import glob
 import shutil
 
 import arm.utils
-import arm.n64.utils as n64_utils
+import armor64.utils as n64_utils
 import arm.log as log
-from arm.n64.export.koui_theme_parser import KouiThemeParser
+from armor64.export.koui_theme_parser import KouiThemeParser
 
 
 # =============================================================================
@@ -869,7 +869,7 @@ def write_canvas(exporter):
         return
 
     # Copy shared header used by label, image, and panel
-    from arm.n64 import utils as n64_utils
+    from armor64 import utils as n64_utils
     n64_utils.copy_src('ui_anchor.h', 'src/ui')
 
     write_label_h(exporter)

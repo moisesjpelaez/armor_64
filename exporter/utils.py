@@ -135,14 +135,14 @@ def trait_needs_data(trait_info: dict, trait_class: str) -> bool:
     """Check if a trait needs a data struct, with the same rule the struct
     layout uses (members, signals, signal handlers, a parent, storing `this`,
     or vtable pointers)."""
-    from arm.n64.codegen.trait_generator import needs_data_struct
+    from armor64.codegen.trait_generator import needs_data_struct
 
     return needs_data_struct(trait_info.get("traits", {}), trait_key(trait_info, trait_class))
 
 
 def trait_chain_events(trait_info: dict, trait_class: str) -> set:
     """Events of a trait and its ancestors (see chain_events)."""
-    from arm.n64.codegen.trait_generator import chain_events
+    from armor64.codegen.trait_generator import chain_events
 
     return chain_events(trait_info.get("traits", {}), trait_key(trait_info, trait_class))
 

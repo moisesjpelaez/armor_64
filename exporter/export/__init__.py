@@ -14,11 +14,11 @@ Each module handles a specific domain of the export pipeline:
 - build_runner: Makefile generation and N64 build execution
 
 Note: Modules are NOT imported at package level to avoid circular imports.
-Import them directly: from arm.n64.export import scene_exporter
+Import them directly: from armor64.export import scene_exporter
 """
 
 # Only import koui_theme_parser since it has no circular dependencies
-from arm.n64.export.koui_theme_parser import KouiThemeParser
+from armor64.export.koui_theme_parser import KouiThemeParser
 
 __all__ = [
     'KouiThemeParser',

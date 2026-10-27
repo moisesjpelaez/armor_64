@@ -9,8 +9,8 @@ import math
 from typing import Dict, List
 
 from arm import log
-from arm.n64 import utils as n64_utils
-from arm.n64.utils import convert_vec3_list, convert_quat_list, convert_scale_list, SCALE_FACTOR
+from armor64 import utils as n64_utils
+from armor64.utils import convert_vec3_list, convert_quat_list, convert_scale_list, SCALE_FACTOR
 
 
 # =============================================================================

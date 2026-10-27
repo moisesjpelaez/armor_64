@@ -10,9 +10,9 @@ import os
 from typing import Dict, List
 
 from arm import log
-from arm.n64.codegen.autoload_emitter import AutoloadEmitter
-from arm.n64.codegen import tween_helper
-from arm.n64.codegen.signal_codegen import SignalContext, find_signal_bindings
+from armor64.codegen.autoload_emitter import AutoloadEmitter
+from armor64.codegen import tween_helper
+from armor64.codegen.signal_codegen import SignalContext, find_signal_bindings
 
 
 def load_autoloads_json(build_dir: str = None) -> dict:
@@ -309,7 +309,7 @@ def prepare_autoload_template_data():
     if not autoloads:
         return [], None, {}
 
-    from arm.n64.codegen.trait_generator import signals_context
+    from armor64.codegen.trait_generator import signals_context
     signals = signals_context()
 
     # Sort autoloads by order

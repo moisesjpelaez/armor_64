@@ -11,7 +11,7 @@ import json
 
 import arm.utils
 import arm.log as log
-import arm.n64.utils as n64_utils
+import armor64.utils as n64_utils
 
 
 def scan_and_copy_audio(exporter):
@@ -77,7 +77,7 @@ def scan_and_copy_audio(exporter):
 def write_audio_config(exporter):
     """Generate audio_config.h: mix channels and mixer channel count from the
     macros' n64_audio.json (see codegen/audio_codegen.py)."""
-    from arm.n64.codegen import audio_codegen
+    from armor64.codegen import audio_codegen
 
     tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'audio', 'audio_config.h.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'audio', 'audio_config.h')
