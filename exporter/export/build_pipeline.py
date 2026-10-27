@@ -12,15 +12,21 @@ this computer, the game as C++, a Visual Studio project):
      placeholders (Kha builds kha.Shaders from it) and copies Koui's themes
   3. Haxe runs directly, with --no-output; meanwhile the meshes are exported
      (they only need the .blend), and the rest of the export follows Haxe
+With Armory's compilation server preference on, Haxe runs through armor_64's
+own compilation server (its own port: Armory's serves the other targets),
+which keeps the typed modules between builds.
 """
 
+import atexit
 import glob
 import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import threading
+import time
 import traceback
 from typing import Callable, Optional
 
@@ -38,6 +44,7 @@ OUTPUT = 'n64haxe'
 _request = None
 _done: Optional[Callable[[bool], None]] = None
 _exporter = None  # N64Exporter of the running build (None once its asset export failed)
+_server = None  # armor_64's Haxe compilation server process
 
 
 def start(request, done: Callable[[bool], None]):
@@ -104,8 +111,59 @@ def _setup_done(code: int):
         return
     from arm.n64.exporter import N64Exporter
     _exporter = N64Exporter()
-    _run([arm.utils.get_haxe_path(), '--cwd', os.path.dirname(hxml), os.path.basename(hxml)], _haxe_done,
-         meanwhile=_export_assets)
+    _run(_haxe_cmd(hxml), _haxe_done, meanwhile=_export_assets)
+
+
+def _haxe_cmd(hxml: str) -> list:
+    """Haxe compiling `hxml`: through the compilation server when it's on."""
+    haxe = arm.utils.get_haxe_path()
+    args = ['--cwd', os.path.dirname(hxml), os.path.basename(hxml)]
+    # The macros make the game's modules depend on this file (N64MacroBase):
+    # changed, the server types them again, so their IR is extracted again
+    with open(os.path.join(arm.utils.build_dir(), 'n64_compile.stamp'), 'w') as f:
+        f.write(str(time.time_ns()))
+    if not arm.utils.get_compilation_server():
+        stop_server()
+        return [haxe] + args
+    port = n64_utils.get_n64_compilation_server_port()
+    if not _start_server(haxe, port):
+        log.warn(f'N64: the compilation server could not use port {port} (Armory preferences); '
+                 'compiling without it')
+        return [haxe] + args
+    return [haxe, '--connect', str(port)] + args
+
+
+def _start_server(haxe: str, port: int) -> bool:
+    """Start the compilation server (once per Blender session); whether it's
+    listening."""
+    global _server
+    if _server is not None and _server.poll() is None:
+        return True
+    # Already listening: this port's server from a Blender session that crashed
+    if _listening(port):
+        return True
+    _server = subprocess.Popen([haxe, '--wait', str(port)])
+    atexit.register(stop_server)
+    # Connecting before it listens would fail
+    deadline = time.time() + 5
+    while time.time() < deadline and _server.poll() is None:
+        if _listening(port):
+            return True
+        time.sleep(0.05)
+    stop_server()  # Exited or not listening
+    return False
+
+
+def _listening(port: int) -> bool:
+    with socket.socket() as s:
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+
+def stop_server():
+    global _server
+    if _server is not None:
+        _server.kill()
+        _server = None
 
 
 def _export_assets() -> bool:

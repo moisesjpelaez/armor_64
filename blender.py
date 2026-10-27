@@ -19,7 +19,7 @@ import sys
 
 
 import bpy
-from bpy.props import StringProperty, BoolProperty
+from bpy.props import StringProperty, BoolProperty, IntProperty
 
 # ---------------------------------------------------------------------------
 # Library path (determined at import time — Armory adds our dir to sys.path)
@@ -156,7 +156,8 @@ def _register_preferences():
     try:
         prefs = bpy.context.preferences.addons["armory"].preferences
         for prop_name in ['n64_toolchain_path', 'msys2_bash_executable', 'mingw64_path',
-                          'ares_emulator_executable', 'open_n64_rom_directory']:
+                          'ares_emulator_executable', 'open_n64_rom_directory',
+                          'n64_compilation_server_port']:
             if hasattr(prefs, prop_name):
                 saved_values[prop_name] = getattr(prefs, prop_name)
     except Exception:
@@ -193,6 +194,12 @@ def _register_preferences():
         description="Open the Nintendo 64 ROM directory after successfully build",
         default=False
     )
+    prefs_cls.__annotations__['n64_compilation_server_port'] = IntProperty(
+        name="N64 Compilation Server Port",
+        description="Port of the Haxe compilation server of Nintendo 64 builds (used when "
+                    "Armory's compilation server is on; different from Armory's port)",
+        default=6464, min=1024, max=65535
+    )
 
     bpy.utils.register_class(prefs_cls)
 
@@ -214,7 +221,8 @@ def _unregister_preferences():
     bpy.utils.unregister_class(prefs_cls)
 
     for prop_name in ['n64_toolchain_path', 'msys2_bash_executable', 'mingw64_path',
-                      'ares_emulator_executable', 'open_n64_rom_directory']:
+                      'ares_emulator_executable', 'open_n64_rom_directory',
+                      'n64_compilation_server_port']:
         if prop_name in prefs_cls.__annotations__:
             del prefs_cls.__annotations__[prop_name]
 
@@ -244,6 +252,8 @@ def _register_preferences_ui():
         box.prop(self, "mingw64_path")
         box.prop(self, "ares_emulator_executable")
         box.prop(self, "open_n64_rom_directory")
+        if getattr(self, "compilation_server", False):
+            box.prop(self, "n64_compilation_server_port")
         box.label(text="Libraries:")
         row = box.row(align=True)
         row.operator("n64_exporter.install_libdragon_dependencies", icon="IMPORT")

@@ -493,14 +493,20 @@ class N64MacroBase {
      * Write JSON data to a file in the build directory.
      * Creates the directory if it doesn't exist.
      */
+    static function buildDir():String {
+        var buildDir = Context.getDefines().get("arm_build_dir");
+        return buildDir != null ? buildDir : "build";
+    }
+
+    /** The file N64 builds change before each compile (build_pipeline.py). */
+    public static function compileStampPath():String {
+        return FileSystem.absolutePath(buildDir() + "/n64_compile.stamp");
+    }
+
     public static function writeJsonFile(filename:String, data:Dynamic):Void {
         var json = Json.stringify(data, null, "  ");
 
-        var defines = Context.getDefines();
-        var buildDir = defines.get("arm_build_dir");
-        if (buildDir == null) buildDir = "build";
-
-        var outPath = buildDir + "/" + filename;
+        var outPath = buildDir() + "/" + filename;
         try {
             var dir = haxe.io.Path.directory(outPath);
             if (dir != "" && !FileSystem.exists(dir)) {

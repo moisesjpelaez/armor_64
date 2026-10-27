@@ -510,6 +510,10 @@ def get_open_n64_rom_directory() -> bool:
     return _preference('open_n64_rom_directory', False)
 
 
+def get_n64_compilation_server_port() -> int:
+    return _preference('n64_compilation_server_port', 6464)
+
+
 def get_n64_runtime_path() -> str:
     """armor_64's C runtime and templates."""
     return os.path.join(_LIBRARY_DIR, 'runtime')

@@ -33,6 +33,11 @@ class N64Macro {
         if (localClass == null) return null;
         var cls = localClass.get();
 
+        // A compile server keeps typed modules and doesn't run their build
+        // macro again: the build changes this file before each compile, so the
+        // game's modules are typed (and extracted) every time
+        Context.registerModuleDependency(cls.module, N64MacroBase.compileStampPath());
+
         // Skip internal/engine classes
         if (cls.module.startsWith("iron.") || cls.module.startsWith("armory.")) return null;
 
