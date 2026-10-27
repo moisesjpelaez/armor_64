@@ -66,6 +66,14 @@ def clean():
         shutil.rmtree(n64_dir, onerror=lambda f, p, e: (os.chmod(p, 0o777), f(p)))
 
 
+def clean_project():
+    """Clean Project: armor_64's compilation servers stopped (they work in the
+    build folder, so it couldn't be deleted): this session's, and any left
+    by a Blender session that crashed."""
+    stop_server()
+    _stop_orphan_servers(n64_utils.get_n64_compilation_server_port())
+
+
 def _run(cmd, then: Callable[[int], None], meanwhile: Optional[Callable[[], bool]] = None):
     """Run a process like Armory's make.run_proc() (a thread waits for it, then
     `then` runs on Blender's main thread; in background mode it blocks), passing
@@ -152,6 +160,45 @@ def _start_server(haxe: str, port: int) -> bool:
         time.sleep(0.05)
     stop_server()  # Exited or not listening
     return False
+
+
+def _stop_orphan_servers(port: int):
+    """Stop the compilation servers on `port` whose Blender isn't running
+    anymore (a running one's belongs to another Blender session). Windows only:
+    elsewhere a server doesn't lock the folder it works in."""
+    if os.name != 'nt':
+        return
+    query = ("Get-CimInstance Win32_Process -Filter \"Name='haxe.exe'\" | "
+             "ForEach-Object { \"$($_.ProcessId)|$($_.ParentProcessId)|$($_.CommandLine)\" }")
+    try:
+        out = subprocess.run(['powershell', '-NoProfile', '-Command', query],
+                             capture_output=True, text=True, timeout=15).stdout
+    except (OSError, subprocess.SubprocessError) as e:
+        log.warn(f'N64: could not look for compilation servers left running: {e}')
+        return
+    for line in out.splitlines():
+        parts = line.strip().split('|', 2)
+        if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit():
+            continue
+        pid, parent, command = int(parts[0]), int(parts[1]), parts[2].split()
+        if command[-2:] == ['--wait', str(port)] and not _process_running(parent):
+            try:
+                os.kill(pid, 9)
+                log.info(f'N64: stopped a compilation server left by a crashed Blender (process {pid})')
+            except OSError as e:
+                log.warn(f'N64: could not stop the compilation server left running (process {pid}): {e}')
+
+
+def _process_running(pid: int) -> bool:
+    import ctypes
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    code = ctypes.c_ulong()
+    running = kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value == 259  # STILL_ACTIVE
+    kernel32.CloseHandle(handle)
+    return bool(running)
 
 
 def _listening(port: int) -> bool:

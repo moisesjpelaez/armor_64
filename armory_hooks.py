@@ -8,6 +8,8 @@ write_data.get_library_hooks()):
   - owns_build(): those builds are armor_64's
   - compile(), clean(): armor_64 builds them (exporter/export/build_pipeline.py)
     instead of Armory's khamake compile, and cleans only the N64 output
+  - clean_project(): Clean Project stops armor_64's compilation server, which
+    would keep the build folder locked
   - write_main(): for them, the arm_target_n64 and arm_build_dir defines and
     armor_64's Haxe macro (N64Macro)
 
@@ -43,6 +45,11 @@ def compile(request, done):
 def clean(request):
     from arm.n64.export import build_pipeline
     build_pipeline.clean()
+
+
+def clean_project():
+    from arm.n64.export import build_pipeline
+    build_pipeline.clean_project()
 
 
 def write_main():
