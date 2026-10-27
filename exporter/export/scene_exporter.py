@@ -17,6 +17,16 @@ import armor64.codegen as codegen
 import armor64.utils as n64_utils
 from armor64.export import linked_export
 
+# tiny3d's fixed-point matrices hold ±511 Blender units (runtime utils.h, FIXED_POINT_MAX / 64)
+DRAWABLE_RANGE = 511.0
+
+
+def _warn_if_out_of_range(obj, pos):
+    """The runtime skips drawing what's farther (converting it would crash the N64)."""
+    if any(abs(v) > DRAWABLE_RANGE for v in pos):
+        log.warn(f'N64: "{obj.name}" is at ({pos[0]:.0f}, {pos[1]:.0f}, {pos[2]:.0f}), beyond '
+                 f"±{DRAWABLE_RANGE:.0f} Blender units from the origin: it can't be drawn there on N64")
+
 
 def _collect_all_objects(scene):
     """Collect all objects including those inside instance collections.
@@ -228,6 +238,7 @@ def _process_camera(exporter, scene_name, obj, instance_matrix=None, object_name
     # Compute world matrix considering instance transform
     world_matrix = instance_matrix if instance_matrix else obj.matrix_world
     world_pos = list(world_matrix.to_translation())
+    _warn_if_out_of_range(obj, world_pos)
 
     cam_dir = world_matrix.to_3x3().col[2]
     cam_target = [
@@ -357,10 +368,9 @@ def _process_empty_object(exporter, scene_name, obj, object_name_to_index=None):
         "rot": [world_quat.x, world_quat.y, world_quat.z, world_quat.w],
         "scale": list(world_scale),
         "visible": not obj.hide_render,
-        "bounds_min": [0, 0, 0],
-        "bounds_max": [0, 0, 0],
+        "bounds_center": [0, 0, 0],
+        "bounds_half": [0, 0, 0],
         "traits": _extract_traits(obj),
-        "is_static": True,  # Computed after trait_info is loaded
         "parent_index": parent_index,
         "local_pos": local_pos,
         "local_rot": [local_quat.x, local_quat.y, local_quat.z, local_quat.w],
@@ -422,6 +432,7 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object
 
     # World-space decomposition (always needed for AABB computation and obj_data["pos"])
     world_pos = list(world_matrix.to_translation())
+    _warn_if_out_of_range(obj, world_pos)
     world_quat = world_matrix.to_quaternion()
     world_scale = world_matrix.to_scale()
 
@@ -458,18 +469,9 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object
         (local_max[2] - local_min[2]) * 0.5
     ]
 
-    # Pre-scale bounds by Blender object scale so they match position coordinate space.
-    # Positions are exported in Blender world units (no SCALE_FACTOR).
-    # SCALE_FACTOR is only applied to obj.transform.scale for the SRT rendering matrix.
-    # Since bounds are used for frustum culling (which operates in the same space as
-    # positions), they must be in Blender units, not in SCALE_FACTOR-compressed space.
-    # Always use world scale for bounds (even for parented objects).
-    bounds_min = [local_min[i] * world_scale[i] for i in range(3)]
-    bounds_max = [local_max[i] * world_scale[i] for i in range(3)]
-    # Handle negative scale (swap min/max per axis)
-    for i in range(3):
-        if bounds_min[i] > bounds_max[i]:
-            bounds_min[i], bounds_max[i] = bounds_max[i], bounds_min[i]
+    # Culling bounds in the mesh's own space (the renderer applies the object's
+    # world matrix: scale, rotation and parents)
+    bounds_center = [(local_min[i] + local_max[i]) * 0.5 for i in range(3)]
 
     # Extract rigid body data
     rigid_body_data = _extract_rigid_body(exporter, obj, half_extents, world_scale)
@@ -481,10 +483,9 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object
         "rot": [world_quat.x, world_quat.y, world_quat.z, world_quat.w],
         "scale": list(world_scale),
         "visible": not obj.hide_render,
-        "bounds_min": bounds_min,
-        "bounds_max": bounds_max,
+        "bounds_center": bounds_center,
+        "bounds_half": half_extents,
         "traits": _extract_traits(obj),
-        "is_static": True,  # Computed after trait_info is loaded
         "parent_index": parent_index,
         "local_pos": local_pos,
         "local_rot": [local_quat.x, local_quat.y, local_quat.z, local_quat.w],

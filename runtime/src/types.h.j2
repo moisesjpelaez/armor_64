@@ -54,7 +54,6 @@
  * PERFORMANCE NOTES
  * -----------------
  *   - Traits are compiled to C functions, not runtime objects
- *   - Static objects are batched into combined display lists
  *   - Transform matrices only recomputed when dirty flag set
  *   - Frustum culling uses cached world-space bounds
  */
@@ -78,8 +77,9 @@ typedef struct ArmAnimation ArmAnimation;
 
 #define FB_COUNT 3 {debug_hud_define}
 
-// Number of frames to keep transform dirty for double/triple buffering
-#define TRANSFORM_DIRTY_FRAMES 3
+// A changed transform is written into each framebuffer's matrix slot, one per frame
+// (the RSP may still read the other slots for the frames in flight)
+#define TRANSFORM_DIRTY_FRAMES FB_COUNT
 
 // TODO: remove this and clean scaling calculations from `renderer.c`. These calculations should be handled at export time using the values from `utils.py` or `Constants.hx`.
 #define WORLD_SCALE_FACTOR 0.015625f
@@ -182,18 +182,18 @@ typedef struct {{
  *   - Hot data first (accessed every frame): transform, visibility, matrices
  *   - Cold data after (accessed occasionally): bounds, physics, traits
  *
- * Cached world bounds are updated when transform.dirty > 0, avoiding
- * redundant calculations during frustum culling.
+ * The world matrix and cached world bounds are rebuilt only in the frame the
+ * transform changes; the next frames copy the matrix into their own slot.
  */
 typedef struct ArmObject {{
     // === HOT DATA (accessed every frame) ===
     ArmTransform transform;       // 44 bytes: position, rotation, scale (world-space for roots, local-space for parented objects)
-    T3DMat4FP *model_mat;         // 4 bytes: world matrix for rendering (RSP reads via DMA)
+    T3DMat4FP *model_mat;         // 4 bytes: FB_COUNT world matrices for rendering, one per framebuffer (RSP reads via DMA)
     T3DMat4 world_mat;            // 64 bytes: float world matrix (used for parent/child hierarchy composition)
     rspq_block_t *dpl;            // 4 bytes: display list pointer
     int16_t parent_index;         // 2 bytes: index into scene->objects, -1 = root (no parent)
     bool visible;                 // 1 byte
-    bool is_static;               // 1 byte
+    bool matrix_valid;            // 1 byte: world_mat fits tiny3d's fixed point (within ±511 BU); not drawn otherwise
     bool is_removed;              // 1 byte: object marked for removal
     uint8_t trait_count;          // 1 byte
 
@@ -202,8 +202,8 @@ typedef struct ArmObject {{
     T3DVec3 cached_world_aabb_max; // 12 bytes: world-space AABB max for culling
 
     // === COLD DATA (accessed occasionally) ===
-    T3DVec3 bounds_min;           // 12 bytes: local-space AABB min
-    T3DVec3 bounds_max;           // 12 bytes: local-space AABB max
+    T3DVec3 bounds_center;        // 12 bytes: local AABB center, in model units (BU × 64)
+    T3DVec3 bounds_half;          // 12 bytes: local AABB half size, in model units
     struct OimoRigidBody *rigid_body;  // 4 bytes
     ArmAnimation *animation;      // 4 bytes: skeletal animation (NULL = static mesh)
     ArmTrait *traits;             // 4 bytes

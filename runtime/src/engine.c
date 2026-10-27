@@ -4,6 +4,7 @@
 
 #include "types.h"
 #include "engine.h"
+#include "debug_config.h"
 #include "data/models.h"
 #include "iron/system/input.h"
 
@@ -27,8 +28,8 @@ void engine_init(void)
     display_init(RESOLUTION_320x240, DEPTH_16_BPP, FB_COUNT, GAMMA_NONE, FILTERS_RESAMPLE_ANTIALIAS);
 
     rdpq_init();
-#ifdef ARM_DEBUG_HUD
-	rdpq_debug_start();
+#if ARM_RDP_VALIDATOR
+    rdpq_debug_start();
 #endif
     t3d_init((T3DInitParams){});
     rdpq_text_register_font(FONT_BUILTIN_DEBUG_MONO, rdpq_font_load_builtin(FONT_BUILTIN_DEBUG_MONO));

@@ -108,9 +108,7 @@ def _haxe_cmd(hxml: str) -> list:
         return [haxe] + args
     port = n64_utils.get_n64_compilation_server_port()
     if not _start_server(haxe, port):
-        log.warn(f'N64: the compilation server could not use port {port} (Armory preferences); '
-                 'compiling without it')
-        return [haxe] + args
+        return [haxe] + args  # Compiles without the server (_start_server says why)
     return [haxe, '--connect', str(port)] + args
 
 
@@ -120,9 +118,17 @@ def _start_server(haxe: str, port: int) -> bool:
     global _server
     if _server is not None and _server.poll() is None:
         return True
-    # Already listening: this port's server from a Blender session that crashed
     if _listening(port):
-        return True
+        # Not this session's: reuse it only if a crashed Blender left it. Another
+        # open Blender's would work too, but the two sessions would keep each
+        # other's build folders locked (a server works in the last folder it compiled)
+        servers = _servers_on_port(port)
+        if servers is None or (servers and all(orphan for _, orphan in servers)):
+            return True
+        log.warn(f'N64: port {port} is used by another Blender session or program, compiling without '
+                 'the compilation server: give each open Blender its own N64 Compilation Server Port '
+                 '(Armory preferences)')
+        return False
     _server = subprocess.Popen([haxe, '--wait', str(port)])
     atexit.register(stop_server)
     # Connecting before it listens would fail
@@ -132,34 +138,46 @@ def _start_server(haxe: str, port: int) -> bool:
             return True
         time.sleep(0.05)
     stop_server()  # Exited or not listening
+    log.warn(f'N64: the compilation server could not start on port {port}, compiling without it')
     return False
 
 
 def _stop_orphan_servers(port: int):
-    """Stop the compilation servers on `port` whose Blender isn't running
-    anymore (a running one's belongs to another Blender session). Windows only:
-    elsewhere a server doesn't lock the folder it works in."""
+    """Stop the compilation servers on `port` left by a crashed Blender (another
+    open Blender's are left alone)."""
+    for pid, orphan in _servers_on_port(port) or []:
+        if not orphan:
+            continue
+        try:
+            os.kill(pid, 9)
+            log.info(f'N64: stopped a compilation server left by a crashed Blender (process {pid})')
+        except OSError as e:
+            log.warn(f'N64: could not stop the compilation server left running (process {pid}): {e}')
+
+
+def _servers_on_port(port: int) -> Optional[list]:
+    """(process id, orphan) of each compilation server on `port`: orphan when the
+    Blender that started it isn't running anymore. None where unknown: only
+    looked up on Windows, the only system where a server locks its folder."""
     if os.name != 'nt':
-        return
+        return None
     query = ("Get-CimInstance Win32_Process -Filter \"Name='haxe.exe'\" | "
              "ForEach-Object { \"$($_.ProcessId)|$($_.ParentProcessId)|$($_.CommandLine)\" }")
     try:
         out = subprocess.run(['powershell', '-NoProfile', '-Command', query],
                              capture_output=True, text=True, timeout=15).stdout
     except (OSError, subprocess.SubprocessError) as e:
-        log.warn(f'N64: could not look for compilation servers left running: {e}')
-        return
+        log.warn(f'N64: could not look for compilation servers: {e}')
+        return None
+    servers = []
     for line in out.splitlines():
         parts = line.strip().split('|', 2)
         if len(parts) != 3 or not parts[0].isdigit() or not parts[1].isdigit():
             continue
         pid, parent, command = int(parts[0]), int(parts[1]), parts[2].split()
-        if command[-2:] == ['--wait', str(port)] and not _process_running(parent):
-            try:
-                os.kill(pid, 9)
-                log.info(f'N64: stopped a compilation server left by a crashed Blender (process {pid})')
-            except OSError as e:
-                log.warn(f'N64: could not stop the compilation server left running (process {pid}): {e}')
+        if command[-2:] == ['--wait', str(port)]:
+            servers.append((pid, not _process_running(parent)))
+    return servers
 
 
 def _process_running(pid: int) -> bool:

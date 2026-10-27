@@ -65,13 +65,10 @@ def convert_scene_data(scene_data: dict) -> dict:
                 obj['local_rot'] = convert_quat_list(obj['local_rot'])
             if 'local_scale' in obj:
                 obj['local_scale'] = convert_scale_list(obj['local_scale'], factor=1.0)
-            if 'bounds_min' in obj:
-                obj['bounds_min'] = convert_vec3_list(obj['bounds_min'])
-                obj['bounds_max'] = convert_vec3_list(obj['bounds_max'])
-                # After axis swap (Y<->Z, negate), re-sort min/max per axis
-                for i in range(3):
-                    if obj['bounds_min'][i] > obj['bounds_max'][i]:
-                        obj['bounds_min'][i], obj['bounds_max'][i] = obj['bounds_max'][i], obj['bounds_min'][i]
+            if 'bounds_center' in obj:
+                # Model units: Blender units × 64 (tiny3d's base scale), as the world matrix expects
+                obj['bounds_center'] = [v / SCALE_FACTOR for v in convert_vec3_list(obj['bounds_center'])]
+                obj['bounds_half'] = [abs(v) / SCALE_FACTOR for v in convert_vec3_list(obj['bounds_half'])]
 
     return scene_data
 
@@ -87,8 +84,7 @@ def _fmt_vec3(v: List[float]) -> str:
 
 def generate_transform_block(prefix: str, pos: List[float],
                              rot: List[float] = None,
-                             scale: List[float] = None,
-                             is_static: bool = False) -> List[str]:
+                             scale: List[float] = None) -> List[str]:
     """Generate C code for transform initialization."""
     lines = []
     lines.append(f'    {prefix}.transform.loc = (T3DVec3){{{{{pos[0]:.6f}f, {pos[1]:.6f}f, {pos[2]:.6f}f}}}};')
@@ -98,8 +94,7 @@ def generate_transform_block(prefix: str, pos: List[float],
 
     if scale:
         lines.append(f'    {prefix}.transform.scale = (T3DVec3){{{{{scale[0]:.6f}f, {scale[1]:.6f}f, {scale[2]:.6f}f}}}};')
-        dirty_count = "1" if is_static else "FB_COUNT"
-        lines.append(f'    {prefix}.transform.dirty = {dirty_count};')
+        lines.append(f'    {prefix}.transform.dirty = TRANSFORM_DIRTY_FRAMES;')
 
     return lines
 
@@ -242,7 +237,6 @@ def generate_object_block(objects: List[Dict], trait_info: dict, scene_name: str
 
     for i, obj in enumerate(objects):
         prefix = f'objects[{i}]'
-        is_static = obj.get("is_static", False)
         parent_index = obj.get("parent_index", -1)
         is_empty = obj.get("is_empty", False)
 
@@ -252,9 +246,9 @@ def generate_object_block(objects: List[Dict], trait_info: dict, scene_name: str
             local_pos = obj.get("local_pos", obj["pos"])
             local_rot = obj.get("local_rot", obj["rot"])
             local_scale = obj.get("local_scale", obj["scale"])
-            lines.extend(generate_transform_block(prefix, local_pos, local_rot, local_scale, is_static))
+            lines.extend(generate_transform_block(prefix, local_pos, local_rot, local_scale))
         else:
-            lines.extend(generate_transform_block(prefix, obj["pos"], obj["rot"], obj["scale"], is_static))
+            lines.extend(generate_transform_block(prefix, obj["pos"], obj["rot"], obj["scale"]))
 
         if is_empty:
             # Empty objects: no mesh, no display list, no model matrix
@@ -263,10 +257,9 @@ def generate_object_block(objects: List[Dict], trait_info: dict, scene_name: str
             lines.append(f'    {prefix}.animation = NULL;')
         elif obj.get("is_skinned", False):
             # Skinned mesh: load raw model (no DPL baking), init animation system
-            mat_count = "1" if is_static else "FB_COUNT"
             lines.append(f'    {{')
             lines.append(f'        T3DModel *mdl = models_get_raw({obj["mesh"]});')
-            lines.append(f'        {prefix}.model_mat = malloc_uncached(sizeof(T3DMat4FP) * {mat_count});')
+            lines.append(f'        {prefix}.model_mat = malloc_uncached(sizeof(T3DMat4FP) * FB_COUNT);')
             lines.append(f'        {prefix}.animation = malloc(sizeof(ArmAnimation));')
             lines.append(f'        animation_init({prefix}.animation, mdl);')
             lines.append(f'        {prefix}.dpl = {prefix}.animation->dpl_skinned;')
@@ -274,51 +267,17 @@ def generate_object_block(objects: List[Dict], trait_info: dict, scene_name: str
         else:
             lines.append(f'    models_get({obj["mesh"]});')
             lines.append(f'    {prefix}.dpl = models_get_dpl({obj["mesh"]});')
-            mat_count = "1" if is_static else "FB_COUNT"
-            lines.append(f'    {prefix}.model_mat = malloc_uncached(sizeof(T3DMat4FP) * {mat_count});')
+            lines.append(f'    {prefix}.model_mat = malloc_uncached(sizeof(T3DMat4FP) * FB_COUNT);')
             lines.append(f'    {prefix}.animation = NULL;')
 
         # Parent/child hierarchy
         lines.append(f'    {prefix}.parent_index = {parent_index};')
 
         lines.append(f'    {prefix}.visible = {str(obj["visible"]).lower()};')
-        lines.append(f'    {prefix}.is_static = {str(is_static).lower()};')
         lines.append(f'    {prefix}.is_removed = false;')
 
-        bmin = obj.get("bounds_min", [0, 0, 0])
-        bmax = obj.get("bounds_max", [0, 0, 0])
-        pos = obj["pos"]
-        scale = obj["scale"]
-        lines.append(f'    {prefix}.bounds_min = {_fmt_vec3(bmin)};')
-        lines.append(f'    {prefix}.bounds_max = {_fmt_vec3(bmax)};')
-
-        # Initialize cached world AABB (will be updated when transform.dirty > 0)
-        # Rotate the local AABB by the object's quaternion using Arvo's method
-        # to get a correct world-space AABB for frustum culling.
-        rot = obj.get("rot", [0, 0, 0, 1])  # XYZW quaternion
-        qx, qy, qz, qw = rot[0], rot[1], rot[2], rot[3]
-        xx, yy, zz = qx*qx, qy*qy, qz*qz
-        xy, xz, yz = qx*qy, qx*qz, qy*qz
-        wx, wy, wz = qw*qx, qw*qy, qw*qz
-        m = [
-            [1.0 - 2.0*(yy+zz), 2.0*(xy-wz),       2.0*(xz+wy)],
-            [2.0*(xy+wz),       1.0 - 2.0*(xx+zz),  2.0*(yz-wx)],
-            [2.0*(xz-wy),       2.0*(yz+wx),        1.0 - 2.0*(xx+yy)]
-        ]
-        world_min = list(pos)
-        world_max = list(pos)
-        for i in range(3):
-            for j in range(3):
-                a = m[i][j] * bmin[j]
-                b = m[i][j] * bmax[j]
-                if a < b:
-                    world_min[i] += a
-                    world_max[i] += b
-                else:
-                    world_min[i] += b
-                    world_max[i] += a
-        lines.append(f'    {prefix}.cached_world_aabb_min = {_fmt_vec3(world_min)};')
-        lines.append(f'    {prefix}.cached_world_aabb_max = {_fmt_vec3(world_max)};')
+        lines.append(f'    {prefix}.bounds_center = {_fmt_vec3(obj.get("bounds_center", [0, 0, 0]))};')
+        lines.append(f'    {prefix}.bounds_half = {_fmt_vec3(obj.get("bounds_half", [0, 0, 0]))};')
 
         lines.append(f'    {prefix}.rigid_body = NULL;')
 

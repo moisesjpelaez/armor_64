@@ -11,23 +11,16 @@
 extern "C" {
 #endif
 
-#define MAX_SAFE_COORD 32000.0f
 #define PHYSICS_WORLD_BOUNDS 1000.0f
 
-// Check if float is finite (N64 doesn't have isfinite)
-static inline bool float_is_finite(float f) {
-    union { float f; uint32_t u; } val;
-    val.f = f;
-    return (val.u & 0x7F800000) != 0x7F800000;
-}
+// Largest value tiny3d's 16.16 fixed-point matrices hold (t3d_mat4_to_fixed). In the
+// renderer's ×64 space that's ±511 BU. Converting a larger float, or a NaN, raises an
+// exception on the N64's CPU (emulators may just clamp).
+#define FIXED_POINT_MAX 32767.0f
 
-// Check if transform values are safe for fixed-point conversion
-static inline bool transform_is_safe(const float* loc, const float* scale) {
-    for (int i = 0; i < 3; i++) {
-        if (!float_is_finite(loc[i]) || fabsf(loc[i]) > MAX_SAFE_COORD) return false;
-        if (!float_is_finite(scale[i]) || fabsf(scale[i]) > MAX_SAFE_COORD) return false;
-    }
-    return true;
+// Whether a float converts to tiny3d's fixed point (false for NaN and infinity too)
+static inline bool fits_fixed_point(float f) {
+    return fabsf(f) <= FIXED_POINT_MAX;
 }
 
 // Check if position is within world bounds

@@ -8,7 +8,7 @@ void it_translate(ArmTransform *t, float x, float y, float z)
 	t->loc.x += x;
 	t->loc.y += y;
 	t->loc.z += z;
-	t->dirty = FB_COUNT;
+	t->dirty = TRANSFORM_DIRTY_FRAMES;
 }
 
 void it_move(ArmTransform *t, float dx, float dy, float dz, float scale)
@@ -16,14 +16,14 @@ void it_move(ArmTransform *t, float dx, float dy, float dz, float scale)
 	t->loc.x += dx * scale;
 	t->loc.y += dy * scale;
 	t->loc.z += dz * scale;
-	t->dirty = FB_COUNT;
+	t->dirty = TRANSFORM_DIRTY_FRAMES;
 }
 
 void it_rotate_axis(ArmTransform *t, float ax, float ay, float az, float angle)
 {
 	float axis[3] = {ax, ay, az};
 	t3d_quat_rotate_euler(&t->rot, axis, angle);
-	t->dirty = FB_COUNT;
+	t->dirty = TRANSFORM_DIRTY_FRAMES;
 }
 
 void it_rotate_axis_global(ArmTransform *t, float ax, float ay, float az, float angle)
@@ -35,7 +35,7 @@ void it_rotate_axis_global(ArmTransform *t, float ax, float ay, float az, float 
 	fm_quat_t current = t->rot;
 	fm_quat_mul(&t->rot, &axis_rot, &current);
 
-	t->dirty = FB_COUNT;
+	t->dirty = TRANSFORM_DIRTY_FRAMES;
 }
 
 void it_set_loc(ArmTransform *t, float x, float y, float z)
@@ -43,7 +43,7 @@ void it_set_loc(ArmTransform *t, float x, float y, float z)
 	t->loc.x = x;
 	t->loc.y = y;
 	t->loc.z = z;
-	t->dirty = FB_COUNT;
+	t->dirty = TRANSFORM_DIRTY_FRAMES;
 }
 
 void it_set_rot(ArmTransform *t, float x, float y, float z, float w)
@@ -52,7 +52,7 @@ void it_set_rot(ArmTransform *t, float x, float y, float z, float w)
 	t->rot.y = y;
 	t->rot.z = z;
 	t->rot.w = w;
-	t->dirty = FB_COUNT;
+	t->dirty = TRANSFORM_DIRTY_FRAMES;
 }
 
 void it_set_rot_euler(ArmTransform *t, float x, float y, float z)
@@ -68,7 +68,7 @@ void it_set_rot_euler(ArmTransform *t, float x, float y, float z)
 	t->rot.x = sx * cy * cz - cx * sy * sz;
 	t->rot.y = cx * sy * cz + sx * cy * sz;
 	t->rot.z = cx * cy * sz - sx * sy * cz;
-	t->dirty = FB_COUNT;
+	t->dirty = TRANSFORM_DIRTY_FRAMES;
 }
 
 void it_set_scale(ArmTransform *t, float x, float y, float z)
@@ -76,7 +76,7 @@ void it_set_scale(ArmTransform *t, float x, float y, float z)
 	t->scale.x = x;
 	t->scale.y = y;
 	t->scale.z = z;
-	t->dirty = FB_COUNT;
+	t->dirty = TRANSFORM_DIRTY_FRAMES;
 }
 
 void it_reset(ArmTransform *t)
@@ -84,7 +84,7 @@ void it_reset(ArmTransform *t)
 	t->loc.v[0] = 0.0f; t->loc.v[1] = 0.0f; t->loc.v[2] = 0.0f;
 	t->rot.x = 0.0f; t->rot.y = 0.0f; t->rot.z = 0.0f; t->rot.w = 1.0f;
 	t->scale.v[0] = 1.0f; t->scale.v[1] = 1.0f; t->scale.v[2] = 1.0f;
-	t->dirty = FB_COUNT;
+	t->dirty = TRANSFORM_DIRTY_FRAMES;
 }
 
 void it_look(const ArmTransform *t, T3DVec3 *out)

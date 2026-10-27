@@ -494,11 +494,14 @@ def _addon_version(module_name):
 
 def _key_salt():
     """Changes to what produces the glTF from the same data: Blender, its glTF
-    exporter, Fast64 (converts the materials, its glTF extension writes them)
-    and this file."""
-    with open(__file__, 'rb') as f:
-        source = hashlib.sha1(f.read()).hexdigest()
-    return '|'.join([bpy.app.version_string, _addon_version('io_scene_gltf2'), _addon_version('fast64'), source])
+    exporter, Fast64 (converts the materials, its glTF extension writes them),
+    this file and exporter.py (prepares the material conversion)."""
+    sources = hashlib.sha1()
+    for path in (__file__, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'exporter.py')):
+        with open(path, 'rb') as f:
+            sources.update(f.read())
+    return '|'.join([bpy.app.version_string, _addon_version('io_scene_gltf2'), _addon_version('fast64'),
+                     sources.hexdigest()])
 
 
 def _settle_fast64(state):
@@ -581,6 +584,9 @@ def plan_meshes(exporter) -> bool:
     exporter.mesh_plan = {}
     for obj, mesh_name, _, armature, _ in _mesh_jobs(exporter):
         file = f'{mesh_name}.gltf'
+        # tiny3d drops geometry without a material (fine for hidden collision shapes)
+        if not obj.hide_render and not any(slot.material for slot in obj.material_slots):
+            log.warn(f'N64: mesh "{mesh_name}" has no material, so it is invisible on N64: assign one')
         # Skinned meshes are always exported (their animations aren't in the key)
         key = None if armature else _mesh_key(obj, conversion_scene)
         entry = old.get(file)

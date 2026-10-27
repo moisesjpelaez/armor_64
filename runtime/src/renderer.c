@@ -45,139 +45,98 @@ void renderer_begin_frame(T3DViewport *viewport, ArmScene *scene) {
 	T3DVec3 cam_loc_scaled = (T3DVec3){{cam->transform.loc.v[0] * WORLD_SCALE_FACTOR_INV, cam->transform.loc.v[1] * WORLD_SCALE_FACTOR_INV, cam->transform.loc.v[2] * WORLD_SCALE_FACTOR_INV}};
 	T3DVec3 cam_target_scaled = (T3DVec3){{cam->target.v[0] * WORLD_SCALE_FACTOR_INV, cam->target.v[1] * WORLD_SCALE_FACTOR_INV, cam->target.v[2] * WORLD_SCALE_FACTOR_INV}};
 
+	// Real near/far: tiny3d normalizes depth (W) from them, so the matrix must not be rescaled afterwards
   	t3d_viewport_set_projection(viewport, T3D_DEG_TO_RAD(cam->fov), cam->near * WORLD_SCALE_FACTOR_INV, cam->far * WORLD_SCALE_FACTOR_INV);
-  	t3d_viewport_look_at(viewport, &cam_loc_scaled, &cam_target_scaled, &(T3DVec3){{0.0f, 1.0f, 0.0f}});
 
-	// Scale down the projection matrix to compensate for scale-shifted space
-	for (int i = 0; i < 4; i++) {
-		for (int j = 0; j < 4; j++) {
-			viewport->matProj.m[i][j] *= WORLD_SCALE_FACTOR;
+	// A camera beyond ±511 BU can't be converted to fixed point: keep the last view
+	bool camera_fits = true;
+	for (int i = 0; i < 3; i++) {
+		camera_fits &= fits_fixed_point(cam_loc_scaled.v[i]) && fits_fixed_point(cam_target_scaled.v[i]);
+	}
+	if (camera_fits) {
+	  	t3d_viewport_look_at(viewport, &cam_loc_scaled, &cam_target_scaled, &(T3DVec3){{0.0f, 1.0f, 0.0f}});
+	}
+}
+
+// The object's float world matrix (×64 space), composed with its parent's
+static void build_world_matrix(ArmScene *scene, ArmObject *obj) {
+	if (obj->parent_index >= 0) {
+		T3DMat4 local;
+		t3d_mat4_from_srt(&local, obj->transform.scale.v, obj->transform.rot.v, obj->transform.loc.v);
+		t3d_mat4_mul(&obj->world_mat, &scene->objects[obj->parent_index].world_mat, &local);
+	} else {
+		// Roots hold Blender-unit positions and 1/64 scales: bring both to the ×64 space
+		float scale[3] = {
+			obj->transform.scale.v[0] * WORLD_SCALE_FACTOR_INV,
+			obj->transform.scale.v[1] * WORLD_SCALE_FACTOR_INV,
+			obj->transform.scale.v[2] * WORLD_SCALE_FACTOR_INV
+		};
+		float loc[3] = {
+			obj->transform.loc.v[0] * WORLD_SCALE_FACTOR_INV,
+			obj->transform.loc.v[1] * WORLD_SCALE_FACTOR_INV,
+			obj->transform.loc.v[2] * WORLD_SCALE_FACTOR_INV
+		};
+		t3d_mat4_from_srt(&obj->world_mat, scale, obj->transform.rot.v, loc);
+	}
+}
+
+static bool matrix_fits_fixed_point(const T3DMat4 *m) {
+	const float *f = &m->m[0][0];
+	for (int i = 0; i < 16; i++) {
+		if (!fits_fixed_point(f[i])) return false;
+	}
+	return true;
+}
+
+// World AABB of the local bounds through the full world matrix (rotation, scale and
+// parents; Arvo's method), in the ×64 space of the camera frustum
+static void update_world_aabb(ArmObject *obj) {
+	const T3DMat4 *m = &obj->world_mat;
+	for (int j = 0; j < 3; j++) {
+		float center = m->m[3][j];
+		float extent = 0.0f;
+		for (int k = 0; k < 3; k++) {
+			center += m->m[k][j] * obj->bounds_center.v[k];
+			extent += fabsf(m->m[k][j]) * obj->bounds_half.v[k];
 		}
+		obj->cached_world_aabb_min.v[j] = center - extent;
+		obj->cached_world_aabb_max.v[j] = center + extent;
 	}
 }
 
 void renderer_update_objects(ArmScene *scene) {
-	// === Pass 1: Propagate parent→child dirty flags ===
-	// Skip this pass entirely if scene has no parented objects (common case).
-	// Objects are topologically sorted (parents before children at export time),
-	// so a single forward pass is sufficient for arbitrary nesting depth.
+	// A child is rebuilt in the frame its parent changes. Parents come before
+	// their children (sorted at export), so one pass covers any depth.
 	if (scene->has_parented_objects) {
 		for (uint16_t i = 0; i < scene->object_count; i++) {
 			ArmObject *obj = &scene->objects[i];
-			if (obj->is_removed) continue;
-			if (obj->parent_index >= 0 && scene->objects[obj->parent_index].transform.dirty > 0) {
-				// Parent is dirty → child must recompute its world matrix
-				if (obj->transform.dirty == 0) {
-					obj->transform.dirty = obj->is_static ? 1 : FB_COUNT;
-				}
+			if (obj->is_removed || obj->parent_index < 0) continue;
+			if (scene->objects[obj->parent_index].transform.dirty == TRANSFORM_DIRTY_FRAMES) {
+				obj->transform.dirty = TRANSFORM_DIRTY_FRAMES;
 			}
 		}
 	}
 
-	// === Pass 2: Rebuild matrices (with hierarchy composition) ===
-	// Uses the same pattern as tiny3d's skeleton system:
-	// 1. Build float T3DMat4 from SRT
-	// 2. Multiply float matrices for parent/child composition
-	// 3. Convert result to fixed-point T3DMat4FP for the RSP
 	for (uint16_t i = 0; i < scene->object_count; i++) {
 		ArmObject *obj = &scene->objects[i];
+		if (obj->is_removed || obj->transform.dirty == 0) continue;
 
-		// Skip removed objects
-		if (obj->is_removed) {
-			continue;
-		}
-
-		if (obj->transform.dirty == 0) {
-			continue;
-		}
-
-		// Safety check: skip objects with invalid transform values
-		if (!transform_is_safe(obj->transform.loc.v, obj->transform.scale.v)) {
-			obj->transform.loc = (T3DVec3){{0.0f, 0.0f, 0.0f}};
-			obj->visible = false;
-		}
-
-		int mat_idx = obj->is_static ? 0 : frameIdx;
-
-		if (obj->parent_index >= 0) {
-			// Parented object: build local float matrix, compose with parent, convert to FP
-			// Step 1: Build local float matrix from local SRT
-			T3DMat4 local_float;
-			t3d_mat4_from_srt(&local_float, obj->transform.scale.v, obj->transform.rot.v, obj->transform.loc.v);
-
-			// Step 2: Multiply parent_world * local → world_float
-			ArmObject *parent = &scene->objects[obj->parent_index];
-			T3DMat4 world_float;
-			t3d_mat4_mul(&world_float, &parent->world_mat, &local_float);
-
-			// Store world float matrix for children to use
-			obj->world_mat = world_float;
-
-			// Step 3: Convert to fixed-point for RSP rendering (skip for empties)
-			if (obj->model_mat) {
-				t3d_mat4_to_fixed(&obj->model_mat[mat_idx], &world_float);
-			}
-		} else {
-			// Root object: build float matrix with scale and position multiplied by WORLD_SCALE_FACTOR_INV, store for children, convert to FP
-			T3DMat4 world_float;
-			float scale_scaled[3] = {
-				obj->transform.scale.v[0] * WORLD_SCALE_FACTOR_INV,
-				obj->transform.scale.v[1] * WORLD_SCALE_FACTOR_INV,
-				obj->transform.scale.v[2] * WORLD_SCALE_FACTOR_INV
-			};
-			float loc_scaled[3] = {
-				obj->transform.loc.v[0] * WORLD_SCALE_FACTOR_INV,
-				obj->transform.loc.v[1] * WORLD_SCALE_FACTOR_INV,
-				obj->transform.loc.v[2] * WORLD_SCALE_FACTOR_INV
-			};
-			t3d_mat4_from_srt(&world_float, scale_scaled, obj->transform.rot.v, loc_scaled);
-			obj->world_mat = world_float;
-			if (obj->model_mat) {
-				t3d_mat4_to_fixed(&obj->model_mat[mat_idx], &world_float);
+		// Changed this frame: rebuild the float matrix and the culling box. The next
+		// frames only convert the same matrix into their own slot.
+		if (obj->transform.dirty == TRANSFORM_DIRTY_FRAMES) {
+			build_world_matrix(scene, obj);
+			bool was_valid = obj->matrix_valid;
+			obj->matrix_valid = matrix_fits_fixed_point(&obj->world_mat);
+			if (obj->matrix_valid) {
+				update_world_aabb(obj);
+			} else if (was_valid) {
+				debugf("Object %u is beyond the drawable range (±511 BU) or not a number: not drawn\n", i);
 			}
 		}
 
-		// Update cached world-space AABB for frustum culling.
-		// Extract world position from float world matrix (column 3)
-		{
-			float world_pos[3];
-			// Keep cached AABB in 64x space to match the 64x camera frustum
-			world_pos[0] = obj->world_mat.m[3][0];
-			world_pos[1] = obj->world_mat.m[3][1];
-			world_pos[2] = obj->world_mat.m[3][2];
-
-			// Rotate the local AABB by the object's quaternion using Arvo's method
-			float qx = obj->transform.rot.v[0];
-			float qy = obj->transform.rot.v[1];
-			float qz = obj->transform.rot.v[2];
-			float qw = obj->transform.rot.v[3];
-			float xx = qx*qx, yy = qy*qy, zz = qz*qz;
-			float xy = qx*qy, xz = qx*qz, yz = qy*qz;
-			float wx = qw*qx, wy = qw*qy, wz = qw*qz;
-			// Rotation matrix from quaternion
-			float m[3][3] = {
-				{ 1.0f - 2.0f*(yy+zz), 2.0f*(xy-wz),         2.0f*(xz+wy)         },
-				{ 2.0f*(xy+wz),         1.0f - 2.0f*(xx+zz),  2.0f*(yz-wx)         },
-				{ 2.0f*(xz-wy),         2.0f*(yz+wx),         1.0f - 2.0f*(xx+yy)  }
-			};
-			// Start from world position, accumulate rotated AABB extents (scaled to 64x space)
-			for (int j = 0; j < 3; j++) {
-				obj->cached_world_aabb_min.v[j] = world_pos[j];
-				obj->cached_world_aabb_max.v[j] = world_pos[j];
-				for (int k = 0; k < 3; k++) {
-					float a = m[j][k] * obj->bounds_min.v[k] * WORLD_SCALE_FACTOR_INV;
-					float b = m[j][k] * obj->bounds_max.v[k] * WORLD_SCALE_FACTOR_INV;
-					if (a < b) {
-						obj->cached_world_aabb_min.v[j] += a;
-						obj->cached_world_aabb_max.v[j] += b;
-					} else {
-						obj->cached_world_aabb_min.v[j] += b;
-						obj->cached_world_aabb_max.v[j] += a;
-					}
-				}
-			}
+		if (obj->model_mat && obj->matrix_valid) {
+			t3d_mat4_to_fixed(&obj->model_mat[frameIdx], &obj->world_mat);
 		}
-
 		obj->transform.dirty--;
 	}
 }
@@ -210,29 +169,24 @@ void renderer_draw_scene(T3DViewport *viewport, ArmScene *scene) {
 	t3d_matrix_push_pos(1);
 	for (uint16_t i = 0; i < scene->object_count; i++) {
 		ArmObject *obj = &scene->objects[i];
-		if (!obj->visible) {
+		// Empties and models that failed to load have no display list
+		if (!obj->visible || !obj->matrix_valid || !obj->dpl) {
 			continue;
 		}
 
-		// Use cached world AABB - updated only when transform.dirty > 0
+		// Cached world AABB: rebuilt only when the transform changes
 		if (!t3d_frustum_vs_aabb(frustum, &obj->cached_world_aabb_min, &obj->cached_world_aabb_max)) {
 			continue;
 		}
 
-		// Skip if display list not loaded (model failed to load)
-		if (!obj->dpl) {
-			continue;
-		}
-
 		visible_count++;
-		int mat_idx = obj->is_static ? 0 : frameIdx;
 
 		// Skinned models: select skeleton buffer before drawing
 		if (obj->animation) {
 			animation_use(obj->animation);
 		}
 
-		t3d_matrix_set(&obj->model_mat[mat_idx], true);
+		t3d_matrix_set(&obj->model_mat[frameIdx], true);
 		rspq_block_run(obj->dpl);
 	}
 	t3d_matrix_pop(1);

@@ -81,6 +81,7 @@ class N64Exporter:
         self.libraries_before = None     # Library names before appending them (None: nothing appended)
 
         self.assets_exported = False
+        self.for_emulator = False  # Play: the ROM runs in Ares (debug_config.h)
         self.materials_converted = False
         self.mesh_plan = {}  # glTF file -> {key, entry} (mesh_exporter.plan_meshes)
 
@@ -147,9 +148,6 @@ class N64Exporter:
                 self.max_physics_bodies = max(self.max_physics_bodies, self.physics_body_count)
                 self.max_mesh_colliders = max(self.max_mesh_colliders, self.mesh_collider_count)
                 self.max_contact_bodies = max(self.max_contact_bodies, self.contact_body_count)
-
-            # Compute static flags after trait_info is loaded
-            n64_utils.compute_static_flags(self.scene_data, self.trait_info)
 
             # Phase 4: Detect UI canvas (sets has_ui flag)
             ui_exporter.detect_ui_canvas(self)
@@ -247,6 +245,7 @@ class N64Exporter:
 
     def play(self) -> bool:
         """Export, build, and run in emulator."""
+        self.for_emulator = True
         if not self.publish():
             return False
         build_runner.run_emulator()
@@ -400,6 +399,9 @@ class N64Exporter:
                 log.warn('Fast64 addon not found - skipping F3D material conversion')
                 return False
 
+            # By name: each F3D material takes its source material's name
+            cull_modes = {m.name: getattr(m, 'arm_cull_mode', 'clockwise')
+                          for m in bpy.data.materials if not getattr(m, 'is_f3d', False)}
             bpy.ops.scene.f3d_convert_to_bsdf(
                 direction='F3D',
                 converter_type='All',
@@ -410,10 +412,27 @@ class N64Exporter:
                 default_to_fog=False,
                 set_rendermode_without_fog=False
             )
+            self._apply_armory_culling(cull_modes)
             return True
         except Exception as e:
             log.warn(f'F3D material conversion failed: {e}')
             return False
+
+    @staticmethod
+    def _apply_armory_culling(cull_modes: dict):
+        """Fast64 takes back-face culling from Blender's viewport setting (off by
+        default), while Armory draws with the material's Cull Mode: set the
+        converted materials' culling from the Cull Mode of their source."""
+        for material in bpy.data.materials:
+            mode = cull_modes.get(material.name)
+            if mode is None or material.library or not getattr(material, 'is_f3d', False):
+                continue
+            if mode == 'counter_clockwise':
+                log.warn(f'Material "{material.name}": Cull Mode "Back" (back faces only) isn\'t '
+                         'supported on N64; it is drawn on both sides')
+            # Fast64's update callbacks act on the context's material
+            with bpy.context.temp_override(material=material):
+                material.f3d_mat.rdp_settings.g_cull_back = mode == 'clockwise'
 
     def _reset_materials_to_bsdf(self):
         """Reset materials back to BSDF format (requires Fast64 addon)."""

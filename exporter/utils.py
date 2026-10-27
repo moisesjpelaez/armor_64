@@ -335,53 +335,6 @@ def to_c_literal(value, ctype: str) -> str:
 
 
 # =============================================================================
-# Static Object Detection
-# =============================================================================
-
-def compute_static_flags(scene_data: dict, trait_info: dict) -> None:
-    """Mark objects as static if no dynamic physics and no transform-mutating traits."""
-    def trait_mutates_transform(trait_class: str) -> bool:
-        # Scenes store package-relative class names (see trait_key)
-        return get_trait(trait_info, trait_class).get('meta', {}).get('mutates_transform', False)
-
-    for scene in scene_data.values():
-        for obj in scene.get("objects", []):
-            rb = obj.get("rigid_body")
-            # Object is NOT static if:
-            # - It has kinematic or dynamic physics (anything except pure Passive)
-            # - Passive + Animated = Kinematic (not static)
-            # - Active (any combo) = Kinematic or Dynamic (not static)
-            if rb:
-                blender_type = rb.get("rb_type", "ACTIVE")
-                is_animated = rb.get("is_animated", False)
-                # Only pure Passive (no Animated) is static for physics
-                is_physics_static = (blender_type == "PASSIVE" and not is_animated)
-            else:
-                is_physics_static = True  # No rigid body = static
-
-            any_trait_mutates = any(
-                trait_mutates_transform(t.get("class_name", ""))
-                for t in obj.get("traits", [])
-            )
-            obj["is_static"] = is_physics_static and not any_trait_mutates
-
-    # Second pass: force children of dynamic parents to also be dynamic.
-    # A child with is_static=True whose parent is dynamic would never update
-    # its matrix after the parent moves.
-    for scene_name, scene in scene_data.items():
-        changed = True
-        while changed:
-            changed = False
-            for obj in scene.get("objects", []):
-                parent_idx = obj.get("parent_index", -1)
-                if parent_idx >= 0 and obj.get("is_static", False):
-                    parent_obj = scene["objects"][parent_idx]
-                    if not parent_obj.get("is_static", False):
-                        obj["is_static"] = False
-                        changed = True
-
-
-# =============================================================================
 # Collision Mesh
 # =============================================================================
 
