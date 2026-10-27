@@ -34,7 +34,7 @@ extern "C" {
  * ArmAnimation — per-object skeletal animation instance.
  *
  * Memory ownership:
- *   - skeleton / skeleton_blend: owned, freed by animation_destroy()
+ *   - skeleton: owned, freed by animation_destroy()
  *   - anims[]:  owned, freed by animation_destroy()
  *   - dpl_skinned: owned, freed by animation_destroy()
  *   - model:    weak reference (owned by models system, NOT freed here)
@@ -43,7 +43,6 @@ extern "C" {
 typedef struct ArmAnimation {
     // --- Skeleton ---
     T3DSkeleton skeleton;           // Buffered skeleton (has FP matrices for RSP)
-    T3DSkeleton skeleton_blend;     // Clone for blending (no matrices)
 
     // --- Animation clips ---
     T3DAnim anims[ANIM_MAX_CLIPS];
@@ -52,8 +51,6 @@ typedef struct ArmAnimation {
 
     // --- Playback state ---
     uint16_t current_anim;           // Index of primary clip (attached to skeleton)
-    uint16_t blend_anim;             // Index of blend clip (0xFFFF = none)
-    float blend_factor;             // 0.0 = current only, 1.0 = blend only
     bool playing;
     float speed;
 
@@ -77,7 +74,7 @@ void animation_destroy(ArmAnimation *anim);
 
 /**
  * Play a clip by exact name.
- * Rewinds to t=0, attaches to main skeleton, starts playback.
+ * Resets the skeleton to its rest pose, rewinds to t=0 and starts playback.
  * @return true if clip was found and started
  */
 bool animation_play(ArmAnimation *anim, const char *name);

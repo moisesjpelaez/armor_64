@@ -12,6 +12,7 @@
  * Template: scenes.c.j2
  */
 #include "scenes.h"
+#include "models.h"
 
 #if ENGINE_ENABLE_PHYSICS
 #include "../oimo/physics.h"
@@ -28,6 +29,16 @@ typedef struct {{
 }} SceneGroupEntry;
 
 {scene_group_data}
+
+// The models each scene uses: a scene switch keeps the next scene's loaded
+static const bool g_scene_models[SCENE_COUNT][MODEL_COUNT] = {{
+{scene_model_rows}
+}};
+
+const bool *scene_models(SceneId id)
+{{
+    return g_scene_models[id];
+}}
 
 // Forward declarations
 void scene_on_add(SceneId id);

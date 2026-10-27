@@ -3,7 +3,6 @@
  *
  * Implementation follows tiny3d example 08_animation:
  *   - Buffered skeleton for triple-buffered rendering
- *   - Blend skeleton (no matrices) for cross-fade support
  *   - First clip auto-attached to main skeleton and playing
  *   - Skinned DPL recorded once at init time
  */
@@ -24,7 +23,6 @@ void animation_init(ArmAnimation *anim, T3DModel *model)
     anim->model        = model;
     anim->speed        = 1.0f;
     anim->playing      = false;  // Start disabled until skeleton verified
-    anim->blend_anim   = 0xFF;
     anim->current_anim = 0;
 
     // Guard: check if model actually has skeleton data
@@ -38,9 +36,8 @@ void animation_init(ArmAnimation *anim, T3DModel *model)
     }
 
     // Create buffered skeleton from model's skeleton definition
-    anim->skeleton       = t3d_skeleton_create_buffered(model, FB_COUNT);
-    anim->skeleton_blend = t3d_skeleton_clone(&anim->skeleton, false);
-    anim->playing        = true;  // Now safe to enable
+    anim->skeleton = t3d_skeleton_create_buffered(model, FB_COUNT);
+    anim->playing  = true;  // Now safe to enable
 
     // Auto-discover animation clips from the model
     uint32_t model_anim_count = t3d_model_get_animation_count(model);
@@ -59,16 +56,6 @@ void animation_init(ArmAnimation *anim, T3DModel *model)
             anim->anim_names[i] = anim_chunks[i]->name;
             anim->anims[i]      = t3d_anim_create(model, anim_chunks[i]->name);
             t3d_anim_attach(&anim->anims[i], &anim->skeleton);
-
-            T3DAnim *ta = &anim->anims[i];
-            for (int c = 0; c < ta->animRef->channelsQuat; c++) {
-                ta->targetsQuat[c].kfCurr = *ta->targetsQuat[c].targetQuat;
-                ta->targetsQuat[c].kfNext = *ta->targetsQuat[c].targetQuat;
-            }
-            for (int c = 0; c < ta->animRef->channelsScalar; c++) {
-                ta->targetsScalar[c].kfCurr = *ta->targetsScalar[c].targetScalar;
-                ta->targetsScalar[c].kfNext = *ta->targetsScalar[c].targetScalar;
-            }
         }
         // Auto-play first clip if available
         t3d_anim_set_playing(&anim->anims[0], true);
@@ -93,7 +80,6 @@ void animation_destroy(ArmAnimation *anim)
         t3d_anim_destroy(&anim->anims[i]);
     }
 
-    t3d_skeleton_destroy(&anim->skeleton_blend);
     t3d_skeleton_destroy(&anim->skeleton);
 
     anim->anim_count = 0;
@@ -129,13 +115,14 @@ bool animation_play(ArmAnimation *anim, const char *name)
         t3d_anim_set_playing(&anim->anims[anim->current_anim], false);
     }
 
+    // Rest pose first: bones the new clip doesn't animate would keep the old clip's pose
+    t3d_skeleton_reset(&anim->skeleton);
+
     // Start new clip (already attached in init)
     anim->current_anim = (uint16_t)idx;
     t3d_anim_set_playing(&anim->anims[idx], true);
     t3d_anim_set_time(&anim->anims[idx], 0.0f);
     anim->playing      = true;
-    anim->blend_anim   = 0xFF;
-    anim->blend_factor = 0.0f;
 
     return true;
 }
@@ -183,16 +170,8 @@ void animation_update(ArmAnimation *anim, float dt)
 {
     if (!anim || !anim->playing) return;
 
-    // Update primary clip
     if (anim->current_anim < anim->anim_count) {
         t3d_anim_update(&anim->anims[anim->current_anim], dt);
-    }
-
-    // Cross-fade blend if active
-    if (anim->blend_anim != 0xFF && anim->blend_anim < anim->anim_count) {
-        t3d_anim_update(&anim->anims[anim->blend_anim], dt);
-        t3d_skeleton_blend(&anim->skeleton, &anim->skeleton,
-                           &anim->skeleton_blend, anim->blend_factor);
     }
 
     // Recalculate bone matrices for rendering

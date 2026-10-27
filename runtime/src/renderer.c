@@ -18,6 +18,7 @@
 #endif
 
 static int frameIdx = 0;
+static bool has_camera = false;  // The scene has a camera: 3D is drawn (UI-only scenes have none)
 
 // Forward declaration — called in renderer_begin_frame before camera setup
 void renderer_update_objects(ArmScene *scene);
@@ -27,6 +28,8 @@ void renderer_begin_frame(T3DViewport *viewport, ArmScene *scene) {
 	frameIdx = (frameIdx + 1) % FB_COUNT;
 	renderer_update_objects(scene);
 
+	has_camera = scene->active_camera_id < scene->camera_count;
+	if (!has_camera) return;
   	ArmCamera *cam = &scene->cameras[scene->active_camera_id];
 
 	// If camera has a parent, transform local pos/target into world space
@@ -35,18 +38,18 @@ void renderer_begin_frame(T3DViewport *viewport, ArmScene *scene) {
 		t3d_mat4_mul_vec3(&world_pos4, cam->parent_world_mat, &cam->local_pos);
 		t3d_mat4_mul_vec3(&world_target4, cam->parent_world_mat, &cam->local_target);
 		// Scale back to 1x space for consistency within the camera struct
-		cam->transform.loc = (T3DVec3){{world_pos4.v[0] * WORLD_SCALE_FACTOR, world_pos4.v[1] * WORLD_SCALE_FACTOR, world_pos4.v[2] * WORLD_SCALE_FACTOR}};
-		cam->target = (T3DVec3){{world_target4.v[0] * WORLD_SCALE_FACTOR, world_target4.v[1] * WORLD_SCALE_FACTOR, world_target4.v[2] * WORLD_SCALE_FACTOR}};
+		cam->transform.loc = (T3DVec3){{world_pos4.v[0] * BU_PER_MODEL_UNIT, world_pos4.v[1] * BU_PER_MODEL_UNIT, world_pos4.v[2] * BU_PER_MODEL_UNIT}};
+		cam->target = (T3DVec3){{world_target4.v[0] * BU_PER_MODEL_UNIT, world_target4.v[1] * BU_PER_MODEL_UNIT, world_target4.v[2] * BU_PER_MODEL_UNIT}};
 	} else {
 		// Moved by a trait (transform.loc): same rotation, as in Armory
 		t3d_vec3_add(&cam->target, &cam->transform.loc, &cam->look_dir);
 	}
 
-	T3DVec3 cam_loc_scaled = (T3DVec3){{cam->transform.loc.v[0] * WORLD_SCALE_FACTOR_INV, cam->transform.loc.v[1] * WORLD_SCALE_FACTOR_INV, cam->transform.loc.v[2] * WORLD_SCALE_FACTOR_INV}};
-	T3DVec3 cam_target_scaled = (T3DVec3){{cam->target.v[0] * WORLD_SCALE_FACTOR_INV, cam->target.v[1] * WORLD_SCALE_FACTOR_INV, cam->target.v[2] * WORLD_SCALE_FACTOR_INV}};
+	T3DVec3 cam_loc_scaled = (T3DVec3){{cam->transform.loc.v[0] * MODEL_UNITS_PER_BU, cam->transform.loc.v[1] * MODEL_UNITS_PER_BU, cam->transform.loc.v[2] * MODEL_UNITS_PER_BU}};
+	T3DVec3 cam_target_scaled = (T3DVec3){{cam->target.v[0] * MODEL_UNITS_PER_BU, cam->target.v[1] * MODEL_UNITS_PER_BU, cam->target.v[2] * MODEL_UNITS_PER_BU}};
 
 	// Real near/far: tiny3d normalizes depth (W) from them, so the matrix must not be rescaled afterwards
-  	t3d_viewport_set_projection(viewport, T3D_DEG_TO_RAD(cam->fov), cam->near * WORLD_SCALE_FACTOR_INV, cam->far * WORLD_SCALE_FACTOR_INV);
+  	t3d_viewport_set_projection(viewport, T3D_DEG_TO_RAD(cam->fov), cam->near * MODEL_UNITS_PER_BU, cam->far * MODEL_UNITS_PER_BU);
 
 	// A camera beyond ±511 BU can't be converted to fixed point: keep the last view
 	bool camera_fits = true;
@@ -67,14 +70,14 @@ static void build_world_matrix(ArmScene *scene, ArmObject *obj) {
 	} else {
 		// Roots hold Blender-unit positions and 1/64 scales: bring both to the ×64 space
 		float scale[3] = {
-			obj->transform.scale.v[0] * WORLD_SCALE_FACTOR_INV,
-			obj->transform.scale.v[1] * WORLD_SCALE_FACTOR_INV,
-			obj->transform.scale.v[2] * WORLD_SCALE_FACTOR_INV
+			obj->transform.scale.v[0] * MODEL_UNITS_PER_BU,
+			obj->transform.scale.v[1] * MODEL_UNITS_PER_BU,
+			obj->transform.scale.v[2] * MODEL_UNITS_PER_BU
 		};
 		float loc[3] = {
-			obj->transform.loc.v[0] * WORLD_SCALE_FACTOR_INV,
-			obj->transform.loc.v[1] * WORLD_SCALE_FACTOR_INV,
-			obj->transform.loc.v[2] * WORLD_SCALE_FACTOR_INV
+			obj->transform.loc.v[0] * MODEL_UNITS_PER_BU,
+			obj->transform.loc.v[1] * MODEL_UNITS_PER_BU,
+			obj->transform.loc.v[2] * MODEL_UNITS_PER_BU
 		};
 		t3d_mat4_from_srt(&obj->world_mat, scale, obj->transform.rot.v, loc);
 	}
@@ -164,10 +167,11 @@ void renderer_draw_scene(T3DViewport *viewport, ArmScene *scene) {
 
 	const T3DFrustum *frustum = &viewport->viewFrustum;
 	int visible_count = 0;
+	uint16_t drawn_count = has_camera ? scene->object_count : 0;
 
 	// Render dynamic objects with per-frame frustum culling
 	t3d_matrix_push_pos(1);
-	for (uint16_t i = 0; i < scene->object_count; i++) {
+	for (uint16_t i = 0; i < drawn_count; i++) {
 		ArmObject *obj = &scene->objects[i];
 		// Empties and models that failed to load have no display list
 		if (!obj->visible || !obj->matrix_valid || !obj->dpl) {

@@ -18,6 +18,7 @@ typedef enum SceneId {{
 {scene_declarations}
 
 void scene_init(SceneId id);
+const bool *scene_models(SceneId id);  // The models it uses, indexed by ModelId
 void scene_on_ready(SceneId id);
 void scene_on_fixed_update(SceneId id, float dt);
 void scene_on_update(SceneId id, float dt);

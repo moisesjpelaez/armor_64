@@ -81,9 +81,10 @@ typedef struct ArmAnimation ArmAnimation;
 // (the RSP may still read the other slots for the frames in flight)
 #define TRANSFORM_DIRTY_FRAMES FB_COUNT
 
-// TODO: remove this and clean scaling calculations from `renderer.c`. These calculations should be handled at export time using the values from `utils.py` or `Constants.hx`.
-#define WORLD_SCALE_FACTOR 0.015625f
-#define WORLD_SCALE_FACTOR_INV 64.0f
+// The renderer works in model units: tiny3d's converter stores 1 Blender unit (BU)
+// as 64 (gltf_to_t3d --base-scale). Positions are kept in BU and scaled when drawn.
+#define MODEL_UNITS_PER_BU 64.0f
+#define BU_PER_MODEL_UNIT 0.015625f
 
 struct OimoRigidBody;
 

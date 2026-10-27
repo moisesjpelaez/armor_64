@@ -99,8 +99,8 @@ int main(void)
 #if ENGINE_ENABLE_PHYSICS
             physics_reset();
 #endif
-            // Free all models to reclaim memory before loading new scene
-            models_unload_all();
+            // Free the models the new scene doesn't use (its own stay loaded)
+            models_unload_except(scene_models(pending));
             fixed_time = 0.0f;
             current_scene = pending;
 #if ENGINE_ENABLE_UI

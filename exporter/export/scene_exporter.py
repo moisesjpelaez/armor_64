@@ -19,6 +19,8 @@ from armor64.export import linked_export
 
 # tiny3d's fixed-point matrices hold ±511 Blender units (runtime utils.h, FIXED_POINT_MAX / 64)
 DRAWABLE_RANGE = 511.0
+# Directional lights tiny3d holds (t3d_light_set_count); more overrun the RSP's light memory
+MAX_LIGHTS = 7
 
 
 def _warn_if_out_of_range(obj, pos):
@@ -227,6 +229,11 @@ def build_scene_data(exporter, scene):
         if obj.type == 'CAMERA':
             _process_camera(exporter, scene_name, obj, instance_matrix, object_name_to_index)
 
+    # Without a camera the runtime draws no 3D (fine for a UI-only scene)
+    data = exporter.scene_data[scene_name]
+    if not data["cameras"] and any(not o.get("is_empty") for o in data["objects"]):
+        log.warn(f'N64: scene "{scene_name}" has meshes but no camera, so nothing 3D is drawn')
+
 
 def _process_camera(exporter, scene_name, obj, instance_matrix=None, object_name_to_index=None):
     """Process a camera object and add to scene data.
@@ -320,7 +327,12 @@ def _process_light(exporter, scene_name, obj, instance_matrix=None):
     world_matrix = instance_matrix if instance_matrix else obj.matrix_world
     light_dir = world_matrix.to_3x3().col[2]
 
-    exporter.scene_data[scene_name]["lights"].append({
+    lights = exporter.scene_data[scene_name]["lights"]
+    if len(lights) >= MAX_LIGHTS:
+        log.warn(f'N64: scene "{scene_name}" has more than {MAX_LIGHTS} lights, the most tiny3d draws: '
+                 f'"{obj.name}" is left out')
+        return
+    lights.append({
         "name": arm.utils.safesrc(linked_utils.asset_name(obj)),
         "pos": list(world_matrix.to_translation()),
         "color": list(obj.data.color),
@@ -793,6 +805,7 @@ def write_scenes_c(exporter):
     name_entry_lines = []
     group_data_lines = []
     group_lookup_lines = []
+    model_rows = []
     scene_count = 0
 
     for scene in bpy.data.scenes:
@@ -810,6 +823,9 @@ def write_scenes_c(exporter):
 
         # Generate group data for this scene
         scene_data = exporter.scene_data.get(scene_name, {})
+
+        models = sorted({o["mesh"] for o in scene_data.get("objects", []) if o.get("mesh")})
+        model_rows.append(f'    [SCENE_{scene_name.upper()}] = {{' + ''.join(f' [{m}] = true,' for m in models) + ' },')
         groups = scene_data.get('groups', {})
         if groups:
             entries = []
@@ -844,7 +860,8 @@ def write_scenes_c(exporter):
         scene_name_entries=scene_name_entries,
         scene_count=scene_count,
         scene_group_data=scene_group_data,
-        scene_group_lookup=scene_group_lookup
+        scene_group_lookup=scene_group_lookup,
+        scene_model_rows='\n'.join(model_rows)
     )
 
     n64_utils.write_if_changed(out_path, output)

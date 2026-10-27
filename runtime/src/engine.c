@@ -19,7 +19,7 @@ bool app_pause_updates = false;
 
 void engine_init(void)
 {
-    debug_init_isviewer();
+    debug_init_emulog();
     debug_init_usblog();
 
     asset_init_compression(2);
@@ -32,7 +32,9 @@ void engine_init(void)
     rdpq_debug_start();
 #endif
     t3d_init((T3DInitParams){});
+#ifdef ARM_DEBUG_HUD
     rdpq_text_register_font(FONT_BUILTIN_DEBUG_MONO, rdpq_font_load_builtin(FONT_BUILTIN_DEBUG_MONO));
+#endif
 
     input_init();
     models_init();
