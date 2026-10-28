@@ -17,6 +17,8 @@ void time_init(void)
     time_scale = 1.0f;
 }
 
+// Real seconds since the last update, as Iron's Time.delta: not scaled by
+// Time.scale (code that wants it multiplies, as Iron's animations and physics do)
 void time_update(void)
 {
     uint64_t now = get_ticks();
@@ -24,12 +26,11 @@ void time_update(void)
     time_last_ticks = now;
 
     time_delta = (float)((double)elapsed_ticks / (double)TICKS_PER_SECOND);
-    time_delta *= time_scale;
+}
 
-    // Clamp to max 0.25s to avoid huge jumps
-    if (time_delta > 0.25f) {
-        time_delta = 0.25f;
-    }
+void time_restart_frame(void)
+{
+    time_last_ticks = get_ticks();
 }
 
 float time_get(void)

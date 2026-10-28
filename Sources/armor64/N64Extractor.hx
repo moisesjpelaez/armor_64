@@ -68,8 +68,6 @@ class N64Extractor implements IExtractorContext {
             uses_ui: false,
             uses_tween: false,
             uses_autoload: false,
-            buttons_used: [],
-            button_events: [],
             contact_events: [],
             signals: [],
             has_remove_update: false,

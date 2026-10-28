@@ -102,6 +102,16 @@ void physics_contact_unsubscribe_all(void* obj)
     }
 }
 
+// A contact as oimo_module's PhysicsWorld counts it: a point with some penetration
+static bool contact_has_depth(const OimoContact* contact)
+{
+    const OimoManifold* manifold = &contact->_manifold;
+    for (int i = 0; i < manifold->_numPoints; i++) {
+        if (manifold->_points[i]._depth > 0) return true;
+    }
+    return false;
+}
+
 void physics_contact_dispatch(void)
 {
     // Fast path: skip entirely if no bodies have contact subscriptions
@@ -118,8 +128,7 @@ void physics_contact_dispatch(void)
         // which destroys contacts, invalidating contact->_next
         OimoContact* next = contact->_next;
 
-        // Only process touching contacts
-        if (contact->_touching) {
+        if (contact->_touching && contact_has_depth(contact)) {
             // Get both bodies' ArmObject pointers
             OimoRigidBody* rb1 = contact->_b1;
             OimoRigidBody* rb2 = contact->_b2;

@@ -20,6 +20,9 @@
 #include <string.h>
 #include "../limits.h"
 
+// Keys are stored in ARM_MAP_MAX_KEY_LEN bytes: compare only what a stored key
+// can hold, so a longer key (reported when set) is still found again
+#define ARM_MAP_KEY_EQUALS(stored, key) (strncmp((stored), (key), ARM_MAP_MAX_KEY_LEN - 1) == 0)
 
 /**
  * Declare a string-keyed map with given value type, name, and max capacity.
@@ -46,12 +49,13 @@
     static inline bool map_name##_set(map_name *map, const char *key, value_type value) { \
         /* First check if key exists */ \
         for (int i = 0; i < max_capacity; i++) { \
-            if (map->entries[i].occupied && strcmp(map->entries[i].key, key) == 0) { \
+            if (map->entries[i].occupied && ARM_MAP_KEY_EQUALS(map->entries[i].key, key)) { \
                 map->entries[i].value = value; \
                 return true; \
             } \
         } \
         /* Find empty slot */ \
+        if (strlen(key) >= ARM_MAP_MAX_KEY_LEN) ARM_LIMIT_REACHED(ARM_MAP_MAX_KEY_LEN); \
         for (int i = 0; i < max_capacity; i++) { \
             if (!map->entries[i].occupied) { \
                 strncpy(map->entries[i].key, key, ARM_MAP_MAX_KEY_LEN - 1); \
@@ -68,7 +72,7 @@
     \
     static inline value_type* map_name##_get(map_name *map, const char *key) { \
         for (int i = 0; i < max_capacity; i++) { \
-            if (map->entries[i].occupied && strcmp(map->entries[i].key, key) == 0) { \
+            if (map->entries[i].occupied && ARM_MAP_KEY_EQUALS(map->entries[i].key, key)) { \
                 return &map->entries[i].value; \
             } \
         } \
@@ -87,7 +91,7 @@
     \
     static inline bool map_name##_remove(map_name *map, const char *key) { \
         for (int i = 0; i < max_capacity; i++) { \
-            if (map->entries[i].occupied && strcmp(map->entries[i].key, key) == 0) { \
+            if (map->entries[i].occupied && ARM_MAP_KEY_EQUALS(map->entries[i].key, key)) { \
                 map->entries[i].occupied = false; \
                 map->count--; \
                 return true; \

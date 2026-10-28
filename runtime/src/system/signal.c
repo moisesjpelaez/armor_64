@@ -32,7 +32,7 @@ void signal_connect(ArmSignal *signal, ArmSignalHandler handler, void *ctx)
     }
 
     if (signal->count >= ARM_SIGNAL_MAX_SUBS) {
-        debugf("signal_connect: signal full (%d subscribers), raise ARM_SIGNAL_MAX_SUBS\n", ARM_SIGNAL_MAX_SUBS);
+        ARM_LIMIT_REACHED(ARM_SIGNAL_MAX_SUBS);
         return;
     }
 

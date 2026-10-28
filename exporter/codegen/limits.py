@@ -43,7 +43,6 @@ DEFAULTS = {
     "ARM_SIGNAL_MAX_SUBS": (16, "Subscribers of one signal"),
     "ANIM_MAX_CLIPS": (8, "Animation clips of one model"),
     "MAX_PENDING_REMOVALS": (32, "Objects removed during one frame"),
-    "MAX_BUTTON_SUBSCRIBERS": (16, "Handlers of one gamepad button event"),
     "SPAWN_MAX_INSTANCES": (4, "Copies alive at once of one spawnable template (Python only; spawning isn't supported yet)"),
 
     # Physics
@@ -102,7 +101,6 @@ def scene_counts(scene: Dict, trait_key: Callable[[str], str], traits: Dict) -> 
     """
     objects = scene.get("objects", [])
     bodies = mesh_colliders = contact_bodies = contact_subscribers = anim_clips = 0
-    button_subscribers: Dict[tuple, int] = {}
     instances: Dict[str, int] = {}
 
     def meta(trait):
@@ -112,9 +110,6 @@ def scene_counts(scene: Dict, trait_key: Callable[[str], str], traits: Dict) -> 
         for trait in trait_list:
             key = trait_key(trait.get("class_name", ""))
             instances[key] = instances.get(key, 0) + 1
-            for event in meta(trait).get("button_events", []):
-                button = (event.get("c_button"), event.get("event_type"))
-                button_subscribers[button] = button_subscribers.get(button, 0) + 1
 
     physics = []
     for obj in objects:
@@ -143,7 +138,6 @@ def scene_counts(scene: Dict, trait_key: Callable[[str], str], traits: Dict) -> 
         "mesh_colliders": mesh_colliders,
         "contact_bodies": contact_bodies,
         "contact_subscribers": contact_subscribers,
-        "button_subscribers": max(button_subscribers.values(), default=0),
         "anim_clips": anim_clips,
         "instances": instances,
         "physics": physics,
@@ -276,7 +270,6 @@ def _scene_limits(scenes: List[Dict], notes: Dict[str, str]) -> Dict[str, int]:
         "OIMO_MAX_RIGID_BODIES": bodies,
         "MAX_CONTACT_BODIES": need("contact_bodies"),
         "MAX_CONTACT_SUBSCRIBERS": need("contact_subscribers"),
-        "MAX_BUTTON_SUBSCRIBERS": need("button_subscribers"),
         "MAX_PENDING_REMOVALS": need("objects"),
         "ANIM_MAX_CLIPS": need("anim_clips"),
     }
@@ -403,7 +396,6 @@ POOL_SYMBOLS = {
     "g_mesh_bodies": "MAX_MESH_COLLIDERS", "g_mesh_shapes": "MAX_MESH_COLLIDERS",
     "g_mesh_geometries": "MAX_MESH_COLLIDERS", "g_mesh_used": "MAX_MESH_COLLIDERS",
     "g_body_subs": "MAX_CONTACT_BODIES x MAX_CONTACT_SUBSCRIBERS",
-    "g_events": "MAX_BUTTON_SUBSCRIBERS",
     "g_pending_removals": "MAX_PENDING_REMOVALS",
     "tween_pool": "MAX_TWEENS",
     "_str_fmt_buffers": "STR_FMT_BUFFER_COUNT x STR_FMT_BUFFER_SIZE (one per file using it)",

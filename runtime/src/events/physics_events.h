@@ -12,7 +12,6 @@ extern "C" {
 /**
  * Physics Contact Event System
  *
- * Similar to trait_events for input, but for physics contacts.
  * Traits can subscribe to contact notifications for specific rigid bodies.
  *
  * Usage:

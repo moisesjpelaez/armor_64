@@ -7,6 +7,7 @@
 #include "../engine.h"
 #include "../renderer.h"
 #include "../iron/object/animation.h"
+#include "../system/time.h"
 /* N64 Exporter - Generated scene data and initialization
  * This file is auto-generated from Blender scenes. Do not edit.
  * Template: scenes.c.j2
@@ -184,11 +185,11 @@ void scene_on_update(SceneId id, float dt)
 {{
 	ArmScene *s = &g_scenes[id];
 
-	// Update skeletal animations using animated_objects list
+	// Update skeletal animations using animated_objects list (Time.scale applies, as in Iron)
 	for (uint16_t i = 0; i < s->animated_count; i++) {{
 		ArmObject *obj = &s->objects[s->animated_objects[i]];
 		if (!obj->is_removed && obj->animation) {{
-			animation_update(obj->animation, dt);
+			animation_update(obj->animation, dt * time_scale);
 		}}
 	}}
 

@@ -25,6 +25,19 @@ static void object_remove_internal(ArmObject* obj, SceneId scene_id, bool recycl
 {
     if (!obj || obj->is_removed) return;
 
+    // Children first, as Iron's Object.remove()
+    ArmScene* scene = scene_get(scene_id);
+    if (scene && scene->has_parented_objects) {
+        ptrdiff_t index = obj - scene->objects;
+        if (index >= 0 && index < scene->object_count) {
+            for (uint16_t i = 0; i < scene->object_count; i++) {
+                if (scene->objects[i].parent_index == index) {
+                    object_remove_internal(&scene->objects[i], scene_id, recycle);
+                }
+            }
+        }
+    }
+
     // Mark as removed immediately - prevents further trait callbacks and rendering
     obj->is_removed = true;
     obj->visible = false;

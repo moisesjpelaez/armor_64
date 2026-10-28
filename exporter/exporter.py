@@ -473,8 +473,6 @@ class N64Exporter:
 
     def _write_iron(self):
         """Copy Iron runtime files."""
-        n64_utils.copy_src('events/trait_events.h', 'src')
-        n64_utils.copy_src('events/trait_events.c', 'src')
         n64_utils.copy_src('iron/object/transform.h', 'src')
         n64_utils.copy_src('iron/object/transform.c', 'src')
         n64_utils.copy_src('iron/object/object.h', 'src')

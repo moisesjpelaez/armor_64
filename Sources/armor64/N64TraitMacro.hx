@@ -11,7 +11,6 @@ import armor64.N64Extractor;
 import armor64.TypedIndex;
 import armor64.mapping.Constants;
 import armor64.mapping.TypeMap;
-import armor64.mapping.ButtonMap;
 import armor64.mapping.EngineTypes;
 import armor64.converters.SceneCallConverter;
 import armor64.converters.CanvasCallConverter;
@@ -71,13 +70,12 @@ class N64TraitMacro {
             var ir = traitData.get(name);
 
             // Skip empty traits (no events and doesn't need data struct)
-            // But include if trait has contact_events or button_events in meta
+            // But include if trait has contact_events in meta
             // Also include if trait has a parent (needed for inheritance chain)
             var hasEvents = Lambda.count(ir.events) > 0;
             var hasContactEvents = ir.meta.contact_events.length > 0;
-            var hasButtonEvents = ir.meta.button_events.length > 0;
             var hasParent = ir.parent != null;
-            if (!hasEvents && !hasContactEvents && !hasButtonEvents && !ir.needsData && !hasParent) continue;
+            if (!hasEvents && !hasContactEvents && !ir.needsData && !hasParent) continue;
 
             // Convert members
             var membersArr:Array<Dynamic> = [];
@@ -162,17 +160,6 @@ class TraitExtractor extends N64Extractor {
 
     // Lifecycle method names that are handled specially (not as callable methods)
     static var lifecycleMethodNames:Array<String> = ["new", "__onInit", "__onUpdate", "__onFixedUpdate", "__onLateUpdate", "__onRemove", "__onRender2D"];
-
-    /**
-     * Input handling mode:
-     * - true (default, Armory style): Keep input checks inline in update() as regular if-statements.
-     *   The InputCallConverter converts `gamepad.started("a")` to `input_started(N64_BTN_A)`.
-     *   This means guards like `if (!active) return;` naturally block all subsequent code including input checks.
-     *
-     * - false (event extraction): Extract `if (gamepad.started("a"))` as separate btn_a_started event handlers.
-     *   This matches libdragon's event-driven style but means guards in update() won't block button events.
-     */
-    static var useInlineInputMode:Bool = true;
 
     var parentName:String;  // Parent user trait (full path), null if none
     public var traitKey(default, null):String;  // Full class path, identifies the trait in the IR
@@ -602,9 +589,11 @@ class TraitExtractor extends N64Extractor {
     }
 
     // ========================================================================
-    // Event Extraction
+    // Lifecycle bodies
     // ========================================================================
 
+    // A lifecycle body's statements, in order, as the event's IR. Input checks
+    // stay inline, where the game wrote them (as in Armory)
     function extractEvents(baseEventName:String, body:Expr):Void {
         beginScope();
         var eventNodes:Array<IRNode> = [];
@@ -618,7 +607,6 @@ class TraitExtractor extends N64Extractor {
                 processStatement(body, eventNodes);
         }
 
-        // If there are remaining eventNodes after event extraction, add to base event
         if (eventNodes.length > 0) {
             if (!events.exists(baseEventName)) events.set(baseEventName, []);
             for (stmt in eventNodes) {
@@ -631,33 +619,7 @@ class TraitExtractor extends N64Extractor {
         if (e == null) return;
 
         switch (e.expr) {
-            // Detect: if (gamepad.started("a")) { ... }
             case EIf(econd, eif, eelse):
-                var inputEvent = detectInputEvent(econd);
-                // Only extract as separate event if NOT in inline input mode
-                if (inputEvent != null && eelse == null && !useInlineInputMode) {
-                    // Extract body as separate event
-                    var eventName = inputEvent.eventName;
-                    if (!events.exists(eventName)) events.set(eventName, []);
-                    for (node in statements(eif)) events.get(eventName).push(node);
-
-                    // Track button and meta
-                    if (!Lambda.has(meta.buttons_used, inputEvent.button)) {
-                        meta.buttons_used.push(inputEvent.button);
-                    }
-                    // Add structured button event metadata
-                    meta.button_events.push({
-                        event_name: eventName,
-                        button: inputEvent.button,
-                        c_button: inputEvent.c_button,
-                        event_type: inputEvent.eventType
-                    });
-                    meta.uses_input = true;
-                    return; // Don't add to eventNodes
-                }
-                // Regular if (or inline input mode) - add to eventNodes as normal if
-                // When useInlineInputMode=true, InputCallConverter handles the conversion
-                // of gamepad.started("a") -> input_started(N64_BTN_A) as the condition
                 eventNodes.push(convertIf(econd, eif, eelse));
 
             default:
@@ -666,38 +628,6 @@ class TraitExtractor extends N64Extractor {
                     eventNodes.push(node);
                 }
         }
-    }
-
-    function detectInputEvent(econd:Expr):{eventName:String, button:String, c_button:String, eventType:String} {
-        switch (econd.expr) {
-            case ECall(e, params):
-                switch (e.expr) {
-                    case EField(obj, method):
-                        switch (obj.expr) {
-                            case _ if (InputCallConverter.isGamepad(obj)):
-                                if (method == "started" || method == "released" || method == "down") {
-                                    if (params.length > 0) {
-                                        var rawButton = extractStringArg(params[0]);
-                                        if (rawButton != null) {
-                                            var button = ButtonMap.normalize(rawButton);
-                                            var c_button = ButtonMap.toN64Const(rawButton);
-                                            var eventName = 'btn_${button}_$method';
-                                            return {
-                                                eventName: eventName,
-                                                button: button,
-                                                c_button: c_button,
-                                                eventType: method
-                                            };
-                                        }
-                                    }
-                                }
-                            default:
-                        }
-                    default:
-                }
-            default:
-        }
-        return null;
     }
 
     // Check if expression is 'super' keyword

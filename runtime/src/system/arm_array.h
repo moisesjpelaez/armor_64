@@ -60,13 +60,16 @@
         return &arr->items[index]; \
     } \
     \
-    /* arr[index] = item; at index == count it appends, as Haxe's a[a.length] = x */ \
+    /* arr[index] = item. Past the end it extends the array, as Haxe does, the */ \
+    /* gap getting zeros (Haxe's default values) */ \
     static inline void array_name##_set(array_name *arr, int index, elem_type item) { \
-        if (index >= 0 && index < arr->count) { \
-            arr->items[index] = item; \
-        } else if (index == arr->count) { \
-            array_name##_push(arr, item); \
+        if (index < 0) return; \
+        if (index >= max_capacity) { ARM_LIMIT_REACHED(max_capacity); return; } \
+        if (index > arr->count) { \
+            memset(&arr->items[arr->count], 0, (size_t)(index - arr->count) * sizeof(elem_type)); \
         } \
+        arr->items[index] = item; \
+        if (index >= arr->count) arr->count = (uint16_t)(index + 1); \
     } \
     \
     static inline void array_name##_clear(array_name *arr) { \

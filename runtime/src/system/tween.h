@@ -65,9 +65,8 @@ typedef struct ArmTween {
     void* data;
 
     // State
-    bool active;
+    bool active;        // Started and not finished or stopped (Armory's !isStopped())
     bool paused;
-    bool pending_free;  // Deferred cleanup flag
     bool persistent;    // Autoload tween: kept across scene changes (tween_clear_all)
 } ArmTween;
 
@@ -94,10 +93,11 @@ void tween_pause(ArmTween* tween);
 void tween_stop(ArmTween* tween);
 bool tween_is_stopped(ArmTween* tween);
 
-// System update - call once per frame
+// System update - once per frame, with the trait updates (paused with them)
 void tween_update_all(float dt);
 
-// Cancel all active tweens without firing callbacks (safe for scene transitions)
+// Scene switch: cancel the scene's tweens without firing callbacks (their trait
+// data is freed), reporting the ones the game left running. Autoload tweens stay
 void tween_clear_all(void);
 
 #endif // ARM_TWEEN_H

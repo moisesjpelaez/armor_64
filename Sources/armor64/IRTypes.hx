@@ -111,13 +111,6 @@ typedef MemberIR = {
     ?traitRef: String // Typed as a trait (full path): ctype is a pointer to its data
 }
 
-typedef ButtonEventMeta = {
-    event_name: String,      // e.g., "btn_a_started"
-    button: String,          // normalized button name, e.g., "a"
-    c_button: String,        // N64 constant, e.g., "N64_BTN_A"
-    event_type: String       // "started", "released", or "down"
-}
-
 typedef ContactEventMeta = {
     event_name: String,      // Handler function name, e.g., "onContact"
     handler_name: String,    // Full C handler name, e.g., "arm_player_player_contact_onContact"
@@ -173,8 +166,6 @@ typedef TraitMeta = {
     uses_ui: Bool,             // True if trait uses UI labels (canvas.getElementAs, label.text)
     uses_tween: Bool,          // True if trait uses Tween (tween.float, tween.delay, etc.)
     uses_autoload: Bool,       // True if trait accesses autoload fields/methods
-    buttons_used: Array<String>,
-    button_events: Array<ButtonEventMeta>,  // structured button event info
     contact_events: Array<ContactEventMeta>, // physics contact subscriptions
     signals: Array<SignalMeta>, // per-instance signal declarations
     ?connects_signals: Bool,   // Connects handlers with its data as context: needs a data struct

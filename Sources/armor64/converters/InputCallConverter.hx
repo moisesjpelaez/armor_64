@@ -10,18 +10,11 @@ import armor64.converters.ICallConverter;
 /**
  * Converts input API calls to C N64 input functions.
  * Handles: gamepad.started("a"), keyboard.down("w"), mouse.released("left"), etc.
- * Maps buttons to N64_BTN_* constants and tracks buttons for polling.
+ * Maps buttons to N64_BTN_* constants.
  *
- * This converter supports two input handling modes:
- *
- * 1. Event extraction mode: Input checks like `if (gamepad.started("a"))`
- *    are extracted as separate button event handlers in processStatement().
- *    This converter is not called for those top-level conditions.
- *
- * 2. Inline mode (Armory style - default): When useInlineInputMode=true, input checks
- *    remain in update() as regular if-statements. This converter handles converting
- *    `gamepad.started("a")` to `input_started(N64_BTN_A)` as the if condition.
- *    This allows guards like `if (!active) return;` to naturally block input checks.
+ * Input checks stay where the game wrote them, as in Armory: `if (gamepad.started("a"))`
+ * in update() becomes `if (input_started(N64_BTN_A))` in the same place, so guards like
+ * `if (!active) return;` block it as they do on other targets.
  */
 class InputCallConverter implements ICallConverter {
 	public function new() {}
@@ -53,17 +46,6 @@ class InputCallConverter implements ICallConverter {
 	function convert(method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
 		var meta = ctx.getMeta();
 		meta.uses_input = true;
-
-		// Track button for input polling
-		if (rawParams.length > 0) {
-			var btn = ctx.extractStringArg(rawParams[0]);
-			if (btn != null) {
-				var normalized = ButtonMap.normalize(btn);
-				if (!Lambda.has(meta.buttons_used, normalized)) {
-					meta.buttons_used.push(normalized);
-				}
-			}
-		}
 
 		// Map button to N64_BTN_* constant
 		var n64Button = "N64_BTN_COUNT"; // default button (ignored by input system)

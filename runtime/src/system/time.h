@@ -13,6 +13,7 @@ extern float time_fixed_step;  // Fixed timestep in seconds (Time.fixedStep)
 
 void time_init(void);
 void time_update(void);
+void time_restart_frame(void);  // The next delta counts from now (after a scene switch)
 float time_get(void);        // Total elapsed seconds (Time.time())
 uint64_t time_get_ms(void);
 uint64_t time_get_us(void);

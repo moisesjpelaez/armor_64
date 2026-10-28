@@ -137,7 +137,6 @@ def generate_trait_block(prefix: str, traits: List[Dict],
             # Get trait IR - must exist, macro provides all data
             trait_ir = n64_utils.get_trait(trait_info, trait_class)
             c_name = trait_ir.get("c_name", "")
-            meta = trait_ir.get("meta", {})
 
             if not c_name:
                 log.warn(f"No c_name found for trait '{trait_class}'")
@@ -165,18 +164,6 @@ def generate_trait_block(prefix: str, traits: List[Dict],
                 lines.append(f'    *({struct_name}*){prefix}.traits[{t_idx}].data = ({struct_name}){{{initializer}}};')
             else:
                 lines.append(f'    {prefix}.traits[{t_idx}].data = NULL;')
-
-            # Subscribe to button events using structured metadata from macro
-            for btn_evt in meta.get("button_events", []):
-                event_name = btn_evt.get("event_name", "")
-                c_button = btn_evt.get("c_button", "N64_BTN_A")
-                event_type = btn_evt.get("event_type", "started")
-
-                handler_name = f"{c_name}_{event_name}"
-                obj_ptr = f"&{prefix}" if not prefix.startswith("&") else prefix
-                data_ptr = f"{prefix}.traits[{t_idx}].data"
-
-                lines.append(f'    trait_events_subscribe_{event_type}({c_button}, {handler_name}, {obj_ptr}, {data_ptr});')
 
             # Note: Contact event subscriptions are generated separately in generate_contact_subscriptions_block
             # after physics bodies are created
@@ -456,7 +443,6 @@ def generate_scene_traits_block(traits: List[Dict], trait_info: dict, scene_name
         # Get trait IR - must exist, macro provides all data
         trait_ir = n64_utils.get_trait(trait_info, trait_class)
         c_name = trait_ir.get("c_name", "")
-        meta = trait_ir.get("meta", {})
 
         lines.append(f'    scene_traits[{i}].on_add = {c_name}_on_add;')
         lines.append(f'    scene_traits[{i}].on_ready = {c_name}_on_ready;')
@@ -477,15 +463,6 @@ def generate_scene_traits_block(traits: List[Dict], trait_info: dict, scene_name
             lines.append(f'    *({struct_name}*)scene_traits[{i}].data = ({struct_name}){{{initializer}}};')
         else:
             lines.append(f'    scene_traits[{i}].data = NULL;')
-
-        # Subscribe to button events using structured metadata from macro
-        for btn_evt in meta.get("button_events", []):
-            event_name = btn_evt.get("event_name", "")
-            c_button = btn_evt.get("c_button", "N64_BTN_A")
-            event_type = btn_evt.get("event_type", "started")
-
-            handler_name = f"{c_name}_{event_name}"
-            lines.append(f'    trait_events_subscribe_{event_type}({c_button}, {handler_name}, scene, scene_traits[{i}].data);')
 
     lines.append(f'    scene->traits = scene_traits;')
     return '\n'.join(lines)

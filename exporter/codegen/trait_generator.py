@@ -768,15 +768,6 @@ class TraitCodeGenerator:
         decls.append(f"void {self.c_name}_on_render2d(void* obj, void* data);")
         return decls
 
-    def generate_button_event_declarations(self) -> List[str]:
-        """Generate declarations for button event handlers."""
-        decls = []
-        for event_name in self.events.keys():
-            if event_name.startswith("btn_"):
-                # Button events use TraitEventHandler signature: (obj, data, dt)
-                decls.append(f"void {self.c_name}_{event_name}(void* obj, void* data, float _dt);")
-        return decls
-
     def generate_contact_event_declarations(self) -> List[str]:
         """Generate declarations for contact event handlers."""
         decls = []
@@ -1063,16 +1054,6 @@ class TraitCodeGenerator:
         impl_lines.append("}")
         impl_lines.append("")
 
-        # Button events - data before dt (TraitEventHandler signature)
-        for event_name in self.events.keys():
-            if event_name.startswith("btn_"):
-                event_nodes = self.events.get(event_name, [])
-                body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-                impl_lines.append(f"void {self.c_name}_{event_name}(void* obj, void* data, float _dt) {{")
-                impl_lines.append(body)
-                impl_lines.append("}")
-                impl_lines.append("")
-
         # Contact events - PhysicsContactHandler signature: (obj, data, other)
         for event_name in self.events.keys():
             if event_name.startswith("contact_"):
@@ -1249,7 +1230,6 @@ def _prepare_traits_template_data(traits: dict, type_overrides: dict = None) -> 
 
         trait_declarations.extend(gen.generate_lifecycle_declarations())
         trait_declarations.extend(gen.generate_method_declarations())  # Callable methods
-        event_handler_declarations.extend(gen.generate_button_event_declarations())
         event_handler_declarations.extend(gen.generate_contact_event_declarations())
 
         for name, declaration, definition in gen.generate_signal_handlers():

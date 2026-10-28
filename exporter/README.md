@@ -248,7 +248,6 @@ Each export writes `build/n64/limits.txt`: every limit with its default and how 
 | `ARM_SIGNAL_MAX_SUBS` | 16 | Subscribers of one signal | `limits.h` |
 | `ANIM_MAX_CLIPS` | 8 | Animation clips of one model | `limits.h` |
 | `MAX_PENDING_REMOVALS` | 32 | Objects removed during one frame | `limits.h` |
-| `MAX_BUTTON_SUBSCRIBERS` | 16 | Handlers of one gamepad button event | `limits.h` |
 | `SPAWN_MAX_INSTANCES` | 4 | Copies alive at once of one spawnable template (Python only; spawning isn't supported yet) | Python only |
 | `MAX_PHYSICS_BODIES` | 128 | Rigid bodies (physics body pool) | `limits.h` |
 | `MAX_MESH_COLLIDERS` | 8 | Mesh colliders | `limits.h` |

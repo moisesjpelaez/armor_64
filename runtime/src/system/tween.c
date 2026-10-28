@@ -4,7 +4,6 @@
  * Design decisions for N64 hardware:
  * - Fixed pool of MAX_TWEENS (limits.h) - no malloc/free during gameplay
  * - All easing functions are inline for speed
- * - Deferred cleanup to avoid iteration issues
  * - Callbacks receive object + data pointers for full capture support
  */
 
@@ -13,9 +12,8 @@
 #include <math.h>
 #include <libdragon.h>
 
-// Tween pool - statically allocated
+// Tween pool - statically allocated (starts zeroed: every slot free)
 static ArmTween tween_pool[MAX_TWEENS];
-static bool pool_initialized = false;
 
 // Forward declarations for easing functions
 static float ease_linear(float t);
@@ -29,19 +27,10 @@ static float ease_sine_in(float t);
 static float ease_sine_out(float t);
 static float ease_sine_in_out(float t);
 
-// Initialize pool if needed
-static void ensure_pool_init(void) {
-    if (pool_initialized) return;
-    memset(tween_pool, 0, sizeof(tween_pool));
-    pool_initialized = true;
-}
-
 // Allocate a tween from the pool
 ArmTween* tween_alloc(void) {
-    ensure_pool_init();
-
     for (int i = 0; i < MAX_TWEENS; i++) {
-        if (tween_pool[i].type == TWEEN_NONE && !tween_pool[i].active && !tween_pool[i].pending_free) {
+        if (tween_pool[i].type == TWEEN_NONE && !tween_pool[i].active) {
             ArmTween* t = &tween_pool[i];
             memset(t, 0, sizeof(ArmTween));
             t->type = TWEEN_ALLOCATED;  // Mark as allocated to prevent double-allocation
@@ -65,7 +54,6 @@ ArmTween* tween_alloc_persistent(void) {
 void tween_free(ArmTween* tween) {
     if (!tween) return;
     tween->active = false;
-    tween->pending_free = false;
     tween->type = TWEEN_NONE;
 }
 
@@ -86,7 +74,6 @@ void tween_float(ArmTween* tween, float from, float to, float duration,
     tween->object = object;
     tween->data = data;
     tween->paused = false;
-    tween->pending_free = false;
 }
 
 // Configure vec4 tween
@@ -106,7 +93,6 @@ void tween_vec4(ArmTween* tween, ArmVec4* from, ArmVec4* to, float duration,
     tween->object = object;
     tween->data = data;
     tween->paused = false;
-    tween->pending_free = false;
 }
 
 // Configure delay (timer) tween
@@ -124,7 +110,6 @@ void tween_delay(ArmTween* tween, float duration,
     tween->object = object;
     tween->data = data;
     tween->paused = false;
-    tween->pending_free = false;
 }
 
 // Start a tween
@@ -141,16 +126,18 @@ void tween_pause(ArmTween* tween) {
     tween->paused = true;
 }
 
-// Stop a tween (mark for cleanup)
+// Stop and rewind, as Armory's stop(): start() plays it again from the beginning
 void tween_stop(ArmTween* tween) {
     if (!tween) return;
-    tween->pending_free = true;
+    tween->active = false;
+    tween->paused = true;
+    tween->elapsed = 0.0f;
 }
 
-// Check if tween is stopped
+// Not started, finished or stopped (paused tweens aren't stopped, as in Armory)
 bool tween_is_stopped(ArmTween* tween) {
     if (!tween) return true;
-    return !tween->active || tween->pending_free;
+    return !tween->active;
 }
 
 // Apply easing function
@@ -172,7 +159,7 @@ static float apply_ease(TweenEase ease, float t) {
 
 // Update a single tween, returns true if completed
 static bool update_tween(ArmTween* tween, float dt) {
-    if (!tween->active || tween->paused || tween->pending_free) {
+    if (!tween->active || tween->paused) {
         return false;
     }
 
@@ -222,8 +209,6 @@ static bool update_tween(ArmTween* tween, float dt) {
 
 // Update all active tweens
 void tween_update_all(float dt) {
-    ensure_pool_init();
-
     for (int i = 0; i < MAX_TWEENS; i++) {
         ArmTween* t = &tween_pool[i];
 
@@ -255,22 +240,26 @@ void tween_update_all(float dt) {
     }
 }
 
-// Cancel all active tweens without firing callbacks.
-// Must be called during scene transitions to prevent dangling pointer dereferences
-// from on_done callbacks that reference freed scene objects.
+// In Armory a tween outlives its scene until the game stops it. Here the scene's
+// trait data is freed, so its callbacks can't run anymore: cancel the scene's
+// tweens and report the ones the game didn't stop.
 void tween_clear_all(void) {
+    int left_running = 0;
     for (int i = 0; i < MAX_TWEENS; i++) {
         // Autoload tweens live on (their callbacks only use autoload globals)
         if (tween_pool[i].persistent) continue;
+        if (tween_pool[i].active) left_running++;
         tween_pool[i].active = false;
         tween_pool[i].paused = false;
-        tween_pool[i].pending_free = false;
         tween_pool[i].type = TWEEN_NONE;
         tween_pool[i].on_float = NULL;
         tween_pool[i].on_vec4 = NULL;
         tween_pool[i].on_done = NULL;
         tween_pool[i].object = NULL;
         tween_pool[i].data = NULL;
+    }
+    if (left_running > 0) {
+        debugf("Scene switch: %d tween(s) still running were stopped (stop them in notifyOnRemove, as Armory keeps them running)\n", left_running);
     }
 }
 
