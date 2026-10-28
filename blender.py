@@ -204,7 +204,7 @@ class N64_OT_BuildTiny3d(bpy.types.Operator):
             f'make CURDIR=. -j4 && '
             f'make CURDIR=. install && '
             f'(cd tools/gltf_importer && make CURDIR=. clean); '
-            f'(cd tools/gltf_importer && make CURDIR=. -j4) && '
+            f'(cd tools/gltf_importer && make CURDIR=. -j4 && make CURDIR=. install) && '
             f'for d in examples/*/; do (cd "$d" && '
             f'make T3D_INST="{n64_toolchain_path}/include" CURDIR=. clean; '
             f'make T3D_INST="{n64_toolchain_path}/include" CURDIR=. -j4) || exit 1; done'
