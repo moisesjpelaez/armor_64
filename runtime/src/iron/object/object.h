@@ -25,13 +25,19 @@ void object_remove(ArmObject* obj);
 void object_remove_and_recycle(ArmObject* obj, SceneId scene_id);
 
 /**
- * Process all queued object removals.
- * Call this after physics_update() / physics_contact_dispatch().
- * - Calls all trait on_remove callbacks
- * - Unsubscribes from physics contact events
- * - Removes physics bodies
+ * Process all queued object removals: their physics bodies leave the world (with
+ * the contact subscriptions on them). Called after each contact dispatch, once per
+ * frame after the updates, and at a scene switch.
  */
 void object_process_removals(void);
+
+/**
+ * obj.getTrait(RigidBody): a RigidBody is its object's pointer on N64 (the body
+ * is obj->rigid_body), or NULL when the object has none.
+ */
+static inline ArmObject* arm_rigid_body_of(ArmObject* obj) {
+    return (obj && obj->rigid_body) ? obj : NULL;
+}
 
 /**
  * Get the parent of an object, or NULL if it has no parent.

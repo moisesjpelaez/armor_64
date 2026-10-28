@@ -12,12 +12,11 @@ extern "C" {
 /**
  * Physics Contact Event System
  *
- * Traits can subscribe to contact notifications for specific rigid bodies.
- *
- * Usage:
- *   physics_contact_subscribe(rb, handler, obj, data);  // In on_ready
- *   physics_contact_unsubscribe(rb, handler, obj);      // In on_remove
- *   physics_contact_dispatch();                         // Called by physics_step
+ * Traits subscribe to contacts of a rigid body where their code calls
+ * rb.notifyOnContact(f) / rb.removeContact(f), as in oimo_module:
+ *   physics_contact_subscribe(rb, handler, obj, data);    // the trait's obj and data
+ *   physics_contact_unsubscribe(rb, handler, obj, data);
+ *   physics_contact_dispatch();                           // Called by physics_step
  */
 
 
@@ -54,12 +53,11 @@ void physics_contact_clear(void);
 // data: trait data pointer
 void physics_contact_subscribe(OimoRigidBody* rb, PhysicsContactHandler handler, void* obj, void* data);
 
-// Unsubscribe from contact events
-// Matches by rb + handler + obj (same as subscribe)
-void physics_contact_unsubscribe(OimoRigidBody* rb, PhysicsContactHandler handler, void* obj);
+// Unsubscribe the first matching handler (the trait's), as Haxe's Array.remove
+void physics_contact_unsubscribe(OimoRigidBody* rb, PhysicsContactHandler handler, void* obj, void* data);
 
-// Unsubscribe all handlers for an object (call when trait is removed)
-void physics_contact_unsubscribe_all(void* obj);
+// A body leaves the world: drop the subscriptions on it (its slot may be reused)
+void physics_contact_forget_body(OimoRigidBody* rb);
 
 // Dispatch contact events for all touching bodies
 // Called internally by physics_step after world simulation

@@ -85,10 +85,11 @@ typedef struct OimoRigidBody {
 } OimoRigidBody;
 
 static inline void oimo_rigid_body_update_inv_inertia(OimoRigidBody* rb) {
-    // _invInertia = R * _invLocalInertia * R^T
+    // _invInertia = R * _invLocalInertia * R^T, rows scaled by the rotation factor
     OimoMat3 tmp = oimo_mat3_mul(&rb->_transform.rotation, &rb->_invLocalInertia);
     OimoMat3 rt = oimo_mat3_transpose(&rb->_transform.rotation);
-    rb->_invInertia = oimo_mat3_mul(&tmp, &rt);
+    OimoMat3 inv = oimo_mat3_mul(&tmp, &rt);
+    rb->_invInertia = oimo_mat3_scale_rows(&inv, rb->_rotFactor.x, rb->_rotFactor.y, rb->_rotFactor.z);
 }
 
 static inline void oimo_rigid_body_complete_mass_data(OimoRigidBody* rb) {
@@ -98,17 +99,8 @@ static inline void oimo_rigid_body_complete_mass_data(OimoRigidBody* rb) {
         rb->_invMass = 1.0f / rb->_mass;
         rb->_invLocalInertia = oimo_mat3_inverse(&rb->_localInertia);
         rb->_invLocalInertiaWithoutRotFactor = rb->_invLocalInertia;
-
-        // Apply rotation factor
-        rb->_invLocalInertia.e00 *= rb->_rotFactor.x;
-        rb->_invLocalInertia.e10 *= rb->_rotFactor.x;
-        rb->_invLocalInertia.e20 *= rb->_rotFactor.x;
-        rb->_invLocalInertia.e01 *= rb->_rotFactor.y;
-        rb->_invLocalInertia.e11 *= rb->_rotFactor.y;
-        rb->_invLocalInertia.e21 *= rb->_rotFactor.y;
-        rb->_invLocalInertia.e02 *= rb->_rotFactor.z;
-        rb->_invLocalInertia.e12 *= rb->_rotFactor.z;
-        rb->_invLocalInertia.e22 *= rb->_rotFactor.z;
+        rb->_invLocalInertia = oimo_mat3_scale_rows(&rb->_invLocalInertiaWithoutRotFactor,
+            rb->_rotFactor.x, rb->_rotFactor.y, rb->_rotFactor.z);
     } else {
         rb->_invMass = 0;
         rb->_invLocalInertia = oimo_mat3_zero();
@@ -122,10 +114,20 @@ static inline void oimo_rigid_body_complete_mass_data(OimoRigidBody* rb) {
                 0, 1e-9f, 0,
                 0, 0, 1e-9f
             );
-            rb->_invLocalInertia = rb->_invLocalInertiaWithoutRotFactor;
+            rb->_invLocalInertia = oimo_mat3_scale_rows(&rb->_invLocalInertiaWithoutRotFactor,
+                rb->_rotFactor.x, rb->_rotFactor.y, rb->_rotFactor.z);
         }
     }
     oimo_rigid_body_update_inv_inertia(rb);
+}
+
+// Rotation factor: scales the change of angular velocity along world X, Y, Z
+// (upstream setRotationFactor; lock rotation is a factor of 0)
+static inline void oimo_rigid_body_set_rotation_factor(OimoRigidBody* rb, OimoVec3 factor) {
+    rb->_rotFactor = factor;
+    oimo_rigid_body_update_inv_inertia(rb);
+    rb->_sleeping = 0;
+    rb->_sleepTime = 0;
 }
 
 static inline void oimo_rigid_body_sync_shapes(OimoRigidBody* rb) {

@@ -40,9 +40,11 @@ class TypeMap {
         "Vec3" => "ArmVec3",
         "Vec4" => "ArmVec4",
 
-        // Trait types - stored as pointers to trait data structs
-        "RigidBody" => "void*",
-        "armory.trait.physics.RigidBody" => "void*",
+        // A RigidBody is its object's pointer (its body is ArmObject.rigid_body)
+        "RigidBody" => "ArmObject*",
+        "armory.trait.physics.RigidBody" => "ArmObject*",
+        "armory.trait.physics.oimo.RigidBody" => "ArmObject*",
+        "armory.trait.physics.bullet.RigidBody" => "ArmObject*",
 
         // UI types
         "Label" => "UILabel*",

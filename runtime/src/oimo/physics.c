@@ -23,6 +23,14 @@ static PhysicsContactCallback g_contact_callback = NULL;
 static void* g_contact_user_data = NULL;
 
 static OimoRigidBody g_bodies[MAX_PHYSICS_BODIES];
+// Interpolated bodies: their transform after the last two steps (oimo_module's
+// prevPos/currentPos)
+typedef struct {
+    bool on;
+    OimoVec3 prev_pos, cur_pos;
+    OimoQuat prev_rot, cur_rot;
+} BodyInterpolation;
+static BodyInterpolation g_interpolation[MAX_PHYSICS_BODIES];
 static OimoShape g_shapes[MAX_PHYSICS_BODIES];
 
 typedef union {
@@ -56,6 +64,7 @@ static void free_body(OimoRigidBody* rb) {
     int idx = (int)(rb - g_bodies);
     if (idx >= 0 && idx < MAX_PHYSICS_BODIES) {
         g_free_list[g_free_count++] = (int16_t)idx;
+        g_interpolation[idx].on = false;
     }
 }
 
@@ -122,6 +131,7 @@ void physics_reset(void) {
     memset(g_bodies, 0, sizeof(g_bodies));
     memset(g_shapes, 0, sizeof(g_shapes));
     memset(g_geometries, 0, sizeof(g_geometries));
+    memset(g_interpolation, 0, sizeof(g_interpolation));
     memset(g_mesh_bodies, 0, sizeof(g_mesh_bodies));
     memset(g_mesh_shapes, 0, sizeof(g_mesh_shapes));
     memset(g_mesh_geometries, 0, sizeof(g_mesh_geometries));
@@ -156,12 +166,64 @@ void physics_debug_frame(float *ms, int *steps, int *tests, int *contacts) {
 }
 #endif
 
+// Kinematic bodies and bodies of animated objects follow their object, as
+// oimo_module's syncTransform: the object's world position and its rotation
+// (local, as Armory), and the body is woken. Setting the transform only when it
+// differs gives the same result (both come from the same conversion).
+static bool object_drives_body(const ArmObject* obj, const OimoRigidBody* rb) {
+    return rb->_type == OIMO_RIGID_BODY_KINEMATIC || obj->animation != NULL;
+}
+
+static void sync_driven_bodies(void) {
+    for (OimoRigidBody* rb = g_world._rigidBodyList; rb != NULL; rb = rb->_next) {
+        ArmObject* obj = (ArmObject*)rb->userData;
+        if (!obj || obj->is_removed || !object_drives_body(obj, rb)) continue;
+
+        OimoVec3 pos;
+        if (obj->parent_index >= 0) {
+            // World position from the object's world matrix (model units)
+            pos = oimo_vec3(obj->world_mat.m[3][0] * BU_PER_MODEL_UNIT,
+                            obj->world_mat.m[3][1] * BU_PER_MODEL_UNIT,
+                            obj->world_mat.m[3][2] * BU_PER_MODEL_UNIT);
+        } else {
+            pos = oimo_vec3(obj->transform.loc.x, obj->transform.loc.y, obj->transform.loc.z);
+        }
+        OimoQuat q = oimo_quat(obj->transform.rot.x, obj->transform.rot.y,
+                               obj->transform.rot.z, obj->transform.rot.w);
+        OimoMat3 rot = oimo_quat_to_mat3(&q);
+
+        if (memcmp(&pos, &rb->_transform.position, sizeof(pos)) != 0 ||
+            memcmp(&rot, &rb->_transform.rotation, sizeof(rot)) != 0) {
+            OimoTransform tf = rb->_transform;
+            tf.position = pos;
+            tf.rotation = rot;
+            oimo_rigid_body_set_transform(rb, &tf);
+        }
+        oimo_rigid_body_wake_up(rb);
+    }
+}
+
+// After each step, as oimo_module's physicsUpdate: interpolated bodies keep their
+// transform of the previous step too
+static void record_interpolation(void) {
+    for (int i = 0; i < MAX_PHYSICS_BODIES; i++) {
+        BodyInterpolation* interp = &g_interpolation[i];
+        if (!interp->on) continue;  // Off for free slots (free_body)
+        interp->prev_pos = interp->cur_pos;
+        interp->prev_rot = interp->cur_rot;
+        interp->cur_pos = g_bodies[i]._transform.position;
+        interp->cur_rot = oimo_rigid_body_get_orientation(&g_bodies[i]);
+    }
+}
+
 void physics_step(float dt) {
 #ifdef ARM_DEBUG_HUD
     uint32_t debug_start = TICKS_READ();
 #endif
     if (!g_initialized || g_paused) return;
+    sync_driven_bodies();
     oimo_world_step(&g_world, dt);
+    record_interpolation();
 #ifdef ARM_DEBUG_HUD
     g_debug_step_ticks += TICKS_DISTANCE(debug_start, TICKS_READ());
     g_debug_steps++;
@@ -170,7 +232,8 @@ void physics_step(float dt) {
     // Dispatch per-body contact subscriptions
     physics_contact_dispatch();
 
-    // Process deferred object removals after contact dispatch is complete
+    // Objects removed by contact handlers leave the world before the next step
+    // (main.c also processes removals once per frame, after the updates)
     object_process_removals();
 
     // Process global contact callbacks if registered
@@ -198,6 +261,11 @@ void physics_step(float dt) {
 void physics_pause(void) { g_paused = true; }
 void physics_resume(void) { g_paused = false; }
 OimoWorld* physics_get_world(void) { return &g_world; }
+
+// The rigid body world's time scale (Blender), set by each scene
+static float g_time_scale = 1.0f;
+void physics_set_time_scale(float scale) { g_time_scale = scale; }
+float physics_get_time_scale(void) { return g_time_scale; }
 
 // Gravity
 void physics_set_gravity(float x, float y, float z) {
@@ -238,7 +306,11 @@ static bool setup_body_common(ArmObject* obj, int type, const PhysicsBodyParams*
     config.rotation = oimo_quat_to_mat3(&q);
     config.linearDamping = params->linear_damping;
     config.angularDamping = params->angular_damping;
-    config.autoSleep = params->use_deactivation && (out->final_type == OIMO_RIGID_BODY_DYNAMIC);
+    // As oimo_module: bodies always sleep; deactivation only sets the thresholds
+    if (params->use_deactivation) {
+        config.sleepingVelocityThreshold = params->sleep_linear_velocity;
+        config.sleepingAngularVelocityThreshold = params->sleep_angular_velocity;
+    }
     oimo_rigid_body_init(rb, &config);
     return true;
 }
@@ -258,6 +330,11 @@ static void setup_shape_common(OimoShape* shape, OimoGeometry* geom, int final_t
 
 static void finalize_body(OimoRigidBody* rb, ArmObject* obj, int final_type,
                           const PhysicsBodyParams* params) {
+    rb->_rotFactor = oimo_vec3(params->angular_factor[0], params->angular_factor[1], params->angular_factor[2]);
+    BodyInterpolation* interp = &g_interpolation[get_body_index(rb)];
+    interp->on = params->interpolate;
+    interp->prev_pos = interp->cur_pos = rb->_transform.position;
+    interp->prev_rot = interp->cur_rot = oimo_rigid_body_get_orientation(rb);
     if (final_type == OIMO_RIGID_BODY_DYNAMIC) {
         rb->_mass = params->mass;
         float af = params->angular_friction;
@@ -275,16 +352,9 @@ bool physics_create_box_full(ArmObject* obj, int type, float hx, float hy, float
     BodySetupResult setup;
     if (!setup_body_common(obj, type, params, &setup)) return false;
 
-    // Clamp to minimum thickness to avoid div-by-zero on flat meshes (e.g. planes)
-    const float MIN_HALF_EXTENT = 0.01f;
-    if (hx < MIN_HALF_EXTENT) hx = MIN_HALF_EXTENT;
-    if (hy < MIN_HALF_EXTENT) hy = MIN_HALF_EXTENT;
-    if (hz < MIN_HALF_EXTENT) hz = MIN_HALF_EXTENT;
-
     oimo_box_geometry_init3(&g_geometries[setup.idx].box, hx, hy, hz);
-    float density = params->mass / (8.0f * hx * hy * hz);
     setup_shape_common(&g_shapes[setup.idx], &g_geometries[setup.idx].box.base,
-                       setup.final_type, density, params);
+                       setup.final_type, 1.0f, params);
     oimo_rigid_body_add_shape(setup.rb, &g_shapes[setup.idx]);
     finalize_body(setup.rb, obj, setup.final_type, params);
     return true;
@@ -296,10 +366,8 @@ bool physics_create_sphere_full(ArmObject* obj, int type, float radius,
     if (!setup_body_common(obj, type, params, &setup)) return false;
 
     oimo_sphere_geometry_init(&g_geometries[setup.idx].sphere, radius);
-    float volume = (4.0f / 3.0f) * 3.14159265f * radius * radius * radius;
-    float density = params->mass / volume;
     setup_shape_common(&g_shapes[setup.idx], &g_geometries[setup.idx].sphere.base,
-                       setup.final_type, density, params);
+                       setup.final_type, 1.0f, params);
     oimo_rigid_body_add_shape(setup.rb, &g_shapes[setup.idx]);
     finalize_body(setup.rb, obj, setup.final_type, params);
     return true;
@@ -311,11 +379,8 @@ bool physics_create_capsule_full(ArmObject* obj, int type, float radius, float h
     if (!setup_body_common(obj, type, params, &setup)) return false;
 
     oimo_capsule_geometry_init(&g_geometries[setup.idx].capsule, radius, half_height);
-    float cyl_vol = 3.14159265f * radius * radius * (2.0f * half_height);
-    float sphere_vol = (4.0f / 3.0f) * 3.14159265f * radius * radius * radius;
-    float density = params->mass / (cyl_vol + sphere_vol);
     setup_shape_common(&g_shapes[setup.idx], &g_geometries[setup.idx].capsule.base,
-                       setup.final_type, density, params);
+                       setup.final_type, 1.0f, params);
     oimo_rigid_body_add_shape(setup.rb, &g_shapes[setup.idx]);
     finalize_body(setup.rb, obj, setup.final_type, params);
     return true;
@@ -362,6 +427,7 @@ void physics_remove_body(ArmObject* obj) {
     if (!g_initialized || !obj || !obj->rigid_body) return;
 
     OimoRigidBody* rb = obj->rigid_body;
+    physics_contact_forget_body(rb);
 
     // Check if this is a mesh collider body (lives in g_mesh_bodies[])
     ptrdiff_t mesh_idx = rb - g_mesh_bodies;
@@ -450,28 +516,52 @@ bool physics_create_mesh(ArmObject* obj,
     return physics_create_mesh_full(obj, vertices, indices, vertex_count, index_count, &params);
 }
 
+// oimo_module's nlerp: the shorter way between two rotations, normalized
+static OimoQuat nlerp(OimoQuat q1, OimoQuat q2, float t) {
+    float dot = q1.x * q2.x + q1.y * q2.y + q1.z * q2.z + q1.w * q2.w;
+    if (dot < 0.0f) q2 = oimo_quat(-q2.x, -q2.y, -q2.z, -q2.w);
+    OimoQuat q = oimo_quat(q1.x * (1.0f - t) + q2.x * t, q1.y * (1.0f - t) + q2.y * t,
+                           q1.z * (1.0f - t) + q2.z * t, q1.w * (1.0f - t) + q2.w * t);
+    float inv_len = 1.0f / oimo_sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
+    return oimo_quat(q.x * inv_len, q.y * inv_len, q.z * inv_len, q.w * inv_len);
+}
+
 // Transform sync
-void physics_sync_object(ArmObject* obj) {
+void physics_sync_object(ArmObject* obj, const OimoVec3* parent_world_pos, float alpha) {
     if (!obj || !obj->rigid_body) return;
 
     OimoRigidBody* rb = obj->rigid_body;
-    if (rb->_type == OIMO_RIGID_BODY_STATIC || rb->_sleeping) return;
+    if (rb->_type == OIMO_RIGID_BODY_STATIC) return;
+    // Kinematic and animated: the object drives the body (sync_driven_bodies)
+    if (object_drives_body(obj, rb)) return;
 
-    OimoVec3 pos = oimo_rigid_body_get_position(rb);
+    OimoVec3 pos;
+    OimoQuat rot;
+    const BodyInterpolation* interp = &g_interpolation[get_body_index(rb)];
+    if (interp->on) {
+        // Between the last two steps (also while asleep: it settles on the last one)
+        pos = oimo_vec3(interp->prev_pos.x * (1.0f - alpha) + interp->cur_pos.x * alpha,
+                        interp->prev_pos.y * (1.0f - alpha) + interp->cur_pos.y * alpha,
+                        interp->prev_pos.z * (1.0f - alpha) + interp->cur_pos.z * alpha);
+        rot = nlerp(interp->prev_rot, interp->cur_rot, alpha);
+    } else {
+        if (rb->_sleeping) return;  // Unchanged since it fell asleep
+        pos = oimo_rigid_body_get_position(rb);
+        rot = oimo_rigid_body_get_orientation(rb);
+    }
 
-    // Check if object has fallen out of world bounds
-    if (!position_in_bounds(pos.x, pos.y, pos.z)) {
-        // Object fell off world - put it to sleep and hide it
-        oimo_rigid_body_sleep(rb);
-        obj->visible = false;
-        return;
+    // A parented object's location is relative to its parent's world position
+    // (as oimo_module: position only)
+    if (parent_world_pos) {
+        pos.x -= parent_world_pos->x;
+        pos.y -= parent_world_pos->y;
+        pos.z -= parent_world_pos->z;
     }
 
     obj->transform.loc.x = pos.x;
     obj->transform.loc.y = pos.y;
     obj->transform.loc.z = pos.z;
 
-    OimoQuat rot = oimo_rigid_body_get_orientation(rb);
     obj->transform.rot.x = rot.x;
     obj->transform.rot.y = rot.y;
     obj->transform.rot.z = rot.z;

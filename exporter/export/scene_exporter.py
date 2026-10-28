@@ -126,10 +126,18 @@ def build_scene_data(exporter, scene):
                 if canvas_name:
                     break
 
-    # Get gravity from scene (Blender's scene.gravity is the actual gravity vector)
-    gravity = [0.0, -9.81, 0.0]  # Default gravity
-    if hasattr(scene, 'gravity'):
-        gravity = [scene.gravity[0], scene.gravity[1], scene.gravity[2]]
+    # Gravity and the physics time scale, as Armory's exporter: none when the scene
+    # doesn't use gravity, else scaled by the rigid body world's effector weights
+    gravity = [0.0, 0.0, 0.0]
+    physics_time_scale = 1.0
+    rbw = scene.rigidbody_world
+    if scene.use_gravity:
+        gravity = list(scene.gravity)
+        if rbw is not None:
+            weight = rbw.effector_weights.all * rbw.effector_weights.gravity
+            gravity = [g * weight for g in gravity]
+    if rbw is not None:
+        physics_time_scale = rbw.time_scale
 
     # Safe access to Fast64 ambient color with fallback
     try:
@@ -170,7 +178,8 @@ def build_scene_data(exporter, scene):
         "world": {
             "clear_color": n64_utils.get_clear_color(scene),
             "ambient_color": ambient_color,
-            "gravity": gravity
+            "gravity": gravity,
+            "physics_time_scale": physics_time_scale
         },
         "cameras": [],
         "lights": [],
@@ -430,15 +439,6 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object
             has_parent = True
             parent_source = 'direct'
 
-    if has_parent:
-        # Validation: block parented physics bodies
-        parent_name = instancer_parent.name if parent_source == 'instancer' else obj.parent.name
-        if obj.rigid_body is not None:
-            wrd = bpy.data.worlds['Arm']
-            if wrd.arm_physics != 'Disabled':
-                log.warn(f'Object "{obj.name}": physics bodies on parented objects are not supported on N64. '
-                         f'Parent "{parent_name}" will be ignored for physics sync.')
-
     # Compute world matrix considering instance transform
     world_matrix = instance_matrix if instance_matrix else obj.matrix_world
 
@@ -550,55 +550,50 @@ def _extract_rigid_body(exporter, obj, half_extents, world_scale):
     shape = rb.collision_shape
     scale = [abs(s) for s in world_scale]
 
+    # Body type, as Armory's exporter (rigid_body_static) and oimo_module:
+    # Animated -> kinematic; Passive, or Active without Dynamic -> static
+    is_static = ((not rb.enabled and not rb.kinematic) or (rb.type == 'PASSIVE' and not rb.kinematic))
+
+    # Sizes as oimo_module's setShape: the object's dimensions, shrunk by the
+    # collision margin (dim - dim * margin)
+    margin = rb.collision_margin if rb.use_margin else 0.0
+    dim = [half_extents[i] * 2.0 * scale[i] * (1.0 - margin) for i in range(3)]
+
     # N64 supports BOX, SPHERE, CAPSULE, and MESH (static only)
     rb_mesh_data = None
+    rb_radius = rb_half_height = rb_half_extents = None
     if shape == 'SPHERE':
         rb_shape = "sphere"
-        max_scale = max(scale)
-        rb_radius = max(half_extents) * max_scale
-        rb_half_extents = None
-        rb_half_height = None
+        rb_radius = max(dim) * 0.5
     elif shape == 'CAPSULE':
         rb_shape = "capsule"
-        rb_radius = max(half_extents[0], half_extents[1]) * max(scale[0], scale[1])
-        total_height = half_extents[2] * 2.0 * scale[2]
-        rb_half_height = max(0.0, (total_height - 2.0 * rb_radius) / 2.0)
-        rb_half_extents = None
-    elif shape == 'MESH' and rb.type == 'PASSIVE':
+        rb_radius = dim[0] * 0.5
+        rb_half_height = dim[2] * 0.5 - rb_radius
+    elif shape == 'MESH' and is_static:
         rb_shape = "mesh"
-        rb_radius = None
-        rb_half_height = None
-        rb_half_extents = None
         rb_mesh_data = n64_utils.extract_collision_mesh(obj, world_scale)
         if rb_mesh_data is None:
             log.warn(f'Object "{obj.name}": failed to extract mesh collision data, using BOX')
             rb_shape = "box"
-            MIN_HALF_EXTENT = 0.01
-            rb_half_extents = [
-                max(half_extents[0] * scale[0], MIN_HALF_EXTENT),
-                max(half_extents[2] * scale[2], MIN_HALF_EXTENT),
-                max(half_extents[1] * scale[1], MIN_HALF_EXTENT)
-            ]
     else:
         rb_shape = "box"
-        rb_radius = None
-        rb_half_height = None
-        # Clamp to minimum thickness for flat meshes (e.g. planes)
-        MIN_HALF_EXTENT = 0.01
-        rb_half_extents = [
-            max(half_extents[0] * scale[0], MIN_HALF_EXTENT),
-            max(half_extents[2] * scale[2], MIN_HALF_EXTENT),
-            max(half_extents[1] * scale[1], MIN_HALF_EXTENT)
-        ]
         if shape not in ('BOX', 'SPHERE', 'CAPSULE'):
-            if shape == 'MESH' and rb.type != 'PASSIVE':
-                log.warn(f'Object "{obj.name}": MESH collision shape only supported for static (passive) bodies, using BOX')
+            if shape == 'MESH':
+                log.warn(f'Object "{obj.name}": MESH collision shape only supported for static bodies, using BOX')
             else:
                 log.warn(f'Object "{obj.name}": collision shape "{shape}" not supported on N64, using BOX')
+    if rb_shape == "box":
+        # Blender (x, y, z) -> Oimo (x, z, y)
+        rb_half_extents = [dim[0] * 0.5, dim[2] * 0.5, dim[1] * 0.5]
 
     # Mass (0 = static)
-    is_static = rb.type == 'PASSIVE'
     rb_mass = 0.0 if is_static else rb.mass
+
+    # Rotation factor (lock rotation: 0), Blender (x, y, z) -> Oimo (x, z, y)
+    angular = list(getattr(obj, 'arm_rb_angular_factor', (1.0, 1.0, 1.0)))
+    for i in range(3):
+        if obj.lock_rotation[i]:
+            angular[i] = 0.0
 
     # Collision groups/masks
     col_group = 0
@@ -624,10 +619,16 @@ def _extract_rigid_body(exporter, obj, half_extents, world_scale):
         "collision_group": col_group,
         "collision_mask": col_mask,
         "is_trigger": getattr(obj, 'arm_rb_trigger', False),
-        "rb_type": rb.type,
+        "is_static": is_static,
         "is_animated": rb.kinematic,
-        "is_dynamic": rb.enabled,
-        "use_deactivation": rb.use_deactivation
+        "use_deactivation": rb.use_deactivation,
+        # Armory's exporter writes the angular one under a misspelled key that
+        # oimo_module never reads; the N64 uses it as intended
+        "sleep_linear_velocity": rb.deactivate_linear_velocity,
+        "sleep_angular_velocity": rb.deactivate_angular_velocity,
+        "angular_friction": getattr(obj, 'arm_rb_angular_friction', 0.1),
+        "angular_factor": [angular[0], angular[2], angular[1]],
+        "interpolate": getattr(obj, 'arm_rb_interpolate', False)
     }
 
     if rb_shape == "sphere":
@@ -780,7 +781,6 @@ def write_scene_c(exporter, scene):
         has_parented_objects='true' if has_parented else 'false',
         objects_block=codegen.generate_object_block(objects, exporter.trait_info, scene_name),
         physics_block=codegen.generate_physics_block(objects, scene_data['world']),
-        contact_subs_block=codegen.generate_contact_subscriptions_block(objects, exporter.trait_info),
         scene_trait_count=len(scene_traits),
         scene_traits_block=codegen.generate_scene_traits_block(scene_traits, exporter.trait_info, scene_name)
     )

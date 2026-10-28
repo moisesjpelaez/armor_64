@@ -11,8 +11,6 @@
 extern "C" {
 #endif
 
-#define PHYSICS_WORLD_BOUNDS 1000.0f
-
 // Largest value tiny3d's 16.16 fixed-point matrices hold (t3d_mat4_to_fixed). In the
 // renderer's ×64 space that's ±511 BU. Converting a larger float, or a NaN, raises an
 // exception on the N64's CPU (emulators may just clamp).
@@ -21,13 +19,6 @@ extern "C" {
 // Whether a float converts to tiny3d's fixed point (false for NaN and infinity too)
 static inline bool fits_fixed_point(float f) {
     return fabsf(f) <= FIXED_POINT_MAX;
-}
-
-// Check if position is within world bounds
-static inline bool position_in_bounds(float x, float y, float z) {
-    return fabsf(x) <= PHYSICS_WORLD_BOUNDS &&
-           fabsf(y) <= PHYSICS_WORLD_BOUNDS &&
-           fabsf(z) <= PHYSICS_WORLD_BOUNDS;
 }
 
 // String formatting - rotating buffer for multiple calls per frame

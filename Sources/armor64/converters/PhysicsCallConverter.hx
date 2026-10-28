@@ -11,9 +11,10 @@ import armor64.util.ExprUtils;
 using StringTools;
 
 /**
- * RigidBody contact subscriptions: notifyOnContact, removeContact (their
- * handlers are extracted as events). The other RigidBody calls are in
- * Bindings.hx.
+ * RigidBody contact subscriptions: notifyOnContact, removeContact, made where
+ * the code calls them, on the receiver's body, as in oimo_module. The handler
+ * method is extracted as an event; its RigidBody parameter is the other body's
+ * object. The other RigidBody calls are in Bindings.hx.
  */
 class PhysicsCallConverter implements ICallConverter {
     public function new() {}
@@ -25,7 +26,7 @@ class PhysicsCallConverter implements ICallConverter {
 
         if (method == "notifyOnContact" || method == "removeContact") {
             ctx.getMeta().uses_physics = true;
-            return convertContactSubscription(method, args, rawParams, ctx);
+            return convertContactSubscription(obj, method, rawParams, ctx);
         }
         return null;
     }
@@ -35,42 +36,43 @@ class PhysicsCallConverter implements ICallConverter {
         return StringTools.startsWith(path, "armory.trait.physics.") && StringTools.endsWith(path, ".RigidBody");
     }
 
-    function convertContactSubscription(method:String, args:Array<IRNode>, params:Array<Expr>, ctx:IExtractorContext):IRNode {
-        // Extract handler function name from first argument
+    function convertContactSubscription(receiver:Expr, method:String, params:Array<Expr>, ctx:IExtractorContext):IRNode {
+        if (ctx.isAutoload()) return N64MacroBase.unsupported('$method() is only supported in traits on N64');
         if (params.length == 0) return N64MacroBase.unsupported('$method() needs a handler method');
 
         var handlerName = ExprUtils.extractIdentName(params[0]);
-
-        if (handlerName == null) return N64MacroBase.unsupported('$method() handler must be a method name on N64');
+        var func = handlerName != null ? ctx.getMethod(handlerName) : null;
+        if (func == null) return N64MacroBase.unsupported('$method() handler must be a method of this trait on N64');
 
         var isSubscribe = (method == "notifyOnContact");
-        var meta = ctx.getMeta();
-        var cName = ctx.getCName();
+        var fullHandlerName = ctx.getCName() + "_contact_" + handlerName;
+        // The handler's RigidBody parameter (the other body), named as in Haxe
+        var paramName = func.args.length > 0 ? func.args[0].name : "_other";
 
-        // Build full C handler name
-        var fullHandlerName = cName + "_contact_" + handlerName;
-
-        meta.contact_events.push({
+        // Counted by limits.py (bodies with handlers, handlers per body)
+        ctx.getMeta().contact_events.push({
             event_name: handlerName,
             handler_name: fullHandlerName,
-            subscribe: isSubscribe
+            subscribe: isSubscribe,
+            param_name: paramName
         });
 
-        // If subscribing, extract the handler method body
-        if (isSubscribe) {
-            var func = ctx.getMethod(handlerName);
-            if (func != null) {
-                var events = ctx.getEvents();
-                var eventKey = "contact_" + handlerName;
-                if (!events.exists(eventKey)) {
-                    events.set(eventKey, []);
-                    extractContactHandler(func, events.get(eventKey), ctx);
-                }
-            }
+        // The handler, extracted once (removeContact names it too)
+        var events = ctx.getEvents();
+        var eventKey = "contact_" + handlerName;
+        if (!events.exists(eventKey)) {
+            events.set(eventKey, []);
+            extractContactHandler(func, events.get(eventKey), ctx);
         }
 
-        // Return skip - the actual subscription is done at init time by Python
-        return { type: "skip" };
+        // On the receiver's body, with this trait's object and data, where the code calls it
+        var cFunction = isSubscribe ? "physics_contact_subscribe" : "physics_contact_unsubscribe";
+        return {
+            type: "c_template",
+            c_code: '$cFunction({self}->rigid_body, $fullHandlerName, obj, data)',
+            args: [],
+            object: ctx.exprToIR(receiver)
+        };
     }
 
     function extractContactHandler(func:Function, eventNodes:Array<IRNode>, ctx:IExtractorContext):Void {

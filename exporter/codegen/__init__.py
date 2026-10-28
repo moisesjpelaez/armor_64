@@ -34,7 +34,6 @@ from armor64.codegen.scene_generator import (
     generate_light_block,
     generate_object_block,
     generate_physics_block,
-    generate_contact_subscriptions_block,
     generate_scene_traits_block,
 )
 
@@ -59,7 +58,6 @@ __all__ = [
     'generate_light_block',
     'generate_object_block',
     'generate_physics_block',
-    'generate_contact_subscriptions_block',
     'generate_scene_traits_block',
     # Classes
     'TraitEmitter',

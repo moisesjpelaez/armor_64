@@ -18,11 +18,15 @@ typedef struct PhysicsBodyParams {
     float linear_damping;
     float angular_damping;
     float angular_friction;      // Rotation inertia (0.1 default)
+    float angular_factor[3];     // Rotation factor, Oimo axes (lock rotation: 0)
+    float sleep_linear_velocity; // Sleeping thresholds (with use_deactivation)
+    float sleep_angular_velocity;
     int collision_group;         // Collision group bitmask
     int collision_mask;          // Collision mask bitmask
     bool animated;               // If true, use KINEMATIC type
     bool trigger;                // If true, shape is sensor only
-    bool use_deactivation;       // Enable/disable sleeping
+    bool use_deactivation;       // Sleep with the thresholds above (else Oimo's)
+    bool interpolate;            // The object shows the body between physics steps
 } PhysicsBodyParams;
 
 // Default physics parameters (matches Blender defaults)
@@ -34,11 +38,15 @@ static inline PhysicsBodyParams physics_body_params_default(void) {
     p.linear_damping = 0.04f;
     p.angular_damping = 0.1f;
     p.angular_friction = 0.1f;
+    p.angular_factor[0] = p.angular_factor[1] = p.angular_factor[2] = 1.0f;
+    p.sleep_linear_velocity = OIMO_SLEEPING_VELOCITY_THRESHOLD;
+    p.sleep_angular_velocity = OIMO_SLEEPING_ANGULAR_VELOCITY_THRESHOLD;
     p.collision_group = 1;
     p.collision_mask = 1;
     p.animated = false;
     p.trigger = false;
     p.use_deactivation = true;
+    p.interpolate = false;
     return p;
 }
 
@@ -59,6 +67,8 @@ OimoWorld* physics_get_world(void);
 
 // Gravity
 void physics_set_gravity(float x, float y, float z);
+void physics_set_time_scale(float scale);  // Blender's rigid body world time scale
+float physics_get_time_scale(void);
 OimoVec3 physics_get_gravity(void);
 
 // Body creation with full parameters
@@ -114,7 +124,9 @@ static inline bool physics_create_capsule(ArmObject* obj, int type, float radius
 void physics_remove_body(ArmObject* obj);
 
 // Transform sync (call after physics_step)
-void physics_sync_object(ArmObject* obj);
+// Once per frame: the body's transform to its object, as oimo_module's RigidBody.update
+// (alpha: Time.fixedStepInterpolation; parent_world_pos: NULL for roots)
+void physics_sync_object(ArmObject* obj, const OimoVec3* parent_world_pos, float alpha);
 
 // Contact/collision info
 typedef struct PhysicsContactPair {

@@ -768,14 +768,18 @@ class TraitCodeGenerator:
         decls.append(f"void {self.c_name}_on_render2d(void* obj, void* data);")
         return decls
 
+    def contact_handler_signature(self, event_name: str) -> str:
+        """A contact handler (PhysicsContactHandler): (obj, data, the other body's
+        object), the last parameter named as the Haxe handler's RigidBody one."""
+        handler = event_name[len("contact_"):]
+        param = next((e.get("param_name") for e in self.meta.get("contact_events", [])
+                      if e.get("event_name") == handler and e.get("param_name")), "_other")
+        return f"void {self.c_name}_{event_name}(void* obj, void* data, ArmObject* {param})"
+
     def generate_contact_event_declarations(self) -> List[str]:
         """Generate declarations for contact event handlers."""
-        decls = []
-        for event_name in self.events.keys():
-            if event_name.startswith("contact_"):
-                # Contact events use PhysicsContactHandler signature: (obj, data, other)
-                decls.append(f"void {self.c_name}_{event_name}(void* obj, void* data, ArmObject* other);")
-        return decls
+        return [f"{self.contact_handler_signature(name)};" for name in self.events.keys()
+                if name.startswith("contact_")]
 
     def generate_method_declarations(self) -> List[str]:
         """Generate declarations for all callable methods (non-lifecycle).
@@ -1059,8 +1063,7 @@ class TraitCodeGenerator:
             if event_name.startswith("contact_"):
                 event_nodes = self.events.get(event_name, [])
                 body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-                impl_lines.append(f"void {self.c_name}_{event_name}(void* obj, void* data, ArmObject* other) {{")
-                impl_lines.append(f"    (void)other;  // Available as 'other' in body if needed")
+                impl_lines.append(f"{self.contact_handler_signature(event_name)} {{")
                 impl_lines.append(body)
                 impl_lines.append("}")
                 impl_lines.append("")

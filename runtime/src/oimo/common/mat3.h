@@ -285,6 +285,15 @@ static inline void oimo_mat3_transpose_eq(OimoMat3* m) {
     t = m->e12; m->e12 = m->e21; m->e21 = t;
 }
 
+// Rows scaled by x, y and z (upstream M.mat3_scaleRows)
+static inline OimoMat3 oimo_mat3_scale_rows(const OimoMat3* m, OimoScalar x, OimoScalar y, OimoScalar z) {
+    return (OimoMat3){
+        m->e00 * x, m->e01 * x, m->e02 * x,
+        m->e10 * y, m->e11 * y, m->e12 * y,
+        m->e20 * z, m->e21 * z, m->e22 * z
+    };
+}
+
 // Create diagonal matrix
 static inline OimoMat3 oimo_mat3_diagonal(OimoScalar d00, OimoScalar d11, OimoScalar d22) {
     return (OimoMat3){

@@ -604,6 +604,14 @@ class N64Extractor implements IExtractorContext {
             return { type: "skip" };
         }
 
+        // A RigidBody is its object's pointer: rb.object is that pointer
+        var receiverType = TypedIndex.receiverPath(obj);
+        if (receiverType != null && StringTools.startsWith(receiverType, "armory.trait.physics.")
+                && StringTools.endsWith(receiverType, ".RigidBody")) {
+            if (field == "object") return exprToIR(obj);
+            return N64MacroBase.unsupported('RigidBody.$field is not supported on N64');
+        }
+
         // AutoloadClass.traitMember.object -> object pointer from the trait's data
         if (field == "object") {
             switch (obj.expr) {

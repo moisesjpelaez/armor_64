@@ -114,7 +114,8 @@ typedef MemberIR = {
 typedef ContactEventMeta = {
     event_name: String,      // Handler function name, e.g., "onContact"
     handler_name: String,    // Full C handler name, e.g., "arm_player_player_contact_onContact"
-    subscribe: Bool          // true for notifyOnContact, false for removeContact
+    subscribe: Bool,         // true for notifyOnContact, false for removeContact
+    param_name: String       // The handler's RigidBody parameter (the other body's object in C)
 }
 
 typedef SignalMeta = {

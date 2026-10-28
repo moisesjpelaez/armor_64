@@ -21,14 +21,14 @@ class EngineTypes {
     public static function isProvided(path:Null<String>):Bool {
         if (path == null) return false;
         if (providedTypes.indexOf(path) >= 0) return true;
-        // armory.trait.physics.oimo.* or armory.trait.physics.bullet.*
-        return StringTools.startsWith(path, "armory.trait.physics.")
-            && (StringTools.endsWith(path, ".RigidBody") || StringTools.endsWith(path, ".PhysicsWorld"));
+        // armory.trait.physics.oimo.* or armory.trait.physics.bullet.* (a RigidBody
+        // is a value on N64: its object's pointer)
+        return StringTools.startsWith(path, "armory.trait.physics.") && StringTools.endsWith(path, ".PhysicsWorld");
     }
 
     /**
      * Whether a member of `cls` (or a parent class) holds an engine-provided
-     * value, e.g. `var pad:Gamepad` or `var rb:RigidBody`.
+     * value, e.g. `var pad:Gamepad`.
      */
     public static function isProvidedMember(cls:ClassType, name:String):Bool {
         var c = cls;

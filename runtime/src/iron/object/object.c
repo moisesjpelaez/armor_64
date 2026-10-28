@@ -75,15 +75,17 @@ void object_remove_and_recycle(ArmObject* obj, SceneId scene_id)
 
 void object_process_removals(void)
 {
-    for (uint8_t i = 0; i < g_pending_count; i++) {
+    for (uint16_t i = 0; i < g_pending_count; i++) {
         PendingRemoval* pr = &g_pending_removals[i];
         ArmObject* obj = pr->obj;
 
         if (!obj) continue;
 
 #if ENGINE_ENABLE_PHYSICS
+        // Its body leaves the world with the subscriptions on it; the object's own
+        // handlers on other bodies stay, as in Armory (its trait data lives on
+        // until the scene ends)
         if (obj->rigid_body) {
-            physics_contact_unsubscribe_all(obj);
             physics_remove_body(obj);
         }
 #endif

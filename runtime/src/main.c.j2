@@ -12,6 +12,7 @@
 #include "data/scenes.h"
 #include "data/models.h"
 #include "iron/system/input.h"
+#include "iron/object/object.h"
 #include "system/time.h"
 #include "system/tween.h"
 #if ENGINE_ENABLE_PHYSICS
@@ -73,20 +74,27 @@ int main(void)
             fixed_time += dt;
             while (fixed_time >= FIXED_TIMESTEP) {{
 #if ENGINE_ENABLE_PHYSICS
-                // Time.scale slows the simulation, as in oimo_module (0 stops it)
-                if (time_scale != 0.0f) {{
-                    physics_step(FIXED_TIMESTEP * time_scale);
-                    scene_sync_physics(current_scene);
+                // Time.scale and the rigid body world's time scale slow the
+                // simulation, as in oimo_module (0 stops it)
+                float physics_scale = time_scale * physics_get_time_scale();
+                if (physics_scale != 0.0f) {{
+                    physics_step(FIXED_TIMESTEP * physics_scale);
                 }}
 #endif
                 scene_on_fixed_update(current_scene, FIXED_TIMESTEP);
                 fixed_time -= FIXED_TIMESTEP;
             }}
+            // Bodies to their objects once per frame, as oimo_module's RigidBody
+            // update (interpolated ones by Time.fixedStepInterpolation)
+            scene_sync_physics(current_scene, fixed_time / FIXED_TIMESTEP);
 
             scene_on_update(current_scene, dt);
             tween_update_all(dt);
             scene_on_late_update(current_scene, dt);
         }}
+        // Objects removed this frame leave the physics world now, as Armory
+        // removes a body at once (removal is deferred only while contacts dispatch)
+        object_process_removals();
 
         SceneId pending = scene_get_pending();
         if (pending < SCENE_COUNT) {{
@@ -101,6 +109,8 @@ int main(void)
             arm_audio_mixer_poll();
 #endif
             scene_clear(current_scene);
+            // Removals the scene's notifyOnRemove code made, while its bodies still exist
+            object_process_removals();
 #if ENGINE_ENABLE_PHYSICS
             physics_reset();
 #endif

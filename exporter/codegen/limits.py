@@ -146,12 +146,11 @@ def scene_counts(scene: Dict, trait_key: Callable[[str], str], traits: Dict) -> 
 
 def _body_kind(rigid_body: Dict) -> str:
     """Oimo body type, as scene_generator creates it."""
-    if rigid_body.get("shape") == "mesh":
+    if rigid_body.get("is_animated", False):
+        return "kinematic"
+    if rigid_body.get("shape") == "mesh" or rigid_body.get("is_static", False):
         return "static"
-    animated = rigid_body.get("is_animated", False)
-    if rigid_body.get("rb_type", "ACTIVE") == "PASSIVE":
-        return "kinematic" if animated else "static"
-    return "dynamic" if rigid_body.get("is_dynamic", True) and not animated else "kinematic"
+    return "dynamic"
 
 
 def _physics_bounds(physics: List[tuple]) -> tuple:

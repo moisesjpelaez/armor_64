@@ -168,9 +168,8 @@ Any other `{name}` is an error. A C brace around a bare name needs a space: `{ x
 | Receiver | `{self}` | Example |
 |---|---|---|
 | `None` (default) | Nothing: a static call | `Math.sin(x)`, `StringTools.endsWith(s, x)` (or `s.endsWith(x)`) |
-| `Value` | The receiver | `v.length()`, `anim.play("run")` |
+| `Value` | The receiver | `v.length()`, `anim.play("run")`, `rb.applyForce(f)` (a RigidBody is its object's pointer) |
 | `InPlace` | The receiver, which is written to. It's used as written and never copied. | `v.normalize()` |
-| `Self` | The trait's own object, whatever the receiver (traits only) | `rigidBody.applyForce(f)` |
 | `FieldOwner("transform")` | The object owning the field: `x.transform.m()` gives `x`, `transform.m()` gives the trait's object (traits only) | `object.transform.translate(...)` |
 
 **Other fields:**

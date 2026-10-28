@@ -12,7 +12,6 @@ enum BindingReceiver {
     None;                       // A static call: no {self}
     Value;                      // The receiver, e.g. the vector in `v.length()`
     InPlace;                    // The receiver, written to (`v.normalize()`): used as written, never copied
-    Self;                       // The trait's own object, whatever the receiver (traits only)
     FieldOwner(field:String);   // The object owning the receiver field: `x.transform.m()` -> x,
                                 // `transform.m()` -> the trait's object (traits only)
 }
@@ -102,7 +101,7 @@ class Bindings {
             "iron.object.Transform.worldy" => transform('it_world_y($TRANSFORM)', false),
             "iron.object.Transform.worldz" => transform('it_world_z($TRANSFORM)', false),
 
-            // RigidBody: always the trait's own object on N64. Blender -> Oimo (x, z, -y)
+            // RigidBody: the receiver is its object's pointer (body = ->rigid_body). Blender -> Oimo (x, z, -y)
             "armory.trait.physics.oimo.RigidBody.applyForce" => physics("{ OimoVec3 _f = (OimoVec3){({0}).x, ({0}).z, -({0}).y}; physics_apply_force({self}->rigid_body, &_f); }"),
             "armory.trait.physics.oimo.RigidBody.applyImpulse" => physics("{ OimoVec3 _i = (OimoVec3){({0}).x, ({0}).z, -({0}).y}; physics_apply_impulse({self}->rigid_body, &_i); }"),
             "armory.trait.physics.oimo.RigidBody.setLinearVelocity" => physics("{ OimoVec3 _v = (OimoVec3){{0}, {2}, -({1})}; physics_set_linear_velocity({self}->rigid_body, &_v); }"),
@@ -155,7 +154,7 @@ class Bindings {
     }
 
     static function physics(c:String):Binding {
-        return {c: c, receiver: Self, flags: ["uses_physics"]};
+        return {c: c, receiver: Value, flags: ["uses_physics"]};
     }
 
     static var placeholder = ~/\{([A-Za-z0-9_]+)(=[^{}]*)?\}/;
@@ -187,9 +186,6 @@ class Bindings {
             case InPlace:
                 node.object = ctx.exprToIR(obj);
                 node.props = {in_place: true};
-            case Self:
-                if (ctx.isAutoload()) return N64MacroBase.unsupported('$shortName.$method() is only supported in traits on N64');
-                node.object = {type: "ident", value: "object"};
             case FieldOwner(field):
                 if (ctx.isAutoload()) return N64MacroBase.unsupported('$shortName.$method() is only supported in traits on N64');
                 switch (obj.expr) {

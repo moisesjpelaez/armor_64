@@ -162,7 +162,9 @@ void scene_on_fixed_update(SceneId id, float dt)
 	}}
 }}
 
-void scene_sync_physics(SceneId id)
+// Once per frame, after the physics steps: bodies to their objects (alpha:
+// how far the time is between the last step and the next)
+void scene_sync_physics(SceneId id, float alpha)
 {{
 #if ENGINE_ENABLE_PHYSICS
 	ArmScene *s = &g_scenes[id];
@@ -170,14 +172,19 @@ void scene_sync_physics(SceneId id)
 	for (uint16_t i = 0; i < s->physics_count; i++) {{
 		ArmObject *obj = &s->objects[s->physics_objects[i]];
 		if (obj->is_removed) continue;
-		// Skip parented objects - physics sync writes world-space position
-		// back to transform.loc, but parented objects store local-space there.
-		// Parented physics bodies are blocked at export time with a warning.
-		if (obj->parent_index >= 0) continue;
-		physics_sync_object(obj);
+		if (obj->parent_index >= 0) {{
+			// The parent's world position, from its world matrix (model units)
+			const T3DMat4 *pm = &s->objects[obj->parent_index].world_mat;
+			OimoVec3 parent_pos = oimo_vec3(pm->m[3][0] * BU_PER_MODEL_UNIT, pm->m[3][1] * BU_PER_MODEL_UNIT,
+			                                pm->m[3][2] * BU_PER_MODEL_UNIT);
+			physics_sync_object(obj, &parent_pos, alpha);
+		}} else {{
+			physics_sync_object(obj, NULL, alpha);
+		}}
 	}}
 #else
 	(void)id;
+	(void)alpha;
 #endif
 }}
 

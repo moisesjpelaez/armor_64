@@ -165,8 +165,6 @@ def generate_trait_block(prefix: str, traits: List[Dict],
             else:
                 lines.append(f'    {prefix}.traits[{t_idx}].data = NULL;')
 
-            # Note: Contact event subscriptions are generated separately in generate_contact_subscriptions_block
-            # after physics bodies are created
     else:
         lines.append(f'    {prefix}.traits = NULL;')
 
@@ -279,6 +277,7 @@ def generate_physics_block(objects: List[Dict], world_data: dict) -> str:
     gravity = world_data.get("gravity", [0, 0, -9.81])
     n64_gravity = convert_vec3_list(gravity)
     lines.append(f'    physics_set_gravity({n64_gravity[0]:.6f}f, {n64_gravity[1]:.6f}f, {n64_gravity[2]:.6f}f);')
+    lines.append(f'    physics_set_time_scale({world_data.get("physics_time_scale", 1.0):.6f}f);')
     lines.append('')
 
     # Physics debug drawing is set up once at boot (main.c), for every scene
@@ -302,28 +301,16 @@ def generate_physics_block(objects: List[Dict], world_data: dict) -> str:
         col_group = rb.get("collision_group", 1)
         col_mask = rb.get("collision_mask", 1)
 
-        # Blender rigid body properties
-        blender_type = rb.get("rb_type", "ACTIVE")  # 'PASSIVE' or 'ACTIVE'
-        is_animated = rb.get("is_animated", False)   # Animated checkbox
-        is_dynamic = rb.get("is_dynamic", True)      # Dynamic checkbox
-
-        # Determine Oimo rigid body type:
-        # Passive -> Static
-        # Passive + Animated -> Kinematic
-        # Active -> Kinematic
-        # Active + Animated -> Kinematic
-        # Active + Animated + Dynamic -> Kinematic
-        # Active + Dynamic -> Dynamic
-        if blender_type == "PASSIVE":
-            if is_animated:
-                rb_type = "OIMO_RIGID_BODY_KINEMATIC"
-            else:
-                rb_type = "OIMO_RIGID_BODY_STATIC"
-        else:  # ACTIVE
-            if is_dynamic and not is_animated:
-                rb_type = "OIMO_RIGID_BODY_DYNAMIC"
-            else:
-                rb_type = "OIMO_RIGID_BODY_KINEMATIC"
+        # Oimo body type as oimo_module: animated -> kinematic, static (decided by
+        # the exporter as Armory's) -> static, else dynamic
+        is_animated = rb.get("is_animated", False)
+        if is_animated:
+            rb_type = "OIMO_RIGID_BODY_KINEMATIC"
+        elif rb.get("is_static", False):
+            rb_type = "OIMO_RIGID_BODY_STATIC"
+        else:
+            rb_type = "OIMO_RIGID_BODY_DYNAMIC"
+        factor = rb.get("angular_factor", [1.0, 1.0, 1.0])
 
         shape = rb.get("shape", "box")
 
@@ -340,6 +327,12 @@ def generate_physics_block(objects: List[Dict], world_data: dict) -> str:
         lines.append(f'        params.animated = {"true" if is_animated else "false"};')
         lines.append(f'        params.trigger = {"true" if is_trigger else "false"};')
         lines.append(f'        params.use_deactivation = {"true" if use_deactivation else "false"};')
+        lines.append(f'        params.sleep_linear_velocity = {rb.get("sleep_linear_velocity", 0.2):.6f}f;')
+        lines.append(f'        params.sleep_angular_velocity = {rb.get("sleep_angular_velocity", 0.5):.6f}f;')
+        lines.append(f'        params.angular_friction = {rb.get("angular_friction", 0.1):.6f}f;')
+        lines.append(f'        params.angular_factor[0] = {factor[0]:.6f}f; params.angular_factor[1] = {factor[1]:.6f}f; '
+                     f'params.angular_factor[2] = {factor[2]:.6f}f;')
+        lines.append(f'        params.interpolate = {"true" if rb.get("interpolate", False) else "false"};')
 
         if shape == "box":
             half_extents = rb.get("half_extents", [0.5, 0.5, 0.5])
@@ -383,45 +376,6 @@ def generate_physics_block(objects: List[Dict], world_data: dict) -> str:
 
         lines.append('    }')
         lines.append('')
-
-    return '\n'.join(lines)
-
-
-def generate_contact_subscriptions_block(objects: List[Dict], trait_info: dict) -> str:
-    """Generate physics contact subscription calls after physics bodies exist.
-
-    This must be called AFTER physics bodies are created, so the rigid_body
-    pointers are valid when subscribing.
-
-    Pure 1:1 emitter - handler_name comes directly from macro's contact_events.
-    """
-    lines = []
-    has_subscriptions = False
-
-    for i, obj in enumerate(objects):
-        traits = obj.get("traits", [])
-        prefix = f'objects[{i}]'
-
-        for t_idx, trait in enumerate(traits):
-            trait_class = trait["class_name"]
-            trait_ir = n64_utils.get_trait(trait_info, trait_class)
-            meta = trait_ir.get("meta", {})
-
-            for contact_evt in meta.get("contact_events", []):
-                handler_name = contact_evt.get("handler_name", "")
-                is_subscribe = contact_evt.get("subscribe", True)
-
-                if is_subscribe and handler_name:
-                    if not has_subscriptions:
-                        lines.append('    // Physics contact event subscriptions')
-                        has_subscriptions = True
-
-                    obj_ptr = f"&{prefix}" if not prefix.startswith("&") else prefix
-                    data_ptr = f"{prefix}.traits[{t_idx}].data"
-                    lines.append(f'    physics_contact_subscribe({prefix}.rigid_body, {handler_name}, {obj_ptr}, {data_ptr});')
-
-    if not has_subscriptions:
-        return ""
 
     return '\n'.join(lines)
 

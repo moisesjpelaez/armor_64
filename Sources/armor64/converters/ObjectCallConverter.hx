@@ -4,6 +4,7 @@ package armor64.converters;
 import haxe.macro.Expr;
 import armor64.IRTypes;
 import armor64.N64MacroBase;
+import armor64.TypedIndex;
 import armor64.converters.ICallConverter;
 import armor64.util.ExprUtils;
 
@@ -17,19 +18,20 @@ class ObjectCallConverter implements ICallConverter {
     public function tryConvert(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         switch (obj.expr) {
             case EConst(CIdent("object")), EConst(CIdent("this")):
-                return convert(method, args, rawParams);
+                return convert(obj, method, rawParams, ctx);
             default:
-                return null;
+                return TypedIndex.receiverPath(obj) == "iron.object.Object" ? convert(obj, method, rawParams, ctx) : null;
         }
     }
 
-    // Engine traits with a built-in N64 equivalent: physics always applies to the
-    // trait's own object and there is a single global UI canvas
-    static var builtinTraits = ["RigidBody", "KouiCanvas"];
-
-    function convert(method:String, args:Array<IRNode>, rawParams:Array<Expr>):IRNode {
+    function convert(obj:Expr, method:String, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
+        var traitName = rawParams.length > 0 ? ExprUtils.extractIdentName(rawParams[0]) : null;
         return switch (method) {
-            case "getTrait" if (rawParams.length > 0 && Lambda.has(builtinTraits, ExprUtils.extractIdentName(rawParams[0]))):
+            // A RigidBody is its object's pointer: the object if it has a body, else null
+            case "getTrait" if (traitName == "RigidBody"):
+                { type: "c_template", c_code: "arm_rigid_body_of({self})", args: [], object: ctx.exprToIR(obj) };
+            // There is a single global UI canvas
+            case "getTrait" if (traitName == "KouiCanvas"):
                 { type: "skip" };
             case "getTrait", "addTrait", "removeTrait":
                 // Trait system not supported on N64
