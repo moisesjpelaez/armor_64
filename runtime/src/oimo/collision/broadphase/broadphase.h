@@ -28,9 +28,21 @@ typedef struct OimoBroadPhase {
     // Destroyed proxies, reused before new storage (upstream lets the GC free them)
     OimoProxy* _freeProxies[OIMO_MAX_PROXIES];
     int _freeProxyCount;
-    // Dynamic proxies and their list positions, gathered per pair collection
-    OimoProxy* _dynamic[OIMO_MAX_PROXIES];
-    int16_t _dynamicPos[OIMO_MAX_PROXIES];
+    // N64 pair collection (see oimo_broadphase_collect_pairs_sorted): static
+    // proxies sorted by AABB min x (the unusually wide ones apart, always
+    // tested), the moving ones sorted by AABB min x, and the pairs found
+    // before they're ordered
+    OimoProxy* _statics[OIMO_MAX_PROXIES];
+    int _numStatics;
+    OimoProxy* _wideStatics[OIMO_MAX_PROXIES];
+    int _numWideStatics;
+    float _maxStaticWidth;      // Widest (x) of the sorted statics
+    int _staticsDirty;
+    OimoProxy* _movers[OIMO_MAX_PROXIES];
+    int _numMovers;
+    float _maxMoverWidth;       // Widest (x) of the moving proxies
+    int _listChanged;           // Proxies added or removed: renumber and regroup
+    struct { int16_t pos1, pos2; OimoProxy* p1; OimoProxy* p2; } _found[OIMO_MAX_PROXY_PAIRS];
 } OimoBroadPhase;
 
 static inline void oimo_broadphase_list_push(OimoBroadPhase* bp, OimoProxy* p) {
@@ -126,48 +138,172 @@ static inline void oimo_broadphase_pool_pairs(OimoBroadPhase* bp) {
     }
 }
 
-// O(n²) brute-force pair collection
-static inline void oimo_broadphase_collect_pairs_bruteforce(OimoBroadPhase* bp) {
-    // Return previous pairs to pool
-    oimo_broadphase_pool_pairs(bp);
+// Static proxies sorted by AABB min x; the ones over 4x the median width are
+// kept apart (always tested), so a search range is the others' widest
+static inline void oimo_broadphase_sort_statics(OimoBroadPhase* bp) {
+    int n = bp->_numStatics;
+    OimoProxy** a = bp->_statics;
+    for (int i = 1; i < n; i++) {  // Insertion sort: re-sorted only when statics change
+        OimoProxy* p = a[i];
+        int j = i - 1;
+        while (j >= 0 && a[j]->_aabbMin.x > p->_aabbMin.x) { a[j + 1] = a[j]; j--; }
+        a[j + 1] = p;
+    }
+    float widths[OIMO_MAX_PROXIES];
+    for (int i = 0; i < n; i++) widths[i] = a[i]->_aabbMax.x - a[i]->_aabbMin.x;
+    for (int i = 1; i < n; i++) {  // Median width
+        float w = widths[i];
+        int j = i - 1;
+        while (j >= 0 && widths[j] > w) { widths[j + 1] = widths[j]; j--; }
+        widths[j + 1] = w;
+    }
+    float wide = n > 0 ? widths[n / 2] * 4.0f : 0.0f;
+    int kept = 0;
+    bp->_numWideStatics = 0;
+    bp->_maxStaticWidth = 0.0f;
+    for (int i = 0; i < n; i++) {
+        float w = a[i]->_aabbMax.x - a[i]->_aabbMin.x;
+        if (w > wide && wide > 0.0f) {
+            bp->_wideStatics[bp->_numWideStatics++] = a[i];
+        } else {
+            a[kept++] = a[i];
+            if (w > bp->_maxStaticWidth) bp->_maxStaticWidth = w;
+        }
+    }
+    bp->_numStatics = kept;
+}
 
+static inline void oimo_broadphase_found(OimoBroadPhase* bp, int* count, OimoProxy* a, OimoProxy* b) {
+    bp->_testCount++;
+    if (!oimo_broadphase_is_overlapping(a, b)) return;
+    if (*count >= OIMO_MAX_PROXY_PAIRS) {
+        ARM_LIMIT_REACHED(OIMO_MAX_PROXY_PAIRS);
+        return;
+    }
+    // The earlier proxy in the list first, as testing every two proxies in order
+    if (b->_listPos < a->_listPos) { OimoProxy* t = a; a = b; b = t; }
+    bp->_found[*count].pos1 = a->_listPos;
+    bp->_found[*count].pos2 = b->_listPos;
+    bp->_found[*count].p1 = a;
+    bp->_found[*count].p2 = b;
+    (*count)++;
+}
+
+// Moving proxies sorted by AABB min x, re-sorted every step: they move a little
+// between steps, so the insertion sort is about one pass
+static inline void oimo_broadphase_sort_movers(OimoBroadPhase* bp) {
+    int n = bp->_numMovers;
+    OimoProxy** a = bp->_movers;
+    float widest = 0.0f;
+    for (int i = 0; i < n; i++) {
+        OimoProxy* p = a[i];
+        int j = i - 1;
+        while (j >= 0 && a[j]->_aabbMin.x > p->_aabbMin.x) { a[j + 1] = a[j]; j--; }
+        a[j + 1] = p;
+        float w = p->_aabbMax.x - p->_aabbMin.x;
+        if (w > widest) widest = w;
+    }
+    bp->_maxMoverWidth = widest;
+}
+
+// The first of n proxies sorted by min x whose x range can reach x: min x at
+// least x - widest (padded for float rounding: more tests, never fewer pairs)
+static inline int oimo_broadphase_search(OimoProxy** a, int n, float x, float widest) {
+    float lo = x - widest * 1.0001f - oimo_abs(x) * 1e-6f;
+    int first = 0, last = n;
+    while (first < last) {
+        int mid = (first + last) / 2;
+        if (a[mid]->_aabbMin.x < lo) first = mid + 1; else last = mid;
+    }
+    return first;
+}
+
+// Pairs with a dynamic body (the contact manager drops the others,
+// ContactManager.shouldCollide). N64: each dynamic proxy is tested only against
+// the proxies whose x range can reach it: a binary search in the moving proxies
+// and in the static ones (both sorted by min x), plus the wide statics. The pairs
+// are then pushed in the order testing every two proxies in list order gives
+// (upstream's brute force), so contacts and the solver see the same order.
+static inline void oimo_broadphase_collect_pairs_sorted(OimoBroadPhase* bp) {
+    oimo_broadphase_pool_pairs(bp);
     bp->_testCount = 0;
 
-    // Only pairs with a dynamic body: the contact manager drops the others
-    // (ContactManager.shouldCollide). A dynamic proxy is tested against every
-    // proxy after it, any other proxy only against the dynamic ones after it:
-    // the same pairs, in the same order, as testing every two proxies, for
-    // about (dynamic x all) tests instead of (all x all)
-    int numDynamic = 0;
-    int16_t pos = 0;
-    for (OimoProxy* p = bp->_proxyList; p != NULL; p = p->_next, pos++) {
-        if (p->_isDynamic) {
-            bp->_dynamic[numDynamic] = p;
-            bp->_dynamicPos[numDynamic++] = pos;
+    // Regroup when proxies were added or removed or a body changed between
+    // static and moving: list positions, statics and moving proxies
+    int regroup = bp->_listChanged;
+    for (int i = 0; i < bp->_numStatics && !regroup; i++) regroup = !bp->_statics[i]->_isStatic;
+    for (int i = 0; i < bp->_numWideStatics && !regroup; i++) regroup = !bp->_wideStatics[i]->_isStatic;
+    for (int i = 0; i < bp->_numMovers && !regroup; i++) regroup = bp->_movers[i]->_isStatic;
+    if (regroup) {
+        bp->_listChanged = 0;
+        bp->_numStatics = 0;
+        bp->_numWideStatics = 0;
+        bp->_numMovers = 0;
+        int16_t pos = 0;
+        for (OimoProxy* p = bp->_proxyList; p != NULL; p = p->_next, pos++) {
+            p->_listPos = pos;
+            if (p->_isStatic) bp->_statics[bp->_numStatics++] = p;
+            else bp->_movers[bp->_numMovers++] = p;
+        }
+        bp->_staticsDirty = 1;
+    }
+
+    // Re-sort the statics when one moved
+    for (int i = 0; i < bp->_numStatics; i++) {
+        if (bp->_statics[i]->_staticChanged) { bp->_statics[i]->_staticChanged = 0; bp->_staticsDirty = 1; }
+    }
+    for (int i = 0; i < bp->_numWideStatics; i++) {
+        if (bp->_wideStatics[i]->_staticChanged) { bp->_wideStatics[i]->_staticChanged = 0; bp->_staticsDirty = 1; }
+    }
+    if (bp->_staticsDirty) {
+        bp->_staticsDirty = 0;
+        for (int i = 0; i < bp->_numWideStatics; i++) bp->_statics[bp->_numStatics++] = bp->_wideStatics[i];
+        bp->_numWideStatics = 0;
+        oimo_broadphase_sort_statics(bp);
+    }
+    oimo_broadphase_sort_movers(bp);
+
+    int count = 0;
+    int numMovers = bp->_numMovers;
+    OimoProxy** movers = bp->_movers;
+    for (int i = 0; i < numMovers; i++) {
+        OimoProxy* m = movers[i];
+        if (!m->_isDynamic) continue;
+        // Moving proxies whose x range can reach m's (a dynamic pair only once:
+        // two that overlap in x find each other)
+        for (int k = oimo_broadphase_search(movers, numMovers, m->_aabbMin.x, bp->_maxMoverWidth);
+             k < numMovers && movers[k]->_aabbMin.x <= m->_aabbMax.x; k++) {
+            OimoProxy* n = movers[k];
+            if (k == i || (n->_isDynamic && k < i)) continue;
+            oimo_broadphase_found(bp, &count, m, n);
+        }
+        // Static ones likewise, plus the wide ones
+        for (int k = oimo_broadphase_search(bp->_statics, bp->_numStatics, m->_aabbMin.x, bp->_maxStaticWidth);
+             k < bp->_numStatics && bp->_statics[k]->_aabbMin.x <= m->_aabbMax.x; k++) {
+            oimo_broadphase_found(bp, &count, m, bp->_statics[k]);
+        }
+        for (int k = 0; k < bp->_numWideStatics; k++) {
+            oimo_broadphase_found(bp, &count, m, bp->_wideStatics[k]);
         }
     }
 
-    int nextDynamic = 0;  // First dynamic proxy after p1
-    pos = 0;
-    for (OimoProxy* p1 = bp->_proxyList; p1 != NULL; p1 = p1->_next, pos++) {
-        while (nextDynamic < numDynamic && bp->_dynamicPos[nextDynamic] <= pos) nextDynamic++;
-        if (p1->_isDynamic) {
-            for (OimoProxy* p2 = p1->_next; p2 != NULL; p2 = p2->_next) {
-                bp->_testCount++;
-                if (oimo_broadphase_is_overlapping(p1, p2)) oimo_broadphase_pick_and_push_pair(bp, p1, p2);
-            }
-        } else {
-            for (int k = nextDynamic; k < numDynamic; k++) {
-                OimoProxy* p2 = bp->_dynamic[k];
-                bp->_testCount++;
-                if (oimo_broadphase_is_overlapping(p1, p2)) oimo_broadphase_pick_and_push_pair(bp, p1, p2);
-            }
+    // Push in (first position, second position) order
+    for (int i = 1; i < count; i++) {
+        __typeof__(bp->_found[0]) f = bp->_found[i];
+        int j = i - 1;
+        while (j >= 0 && (bp->_found[j].pos1 > f.pos1 || (bp->_found[j].pos1 == f.pos1 && bp->_found[j].pos2 > f.pos2))) {
+            bp->_found[j + 1] = bp->_found[j];
+            j--;
         }
+        bp->_found[j + 1] = f;
+    }
+    for (int i = 0; i < count; i++) {
+        oimo_broadphase_pick_and_push_pair(bp, bp->_found[i].p1, bp->_found[i].p2);
     }
 }
 
 static inline void oimo_broadphase_collect_pairs(OimoBroadPhase* bp) {
-    oimo_broadphase_collect_pairs_bruteforce(bp);
+    oimo_broadphase_collect_pairs_sorted(bp);
 }
 
 static inline void oimo_broadphase_init(OimoBroadPhase* bp, int type) {
@@ -183,6 +319,13 @@ static inline void oimo_broadphase_init(OimoBroadPhase* bp, int type) {
     bp->_proxyStorageUsed = 0;
     bp->_pairStorageUsed = 0;
     bp->_freeProxyCount = 0;
+    bp->_numStatics = 0;
+    bp->_numWideStatics = 0;
+    bp->_maxStaticWidth = 0.0f;
+    bp->_staticsDirty = 1;
+    bp->_numMovers = 0;
+    bp->_maxMoverWidth = 0.0f;
+    bp->_listChanged = 1;
 }
 
 static inline OimoProxy* oimo_broadphase_create_proxy(OimoBroadPhase* bp, void* userData, const OimoAabb* aabb) {
@@ -214,11 +357,13 @@ static inline void oimo_broadphase_destroy_proxy(OimoBroadPhase* bp, OimoProxy* 
 
 static inline void oimo_broadphase_add_proxy(OimoBroadPhase* bp, OimoProxy* p) {
     bp->_numProxies++;
+    bp->_listChanged = 1;
     oimo_broadphase_list_push(bp, p);
 }
 
 static inline void oimo_broadphase_remove_proxy(OimoBroadPhase* bp, OimoProxy* p) {
     bp->_numProxies--;
+    bp->_listChanged = 1;
     oimo_broadphase_list_remove(bp, p);
 }
 

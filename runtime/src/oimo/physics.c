@@ -31,6 +31,13 @@ typedef struct {
     OimoQuat prev_rot, cur_rot;
 } BodyInterpolation;
 static BodyInterpolation g_interpolation[MAX_PHYSICS_BODIES];
+// Driven bodies (sync_driven_bodies): the object rotation last converted, and its matrix
+typedef struct {
+    bool valid;
+    OimoQuat quat;
+    OimoMat3 mat;
+} DrivenRotation;
+static DrivenRotation g_driven_rotation[MAX_PHYSICS_BODIES];
 static OimoShape g_shapes[MAX_PHYSICS_BODIES];
 
 typedef union {
@@ -65,6 +72,7 @@ static void free_body(OimoRigidBody* rb) {
     if (idx >= 0 && idx < MAX_PHYSICS_BODIES) {
         g_free_list[g_free_count++] = (int16_t)idx;
         g_interpolation[idx].on = false;
+        g_driven_rotation[idx].valid = false;
     }
 }
 
@@ -132,6 +140,7 @@ void physics_reset(void) {
     memset(g_shapes, 0, sizeof(g_shapes));
     memset(g_geometries, 0, sizeof(g_geometries));
     memset(g_interpolation, 0, sizeof(g_interpolation));
+    memset(g_driven_rotation, 0, sizeof(g_driven_rotation));
     memset(g_mesh_bodies, 0, sizeof(g_mesh_bodies));
     memset(g_mesh_shapes, 0, sizeof(g_mesh_shapes));
     memset(g_mesh_geometries, 0, sizeof(g_mesh_geometries));
@@ -190,7 +199,22 @@ static void sync_driven_bodies(void) {
         }
         OimoQuat q = oimo_quat(obj->transform.rot.x, obj->transform.rot.y,
                                obj->transform.rot.z, obj->transform.rot.w);
-        OimoMat3 rot = oimo_quat_to_mat3(&q);
+        // The rotation converted last time, while neither the object nor the body
+        // turned since (primitive bodies; mesh colliders always convert)
+        OimoMat3 rot;
+        int idx = get_body_index(rb);
+        DrivenRotation* cache = (idx >= 0 && idx < MAX_PHYSICS_BODIES) ? &g_driven_rotation[idx] : NULL;
+        if (cache && cache->valid && memcmp(&q, &cache->quat, sizeof(q)) == 0
+                && memcmp(&cache->mat, &rb->_transform.rotation, sizeof(rot)) == 0) {
+            rot = cache->mat;
+        } else {
+            rot = oimo_quat_to_mat3(&q);
+            if (cache) {
+                cache->valid = true;
+                cache->quat = q;
+                cache->mat = rot;
+            }
+        }
 
         if (memcmp(&pos, &rb->_transform.position, sizeof(pos)) != 0 ||
             memcmp(&rot, &rb->_transform.rotation, sizeof(rot)) != 0) {

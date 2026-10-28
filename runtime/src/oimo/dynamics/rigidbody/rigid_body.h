@@ -505,6 +505,7 @@ static inline void oimo_rigid_body_set_type(OimoRigidBody* rb, int type) {
     for (OimoShape* s = rb->_shapeList; s != NULL; s = s->_next) {
         if (s->_proxy == NULL) continue;
         s->_proxy->_isStatic = type == OIMO_RIGID_BODY_STATIC;
+        s->_proxy->_staticChanged = 1;
         s->_proxy->_isDynamic = type == OIMO_RIGID_BODY_DYNAMIC;
     }
     oimo_rigid_body_update_mass(rb);

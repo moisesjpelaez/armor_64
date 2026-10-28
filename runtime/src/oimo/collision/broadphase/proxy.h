@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdint.h>
 #include "../geometry/aabb.h"
 #include "../../common/vec3.h"
 
@@ -17,6 +18,8 @@ typedef struct OimoProxy {
     int _id;                    // Unique proxy ID
     int _isStatic;              // True if parent body is static (for broadphase filtering)
     int _isDynamic;             // True if parent body is dynamic: pairs need one (contacts do)
+    int _staticChanged;         // N64: a static proxy moved or changed type: re-sort the statics
+    int16_t _listPos;           // N64: position in the proxy list, set when proxies are added or removed
 
     void* userData;
 } OimoProxy;
@@ -26,6 +29,8 @@ static inline void oimo_proxy_init(OimoProxy* proxy, void* userData, int id) {
     proxy->_id = id;
     proxy->_isStatic = 0;
     proxy->_isDynamic = 0;
+    proxy->_staticChanged = 1;
+    proxy->_listPos = 0;
     proxy->_prev = NULL;
     proxy->_next = NULL;
     proxy->_aabbMin = oimo_vec3_zero();

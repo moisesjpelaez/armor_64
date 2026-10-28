@@ -83,6 +83,7 @@ static inline void oimo_world_add_shape(OimoWorld* world, OimoShape* shape) {
     shape->_proxy = oimo_broadphase_create_proxy(world->_broadPhase, shape, &shape->_aabb);
     if (shape->_proxy != NULL && shape->_rigidBody != NULL) {
         shape->_proxy->_isStatic = (shape->_rigidBody->_type == OIMO_RIGID_BODY_STATIC) ? 1 : 0;
+        shape->_proxy->_staticChanged = 1;
         shape->_proxy->_isDynamic = (shape->_rigidBody->_type == OIMO_RIGID_BODY_DYNAMIC) ? 1 : 0;
     }
     shape->_id = world->_shapeIdCount++;
@@ -235,7 +236,12 @@ static inline void oimo_world_solve_islands(OimoWorld* world) {
         if (!b->_addedToIsland && !b->_sleeping && b->_type != OIMO_RIGID_BODY_STATIC) {
             // Check if alone (no contacts)
             if (b->_numContactLinks == 0) {
-                oimo_island_step_single_rigid_body(&world->_island, &world->_timeStep, b);
+                // N64: a kinematic body without velocity has nothing to step (moving it
+                // by its transform already synced its shapes, and its object wakes it
+                // every step): the same result without the shape sync
+                bool resting_kinematic = b->_type == OIMO_RIGID_BODY_KINEMATIC
+                    && oimo_vec3_len_sq(b->_vel) == 0.0f && oimo_vec3_len_sq(b->_angVel) == 0.0f;
+                if (!resting_kinematic) oimo_island_step_single_rigid_body(&world->_island, &world->_timeStep, b);
                 world->_numIslands++;
             } else {
                 oimo_world_build_island(world, b);

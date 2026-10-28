@@ -107,6 +107,7 @@ static inline void oimo_shape_sync(OimoShape* shape, const OimoTransform* tf1, c
     if (shape->_proxy != NULL) {
         shape->_proxy->_aabbMin = shape->_aabb.min;
         shape->_proxy->_aabbMax = shape->_aabb.max;
+        if (shape->_proxy->_isStatic) shape->_proxy->_staticChanged = 1;
     }
 }
 
