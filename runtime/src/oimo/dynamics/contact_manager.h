@@ -243,7 +243,7 @@ static inline void oimo_contact_manager_update_manifolds(OimoContactManager* cm)
     OimoContact* c = cm->_contactList;
     while (c != NULL) {
         if (!c->_shouldBeSkipped) {
-            oimo_contact_update_manifold_with_matrix(c, &cm->_collisionMatrix);
+            oimo_contact_update_manifold(c, &cm->_collisionMatrix);
         }
         c = c->_next;
     }

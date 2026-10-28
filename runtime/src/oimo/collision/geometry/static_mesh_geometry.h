@@ -204,15 +204,6 @@ static inline const OimoTriangle* oimo_static_mesh_query_next(OimoStaticMeshQuer
     return NULL;
 }
 
-// Get triangle by index
-static inline const OimoTriangle* oimo_static_mesh_get_triangle(
-    const OimoStaticMeshGeometry* geom,
-    int index
-) {
-    if (index < 0 || index >= geom->triangle_count) return NULL;
-    return &geom->triangles[index];
-}
-
 // Compute AABB in world space
 static inline void oimo_static_mesh_compute_aabb(
     const OimoStaticMeshGeometry* geom,

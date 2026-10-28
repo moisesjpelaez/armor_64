@@ -74,11 +74,6 @@ static inline OimoScalar oimo_capsule_geometry_get_half_height(const OimoCapsule
     return capsule->halfHeight;
 }
 
-// Get total height (cylinder + 2*radius for caps)
-static inline OimoScalar oimo_capsule_geometry_get_total_height(const OimoCapsuleGeometry* capsule) {
-    return 2.0f * (capsule->halfHeight + capsule->radius);
-}
-
 // Compute AABB for capsule at given transform (matches OimoPhysics)
 static inline void oimo_capsule_geometry_compute_aabb(
     const OimoCapsuleGeometry* capsule,

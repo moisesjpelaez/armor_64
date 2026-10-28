@@ -25,7 +25,6 @@
 #include "collision/broadphase/proxy.h"
 #include "collision/broadphase/proxy_pair.h"
 #include "collision/broadphase/broadphase.h"
-#include "collision/broadphase/bruteforce_broadphase.h"
 
 #include "dynamics/rigidbody/rigid_body_type.h"
 #include "dynamics/rigidbody/mass_data.h"
@@ -52,29 +51,3 @@
 #include "dynamics/contact_manager.h"
 #include "dynamics/island.h"
 #include "dynamics/world.h"
-
-// Armory3D compatibility layer
-
-// Body type aliases
-#define OIMO_BODY_STATIC    OIMO_RIGID_BODY_STATIC
-#define OIMO_BODY_DYNAMIC   OIMO_RIGID_BODY_DYNAMIC
-#define OIMO_BODY_KINEMATIC OIMO_RIGID_BODY_KINEMATIC
-
-// Config defaults
-static inline OimoRigidBodyConfig oimo_rigidbody_config_default(void) {
-    return oimo_rigid_body_config();
-}
-
-static inline OimoShapeConfig oimo_shape_config_default(void) {
-    return oimo_shape_config();
-}
-
-// Function aliases
-#define oimo_rigidbody_init             oimo_rigid_body_init
-#define oimo_rigidbody_add_shape        oimo_rigid_body_add_shape
-#define oimo_rigidbody_remove_shape     oimo_rigid_body_remove_shape
-#define oimo_rigidbody_update_mass      oimo_rigid_body_update_mass
-
-
-#define oimo_world_add_rigidbody        oimo_world_add_rigid_body
-#define oimo_world_remove_rigidbody     oimo_world_remove_rigid_body

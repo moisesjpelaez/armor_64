@@ -34,7 +34,7 @@ typedef struct OimoIsland {
 } OimoIsland;
 
 static inline void oimo_island_init(OimoIsland* island) {
-    island->gravity = oimo_vec3(0.0f, -9.80665f, 0.0f);
+    island->gravity = oimo_vec3_zero();
     island->numRigidBodies = 0;
     island->numSolvers = 0;
     island->numSolversSi = 0;
@@ -79,7 +79,7 @@ static inline void oimo_island_add_rigid_body(OimoIsland* island, OimoRigidBody*
     }
 }
 
-static inline void oimo_island_add_solver(OimoIsland* island, OimoPgsContactConstraintSolver* solver, int positionCorrection) {
+static inline void oimo_island_add_constraint_solver(OimoIsland* island, OimoPgsContactConstraintSolver* solver, int positionCorrection) {
     if (island->numSolvers < OIMO_MAX_ISLAND_SOLVERS) {
         solver->_addedToIsland = true;
         island->solvers[island->numSolvers++] = solver;
@@ -210,14 +210,14 @@ static inline void oimo_island_step(
 
     // Solve velocity constraints
     for (int i = 0; i < island->numSolvers; i++) {
-        oimo_pgs_contact_solver_pre_solve_velocity(island->solvers[i], timeStep);
+        oimo_pgs_contact_constraint_solver_pre_solve_velocity(island->solvers[i], timeStep);
     }
     for (int i = 0; i < island->numSolvers; i++) {
-        oimo_pgs_contact_solver_warm_start(island->solvers[i], timeStep);
+        oimo_pgs_contact_constraint_solver_warm_start(island->solvers[i], timeStep);
     }
     for (int t = 0; t < numVelocityIterations; t++) {
         for (int i = 0; i < island->numSolvers; i++) {
-            oimo_pgs_contact_solver_solve_velocity(island->solvers[i]);
+            oimo_pgs_contact_constraint_solver_solve_velocity(island->solvers[i]);
         }
     }
 
@@ -228,11 +228,11 @@ static inline void oimo_island_step(
 
     // Solve split impulse position correction
     for (int i = 0; i < island->numSolversSi; i++) {
-        oimo_pgs_contact_solver_pre_solve_position(island->solversSi[i], timeStep);
+        oimo_pgs_contact_constraint_solver_pre_solve_position(island->solversSi[i], timeStep);
     }
     for (int t = 0; t < numPositionIterations; t++) {
         for (int i = 0; i < island->numSolversSi; i++) {
-            oimo_pgs_contact_solver_solve_position_split_impulse(island->solversSi[i]);
+            oimo_pgs_contact_constraint_solver_solve_position_split_impulse(island->solversSi[i]);
         }
     }
 
@@ -243,17 +243,17 @@ static inline void oimo_island_step(
 
     // Solve NGS position correction
     for (int i = 0; i < island->numSolversNgs; i++) {
-        oimo_pgs_contact_solver_pre_solve_position(island->solversNgs[i], timeStep);
+        oimo_pgs_contact_constraint_solver_pre_solve_position(island->solversNgs[i], timeStep);
     }
     for (int t = 0; t < numPositionIterations; t++) {
         for (int i = 0; i < island->numSolversNgs; i++) {
-            oimo_pgs_contact_solver_solve_position_ngs(island->solversNgs[i], timeStep);
+            oimo_pgs_contact_constraint_solver_solve_position_ngs(island->solversNgs[i], timeStep);
         }
     }
 
     // Post solve
     for (int i = 0; i < island->numSolvers; i++) {
-        oimo_pgs_contact_solver_post_solve(island->solvers[i]);
+        oimo_pgs_contact_constraint_solver_post_solve(island->solvers[i]);
     }
 
     // Synchronize shapes

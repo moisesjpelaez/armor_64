@@ -130,24 +130,6 @@ static inline OimoVec3 oimo_mat3_get_col(const OimoMat3* m, int i) {
     }
 }
 
-// Set row i from vector
-static inline void oimo_mat3_set_row(OimoMat3* m, int i, const OimoVec3* v) {
-    switch (i) {
-        case 0: m->e00 = v->x; m->e01 = v->y; m->e02 = v->z; break;
-        case 1: m->e10 = v->x; m->e11 = v->y; m->e12 = v->z; break;
-        case 2: m->e20 = v->x; m->e21 = v->y; m->e22 = v->z; break;
-    }
-}
-
-// Set column i from vector
-static inline void oimo_mat3_set_col(OimoMat3* m, int i, const OimoVec3* v) {
-    switch (i) {
-        case 0: m->e00 = v->x; m->e10 = v->y; m->e20 = v->z; break;
-        case 1: m->e01 = v->x; m->e11 = v->y; m->e21 = v->z; break;
-        case 2: m->e02 = v->x; m->e12 = v->y; m->e22 = v->z; break;
-    }
-}
-
 // Create matrix from column vectors
 static inline OimoMat3 oimo_mat3_from_cols(const OimoVec3* c0, const OimoVec3* c1, const OimoVec3* c2) {
     return (OimoMat3){
@@ -225,18 +207,6 @@ static inline OimoMat3 oimo_mat3_append_scale(const OimoMat3* m, OimoScalar sx, 
     };
 }
 
-static inline OimoMat3 oimo_mat3_from_axis_angle(OimoScalar rad, OimoScalar ax, OimoScalar ay, OimoScalar az) {
-    OimoScalar s = oimo_sin(rad);
-    OimoScalar c = oimo_cos(rad);
-    OimoScalar c1 = 1.0f - c;
-
-    return (OimoMat3){
-        ax * ax * c1 + c,      ax * ay * c1 - az * s, ax * az * c1 + ay * s,
-        ay * ax * c1 + az * s, ay * ay * c1 + c,      ay * az * c1 - ax * s,
-        az * ax * c1 - ay * s, az * ay * c1 + ax * s, az * az * c1 + c
-    };
-}
-
 // Create rotation matrix from Euler angles (XYZ order)
 static inline OimoMat3 oimo_mat3_from_euler_xyz(OimoScalar rx, OimoScalar ry, OimoScalar rz) {
     OimoScalar sx = oimo_sin(rx), cx = oimo_cos(rx);
@@ -248,12 +218,6 @@ static inline OimoMat3 oimo_mat3_from_euler_xyz(OimoScalar rx, OimoScalar ry, Oi
         cx * sz + cz * sx * sy,  cx * cz - sx * sy * sz, -cy * sx,
         sx * sz - cx * cz * sy,  cz * sx + cx * sy * sz,  cx * cy
     };
-}
-
-static inline void oimo_mat3_set_identity(OimoMat3* m) {
-    m->e00 = 1; m->e01 = 0; m->e02 = 0;
-    m->e10 = 0; m->e11 = 1; m->e12 = 0;
-    m->e20 = 0; m->e21 = 0; m->e22 = 1;
 }
 
 // Copy from another matrix

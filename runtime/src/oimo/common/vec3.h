@@ -86,16 +86,6 @@ static inline OimoVec3 oimo_vec3_normalize(OimoVec3 v) {
     return (OimoVec3){ 0, 0, 0 };
 }
 
-// Normalize with explicit epsilon check
-static inline OimoVec3 oimo_vec3_normalize_eps(OimoVec3 v, OimoScalar epsilon) {
-    OimoScalar len_sq = oimo_vec3_len_sq(v);
-    if (len_sq > epsilon * epsilon) {
-        OimoScalar inv_len = 1.0f / oimo_sqrt(len_sq);
-        return (OimoVec3){ v.x * inv_len, v.y * inv_len, v.z * inv_len };
-    }
-    return (OimoVec3){ 0, 0, 0 };
-}
-
 // out = v1 + v2
 static inline void oimo_vec3_add_to(OimoVec3* out, const OimoVec3* v1, const OimoVec3* v2) {
     out->x = v1->x + v2->x;
@@ -214,30 +204,9 @@ static inline void oimo_vec3_set_zero(OimoVec3* v) {
     v->x = v->y = v->z = 0;
 }
 
-// Linear interpolation: lerp(v1, v2, t) = v1 + (v2 - v1) * t
-static inline OimoVec3 oimo_vec3_lerp(OimoVec3 v1, OimoVec3 v2, OimoScalar t) {
-    return (OimoVec3){
-        v1.x + (v2.x - v1.x) * t,
-        v1.y + (v2.y - v1.y) * t,
-        v1.z + (v2.z - v1.z) * t
-    };
-}
-
 // Check if approximately zero
 static inline int oimo_vec3_is_zero(const OimoVec3* v, OimoScalar epsilon) {
     OimoScalar len_sq = v->x * v->x + v->y * v->y + v->z * v->z;
     return len_sq < epsilon * epsilon;
-}
-
-// Distance between two points
-static inline OimoScalar oimo_vec3_distance(OimoVec3 v1, OimoVec3 v2) {
-    OimoVec3 diff = oimo_vec3_sub(v1, v2);
-    return oimo_vec3_len(diff);
-}
-
-// Squared distance between two points
-static inline OimoScalar oimo_vec3_distance_sq(OimoVec3 v1, OimoVec3 v2) {
-    OimoVec3 diff = oimo_vec3_sub(v1, v2);
-    return oimo_vec3_len_sq(diff);
 }
 

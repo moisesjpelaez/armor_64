@@ -37,11 +37,6 @@ static inline void oimo_proxy_init(OimoProxy* proxy, void* userData, int id) {
     proxy->_aabbMax = oimo_vec3_zero();
 }
 
-static inline void oimo_proxy_set_aabb(OimoProxy* proxy, const OimoAabb* aabb) {
-    proxy->_aabbMin = aabb->min;
-    proxy->_aabbMax = aabb->max;
-}
-
 static inline int oimo_proxy_get_id(const OimoProxy* proxy) {
     return proxy->_id;
 }

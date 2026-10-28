@@ -4,7 +4,6 @@
 #include "../../limits.h"
 #include "../common/setting.h"
 #include "../collision/broadphase/broadphase.h"
-#include "../collision/broadphase/bruteforce_broadphase.h"
 #include "time_step.h"
 #include "rigidbody/rigid_body.h"
 #include "rigidbody/rigid_body_type.h"
@@ -48,8 +47,8 @@ static inline void oimo_world_build_island(OimoWorld* world, OimoRigidBody* base
 
 // Initialize world - 1:1 from World constructor
 static inline void oimo_world_init(OimoWorld* world, OimoVec3* gravity) {
-    // Initialize broadphase (brute-force O(n²) - reliable for N64's small object counts)
-    oimo_bruteforce_broadphase_init(&world->_broadPhaseStorage);
+    // N64: proxies sorted along x instead of upstream's BVH (see oimo_broadphase_collect_pairs_sorted)
+    oimo_broadphase_init(&world->_broadPhaseStorage, OIMO_BROADPHASE_SORTED);
     world->_broadPhase = &world->_broadPhaseStorage;
 
     // Initialize contact manager
@@ -198,7 +197,7 @@ static inline void oimo_world_build_island(OimoWorld* world, OimoRigidBody* base
             // 1:1 from OimoPhysics: skip triggers - they detect contact but don't generate collision response
             bool isTrigger = (contact->_s1->_isTrigger || contact->_s2->_isTrigger);
             if (!isTrigger && oimo_contact_constraint_is_touching(cc) && !solver->_addedToIsland) {
-                oimo_island_add_solver(&world->_island, solver, cc->_positionCorrectionAlgorithm);
+                oimo_island_add_constraint_solver(&world->_island, solver, cc->_positionCorrectionAlgorithm);
 
                 OimoRigidBody* other = cl->_other;
                 if (!other->_addedToIsland) {

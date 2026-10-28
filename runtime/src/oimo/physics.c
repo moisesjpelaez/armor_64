@@ -103,8 +103,7 @@ void physics_init(void) {
     // Contact event subscriptions
     physics_contact_init();
 
-    OimoVec3 gravity = oimo_vec3(0.0f, -9.80665f, 0.0f);
-    oimo_world_init(&g_world, &gravity);
+    oimo_world_init(&g_world, NULL);
 
     g_paused = false;
     g_initialized = true;

@@ -16,16 +16,6 @@ typedef struct OimoManifoldUpdater {
     OimoManifoldPoint oldPoints[OIMO_MAX_MANIFOLD_POINTS];
 } OimoManifoldUpdater;
 
-static inline OimoManifoldUpdater oimo_manifold_updater_create(OimoManifold* manifold) {
-    OimoManifoldUpdater updater;
-    updater._manifold = manifold;
-    updater.numOldPoints = 0;
-    for (int i = 0; i < OIMO_MAX_MANIFOLD_POINTS; i++) {
-        updater.oldPoints[i] = oimo_manifold_point_create();
-    }
-    return updater;
-}
-
 static inline void oimo_manifold_updater_init(OimoManifoldUpdater* updater, OimoManifold* manifold) {
     updater->_manifold = manifold;
     updater->numOldPoints = 0;
@@ -35,7 +25,7 @@ static inline void oimo_manifold_updater_init(OimoManifoldUpdater* updater, Oimo
 }
 
 // Remove a manifold point at given index
-static inline void oimo_manifold_updater_remove_point(OimoManifoldUpdater* updater, int index) {
+static inline void oimo_manifold_updater_remove_manifold_point(OimoManifoldUpdater* updater, int index) {
     OimoManifold* m = updater->_manifold;
     int lastIndex = --m->_numPoints;
     if (index != lastIndex) {
@@ -58,7 +48,7 @@ static inline void oimo_manifold_updater_remove_outdated_points(OimoManifoldUpda
         OimoScalar dotN = oimo_vec3_dot(m->_normal, diff);
 
         if (dotN > OIMO_CONTACT_PERSISTENCE_THRESHOLD) {
-            oimo_manifold_updater_remove_point(updater, index);
+            oimo_manifold_updater_remove_manifold_point(updater, index);
             continue;
         }
 
@@ -66,7 +56,7 @@ static inline void oimo_manifold_updater_remove_outdated_points(OimoManifoldUpda
         OimoVec3 scaled = oimo_vec3_scale(m->_normal, dotN);
         diff = oimo_vec3_sub(diff, scaled);
         if (oimo_vec3_dot(diff, diff) > OIMO_CONTACT_PERSISTENCE_THRESHOLD * OIMO_CONTACT_PERSISTENCE_THRESHOLD) {
-            oimo_manifold_updater_remove_point(updater, index);
+            oimo_manifold_updater_remove_manifold_point(updater, index);
             continue;
         }
     }
@@ -135,7 +125,7 @@ static inline int oimo_manifold_updater_compute_target_index(
 }
 
 // Add manifold point - 1:1 from ManifoldUpdater.addManifoldPoint
-static inline void oimo_manifold_updater_add_point(
+static inline void oimo_manifold_updater_add_manifold_point(
     OimoManifoldUpdater* updater,
     const OimoDetectorResultPoint* point,
     const OimoTransform* tf1,
@@ -174,7 +164,7 @@ static inline OimoScalar oimo_manifold_updater_dist_sq(
 }
 
 // Find nearest contact point - 1:1 from ManifoldUpdater.findNearestContactPointIndex
-static inline int oimo_manifold_updater_find_nearest_index(
+static inline int oimo_manifold_updater_find_nearest_contact_point_index(
     OimoManifoldUpdater* updater,
     const OimoDetectorResultPoint* target,
     const OimoTransform* tf1,
@@ -204,7 +194,7 @@ static inline void oimo_manifold_updater_save_old_data(OimoManifoldUpdater* upda
 }
 
 // Update contact point by ID for warm starting
-static inline void oimo_manifold_updater_update_by_id(OimoManifoldUpdater* updater, OimoManifoldPoint* cp) {
+static inline void oimo_manifold_updater_update_contact_point_by_id(OimoManifoldUpdater* updater, OimoManifoldPoint* cp) {
     for (int i = 0; i < updater->numOldPoints; i++) {
         OimoManifoldPoint* ocp = &updater->oldPoints[i];
         if (cp->_id == ocp->_id) {
@@ -231,7 +221,7 @@ static inline void oimo_manifold_updater_total_update(
     for (int i = 0; i < num; i++) {
         OimoManifoldPoint* p = &m->_points[i];
         oimo_manifold_point_initialize(p, &result->points[i], tf1, tf2);
-        oimo_manifold_updater_update_by_id(updater, p);
+        oimo_manifold_updater_update_contact_point_by_id(updater, p);
     }
 }
 
@@ -256,9 +246,9 @@ static inline void oimo_manifold_updater_incremental_update(
     const OimoDetectorResultPoint* newPoint = &result->points[0];
 
     // Add or update point
-    int idx = oimo_manifold_updater_find_nearest_index(updater, newPoint, tf1, tf2);
+    int idx = oimo_manifold_updater_find_nearest_contact_point_index(updater, newPoint, tf1, tf2);
     if (idx == -1) {
-        oimo_manifold_updater_add_point(updater, newPoint, tf1, tf2);
+        oimo_manifold_updater_add_manifold_point(updater, newPoint, tf1, tf2);
     } else {
         oimo_manifold_point_update_depth_and_positions(&m->_points[idx], newPoint, tf1, tf2);
     }

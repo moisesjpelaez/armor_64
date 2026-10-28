@@ -287,56 +287,6 @@ static inline bool oimo_collision_matrix_detect(
     return false;
 }
 
-static inline OimoDetectorType oimo_collision_matrix_get_detector_type(int geom_type1, int geom_type2) {
-    if (geom_type1 == OIMO_GEOMETRY_SPHERE && geom_type2 == OIMO_GEOMETRY_SPHERE) {
-        return OIMO_DETECTOR_SPHERE_SPHERE;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_SPHERE && geom_type2 == OIMO_GEOMETRY_BOX) {
-        return OIMO_DETECTOR_SPHERE_BOX;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_BOX && geom_type2 == OIMO_GEOMETRY_SPHERE) {
-        return OIMO_DETECTOR_BOX_SPHERE;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_BOX && geom_type2 == OIMO_GEOMETRY_BOX) {
-        return OIMO_DETECTOR_BOX_BOX;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_CAPSULE && geom_type2 == OIMO_GEOMETRY_CAPSULE) {
-        return OIMO_DETECTOR_CAPSULE_CAPSULE;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_SPHERE && geom_type2 == OIMO_GEOMETRY_CAPSULE) {
-        return OIMO_DETECTOR_SPHERE_CAPSULE;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_CAPSULE && geom_type2 == OIMO_GEOMETRY_SPHERE) {
-        return OIMO_DETECTOR_CAPSULE_SPHERE;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_BOX && geom_type2 == OIMO_GEOMETRY_CAPSULE) {
-        return OIMO_DETECTOR_BOX_CAPSULE;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_CAPSULE && geom_type2 == OIMO_GEOMETRY_BOX) {
-        return OIMO_DETECTOR_CAPSULE_BOX;
-    }
-    // Mesh collisions
-    if (geom_type1 == OIMO_GEOMETRY_SPHERE && geom_type2 == OIMO_GEOMETRY_STATIC_MESH) {
-        return OIMO_DETECTOR_SPHERE_MESH;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_STATIC_MESH && geom_type2 == OIMO_GEOMETRY_SPHERE) {
-        return OIMO_DETECTOR_MESH_SPHERE;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_BOX && geom_type2 == OIMO_GEOMETRY_STATIC_MESH) {
-        return OIMO_DETECTOR_BOX_MESH;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_STATIC_MESH && geom_type2 == OIMO_GEOMETRY_BOX) {
-        return OIMO_DETECTOR_MESH_BOX;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_CAPSULE && geom_type2 == OIMO_GEOMETRY_STATIC_MESH) {
-        return OIMO_DETECTOR_CAPSULE_MESH;
-    }
-    if (geom_type1 == OIMO_GEOMETRY_STATIC_MESH && geom_type2 == OIMO_GEOMETRY_CAPSULE) {
-        return OIMO_DETECTOR_MESH_CAPSULE;
-    }
-    return (OimoDetectorType)-1;  // Unsupported
-}
-
 #ifdef __cplusplus
 }
 #endif

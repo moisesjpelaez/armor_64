@@ -42,22 +42,6 @@ static inline OimoScalar oimo_sphere_geometry_get_radius(const OimoSphereGeometr
     return sphere->radius;
 }
 
-// Set radius and update mass properties
-static inline void oimo_sphere_geometry_set_radius(OimoSphereGeometry* sphere, OimoScalar radius) {
-    sphere->radius = radius;
-
-    // Update volume
-    sphere->base.volume = (4.0f / 3.0f) * OIMO_PI * radius * radius * radius;
-
-    // Update inertia coefficient
-    OimoScalar inertia_coeff = (2.0f / 5.0f) * radius * radius;
-    sphere->base.inertia_coeff = oimo_mat3(
-        inertia_coeff, 0, 0,
-        0, inertia_coeff, 0,
-        0, 0, inertia_coeff
-    );
-}
-
 // Compute AABB for sphere at given transform
 static inline void oimo_sphere_geometry_compute_aabb(
     const OimoSphereGeometry* sphere,

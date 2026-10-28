@@ -39,14 +39,6 @@ static inline OimoScalar oimo_geometry_get_volume(const OimoGeometry* geom) {
     return geom->volume;
 }
 
-static inline OimoMat3 oimo_geometry_get_inertia(const OimoGeometry* geom, OimoScalar mass) {
-    return oimo_mat3_scale(&geom->inertia_coeff, mass);
-}
-
-static inline OimoScalar oimo_geometry_compute_mass(const OimoGeometry* geom, OimoScalar density) {
-    return geom->volume * density;
-}
-
 struct OimoSphereGeometry;
 struct OimoBoxGeometry;
 

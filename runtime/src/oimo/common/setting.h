@@ -40,7 +40,4 @@ typedef float OimoScalar;
 #define OIMO_POSITIVE_INFINITY     1e30f
 #define OIMO_NEGATIVE_INFINITY     (-1e30f)
 
-#define OIMO_DEFAULT_GRAVITY_X     0.0f
-#define OIMO_DEFAULT_GRAVITY_Y     -9.80665f
-#define OIMO_DEFAULT_GRAVITY_Z     0.0f
 

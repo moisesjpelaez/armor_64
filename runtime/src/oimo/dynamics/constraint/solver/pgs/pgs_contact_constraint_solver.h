@@ -24,7 +24,7 @@ typedef struct OimoPgsContactConstraintSolver {
     bool _addedToIsland;
 } OimoPgsContactConstraintSolver;
 
-static inline void oimo_pgs_contact_solver_init(OimoPgsContactConstraintSolver* solver, OimoContactConstraint* constraint) {
+static inline void oimo_pgs_contact_constraint_solver_init(OimoPgsContactConstraintSolver* solver, OimoContactConstraint* constraint) {
     solver->constraint = constraint;
     solver->info = oimo_contact_solver_info_create();
     for (int i = 0; i < OIMO_MAX_MANIFOLD_POINTS; i++) {
@@ -36,7 +36,7 @@ static inline void oimo_pgs_contact_solver_init(OimoPgsContactConstraintSolver* 
 }
 
 // Pre-solve velocity - compute mass data - 1:1 from PgsContactConstraintSolver.preSolveVelocity
-static inline void oimo_pgs_contact_solver_pre_solve_velocity(
+static inline void oimo_pgs_contact_constraint_solver_pre_solve_velocity(
     OimoPgsContactConstraintSolver* solver,
     OimoTimeStep* timeStep
 ) {
@@ -96,7 +96,7 @@ static inline void oimo_pgs_contact_solver_pre_solve_velocity(
 }
 
 // Warm start - apply accumulated impulses - 1:1 from PgsContactConstraintSolver.warmStart
-static inline void oimo_pgs_contact_solver_warm_start(
+static inline void oimo_pgs_contact_constraint_solver_warm_start(
     OimoPgsContactConstraintSolver* solver,
     OimoTimeStep* timeStep
 ) {
@@ -145,7 +145,7 @@ static inline void oimo_pgs_contact_solver_warm_start(
 }
 
 // Solve velocity constraints - 1:1 from PgsContactConstraintSolver.solveVelocity
-static inline void oimo_pgs_contact_solver_solve_velocity(OimoPgsContactConstraintSolver* solver) {
+static inline void oimo_pgs_contact_constraint_solver_solve_velocity(OimoPgsContactConstraintSolver* solver) {
     OimoVec3 lv1 = solver->_b1->_vel;
     OimoVec3 lv2 = solver->_b2->_vel;
     OimoVec3 av1 = solver->_b1->_angVel;
@@ -247,7 +247,7 @@ static inline void oimo_pgs_contact_solver_solve_velocity(OimoPgsContactConstrai
 }
 
 // Update position data for position solver
-static inline void oimo_pgs_contact_solver_update_position_data(OimoPgsContactConstraintSolver* solver) {
+static inline void oimo_pgs_contact_constraint_solver_update_position_data(OimoPgsContactConstraintSolver* solver) {
     oimo_contact_constraint_sync_manifold(solver->constraint);
     oimo_contact_constraint_get_position_solver_info(solver->constraint, &solver->info);
 
@@ -274,11 +274,11 @@ static inline void oimo_pgs_contact_solver_update_position_data(OimoPgsContactCo
 }
 
 // Pre-solve position
-static inline void oimo_pgs_contact_solver_pre_solve_position(
+static inline void oimo_pgs_contact_constraint_solver_pre_solve_position(
     OimoPgsContactConstraintSolver* solver,
     OimoTimeStep* timeStep
 ) {
-    oimo_pgs_contact_solver_update_position_data(solver);
+    oimo_pgs_contact_constraint_solver_update_position_data(solver);
 
     // Clear position impulses
     for (int i = 0; i < solver->info.numRows; i++) {
@@ -287,7 +287,7 @@ static inline void oimo_pgs_contact_solver_pre_solve_position(
 }
 
 // Solve position with split impulse - 1:1 from PgsContactConstraintSolver.solvePositionSplitImpulse
-static inline void oimo_pgs_contact_solver_solve_position_split_impulse(OimoPgsContactConstraintSolver* solver) {
+static inline void oimo_pgs_contact_constraint_solver_solve_position_split_impulse(OimoPgsContactConstraintSolver* solver) {
     OimoVec3 lv1 = solver->_b1->_pseudoVel;
     OimoVec3 lv2 = solver->_b2->_pseudoVel;
     OimoVec3 av1 = solver->_b1->_angPseudoVel;
@@ -329,11 +329,11 @@ static inline void oimo_pgs_contact_solver_solve_position_split_impulse(OimoPgsC
 }
 
 // Solve position with NGS - 1:1 from PgsContactConstraintSolver.solvePositionNgs
-static inline void oimo_pgs_contact_solver_solve_position_ngs(
+static inline void oimo_pgs_contact_constraint_solver_solve_position_ngs(
     OimoPgsContactConstraintSolver* solver,
     OimoTimeStep* timeStep
 ) {
-    oimo_pgs_contact_solver_update_position_data(solver);
+    oimo_pgs_contact_constraint_solver_update_position_data(solver);
 
     OimoVec3 lv1 = oimo_vec3_zero();
     OimoVec3 lv2 = oimo_vec3_zero();
@@ -376,7 +376,7 @@ static inline void oimo_pgs_contact_solver_solve_position_ngs(
 
 // Post solve - store lateral impulse and accumulate contact impulses
 // 1:1 from PgsContactConstraintSolver.postSolve
-static inline void oimo_pgs_contact_solver_post_solve(OimoPgsContactConstraintSolver* solver) {
+static inline void oimo_pgs_contact_constraint_solver_post_solve(OimoPgsContactConstraintSolver* solver) {
     OimoVec3 lin1 = oimo_vec3_zero();
     OimoVec3 ang1 = oimo_vec3_zero();
     OimoVec3 ang2 = oimo_vec3_zero();

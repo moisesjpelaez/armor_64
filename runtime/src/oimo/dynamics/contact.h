@@ -61,7 +61,7 @@ static inline void oimo_contact_init(OimoContact* c) {
     c->_manifold = oimo_manifold_create();
     oimo_manifold_updater_init(&c->_updater, &c->_manifold);
     oimo_contact_constraint_init(&c->_contactConstraint, &c->_manifold);
-    oimo_pgs_contact_solver_init(&c->_solver, &c->_contactConstraint);
+    oimo_pgs_contact_constraint_solver_init(&c->_solver, &c->_contactConstraint);
     c->_touching = false;
     c->_triggering = false;
 }
@@ -140,7 +140,7 @@ static inline void oimo_contact_detach(OimoContact* c) {
 
 // Update manifold with collision detection result
 // Uses collision_matrix for detection dispatch
-static inline void oimo_contact_update_manifold_with_matrix(
+static inline void oimo_contact_update_manifold(
     OimoContact* c,
     OimoCollisionMatrix* matrix)
 {

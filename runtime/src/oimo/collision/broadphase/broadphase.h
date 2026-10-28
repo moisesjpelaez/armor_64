@@ -447,3 +447,38 @@ static inline int oimo_aabb_segment_test(
     return 1;
 }
 
+// Proxies whose AABB the segment crosses - BroadPhase.rayCast (upstream's brute force)
+static inline void oimo_broadphase_ray_cast(
+    OimoBroadPhase* bp,
+    const OimoVec3* begin,
+    const OimoVec3* end,
+    OimoBroadPhaseProxyCallback callback,
+    void* callbackUserData
+) {
+    OimoProxy* p = bp->_proxyList;
+    while (p != NULL) {
+        if (oimo_aabb_segment_test(&p->_aabbMin, &p->_aabbMax, begin, end)) {
+            callback(p, callbackUserData);
+        }
+        p = p->_next;
+    }
+}
+
+// Proxies whose AABB overlaps the AABB - BroadPhase.aabbTest (upstream's brute force)
+static inline void oimo_broadphase_aabb_test(
+    OimoBroadPhase* bp,
+    const OimoAabb* aabb,
+    OimoBroadPhaseProxyCallback callback,
+    void* callbackUserData
+) {
+    OimoProxy* p = bp->_proxyList;
+    while (p != NULL) {
+        // M.aabb_overlap(aabb._min, aabb._max, p._aabbMin, p._aabbMax)
+        if ((aabb->min.x <= p->_aabbMax.x && aabb->max.x >= p->_aabbMin.x) &&
+            (aabb->min.y <= p->_aabbMax.y && aabb->max.y >= p->_aabbMin.y) &&
+            (aabb->min.z <= p->_aabbMax.z && aabb->max.z >= p->_aabbMin.z)) {
+            callback(p, callbackUserData);
+        }
+        p = p->_next;
+    }
+}

@@ -17,10 +17,6 @@ static inline OimoQuat oimo_quat(OimoScalar x, OimoScalar y, OimoScalar z, OimoS
     return (OimoQuat){ x, y, z, w };
 }
 
-static inline OimoQuat oimo_quat_copy(const OimoQuat* q) {
-    return (OimoQuat){ q->x, q->y, q->z, q->w };
-}
-
 static inline OimoQuat oimo_quat_add(const OimoQuat* q1, const OimoQuat* q2) {
     return (OimoQuat){ q1->x + q2->x, q1->y + q2->y, q1->z + q2->z, q1->w + q2->w };
 }
@@ -31,14 +27,6 @@ static inline OimoQuat oimo_quat_sub(const OimoQuat* q1, const OimoQuat* q2) {
 
 static inline OimoQuat oimo_quat_scale(const OimoQuat* q, OimoScalar s) {
     return (OimoQuat){ q->x * s, q->y * s, q->z * s, q->w * s };
-}
-
-static inline OimoQuat oimo_quat_neg(const OimoQuat* q) {
-    return (OimoQuat){ -q->x, -q->y, -q->z, -q->w };
-}
-
-static inline OimoQuat oimo_quat_conjugate(const OimoQuat* q) {
-    return (OimoQuat){ -q->x, -q->y, -q->z, q->w };
 }
 
 static inline OimoScalar oimo_quat_dot(const OimoQuat* q1, const OimoQuat* q2) {
@@ -145,39 +133,6 @@ static inline void oimo_mat3_from_quat(OimoMat3* m, const OimoQuat* q) {
     m->e20 = xz - wy;     m->e21 = yz + wx;     m->e22 = 1 - xx - yy;
 }
 
-static inline OimoQuat oimo_quat_from_axis_angle(const OimoVec3* axis, OimoScalar angle) {
-    OimoScalar half_angle = angle * 0.5f;
-    OimoScalar s = oimo_sin(half_angle);
-    return (OimoQuat){
-        axis->x * s,
-        axis->y * s,
-        axis->z * s,
-        oimo_cos(half_angle)
-    };
-}
-
-// Extract axis-angle from quaternion
-// angle is returned, axis is written to out_axis
-static inline OimoScalar oimo_quat_to_axis_angle(const OimoQuat* q, OimoVec3* out_axis) {
-    OimoScalar sin_half_sq = q->x * q->x + q->y * q->y + q->z * q->z;
-
-    if (sin_half_sq <= OIMO_EPSILON * OIMO_EPSILON) {
-        // Near identity, return arbitrary axis
-        out_axis->x = 1;
-        out_axis->y = 0;
-        out_axis->z = 0;
-        return 0;
-    }
-
-    OimoScalar sin_half = oimo_sqrt(sin_half_sq);
-    OimoScalar inv_sin = 1.0f / sin_half;
-    out_axis->x = q->x * inv_sin;
-    out_axis->y = q->y * inv_sin;
-    out_axis->z = q->z * inv_sin;
-
-    return 2.0f * oimo_atan2(sin_half, q->w);
-}
-
 static inline OimoQuat oimo_quat_set_arc(const OimoVec3* v1, const OimoVec3* v2) {
     OimoScalar d = oimo_vec3_dot(*v1, *v2);
     OimoQuat q;
@@ -278,14 +233,6 @@ static inline void oimo_quat_set_identity(OimoQuat* q) {
     q->x = 0; q->y = 0; q->z = 0; q->w = 1;
 }
 
-// Copy from another quaternion
-static inline void oimo_quat_copy_to(OimoQuat* dst, const OimoQuat* src) {
-    dst->x = src->x;
-    dst->y = src->y;
-    dst->z = src->z;
-    dst->w = src->w;
-}
-
 // Normalize in-place
 static inline void oimo_quat_normalize_eq(OimoQuat* q) {
     OimoScalar len = oimo_quat_len(q);
@@ -298,19 +245,5 @@ static inline void oimo_quat_normalize_eq(OimoQuat* q) {
     } else {
         q->x = 0; q->y = 0; q->z = 0; q->w = 1;
     }
-}
-
-static inline OimoVec3 oimo_quat_rotate_vec3(const OimoQuat* q, const OimoVec3* v) {
-    // Using the formula: v' = v + 2*w*(qv × v) + 2*(qv × (qv × v))
-    // where qv = (x, y, z) is the vector part of quaternion
-    OimoVec3 qv = { q->x, q->y, q->z };
-    OimoVec3 uv = oimo_vec3_cross(qv, *v);
-    OimoVec3 uuv = oimo_vec3_cross(qv, uv);
-
-    return (OimoVec3){
-        v->x + 2.0f * (q->w * uv.x + uuv.x),
-        v->y + 2.0f * (q->w * uv.y + uuv.y),
-        v->z + 2.0f * (q->w * uv.z + uuv.z)
-    };
 }
 

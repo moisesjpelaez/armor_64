@@ -53,53 +53,9 @@ static inline OimoBoxGeometry oimo_box_geometry(const OimoVec3* half_extents) {
     return box;
 }
 
-// Create box geometry with components
-static inline OimoBoxGeometry oimo_box_geometry3(OimoScalar hw, OimoScalar hh, OimoScalar hd) {
-    OimoVec3 half_ext = oimo_vec3(hw, hh, hd);
-    return oimo_box_geometry(&half_ext);
-}
-
 // Get half-extents
 static inline OimoVec3 oimo_box_geometry_get_half_extents(const OimoBoxGeometry* box) {
     return oimo_vec3_copy(&box->half_extents);
-}
-
-// Get width (full width = 2 * half_extents.x)
-static inline OimoScalar oimo_box_geometry_get_width(const OimoBoxGeometry* box) {
-    return 2.0f * box->half_extents.x;
-}
-
-// Get height (full height = 2 * half_extents.y)
-static inline OimoScalar oimo_box_geometry_get_height(const OimoBoxGeometry* box) {
-    return 2.0f * box->half_extents.y;
-}
-
-// Get depth (full depth = 2 * half_extents.z)
-static inline OimoScalar oimo_box_geometry_get_depth(const OimoBoxGeometry* box) {
-    return 2.0f * box->half_extents.z;
-}
-
-// Set half-extents and update mass properties
-static inline void oimo_box_geometry_set_half_extents(OimoBoxGeometry* box, const OimoVec3* half_extents) {
-    box->half_extents = oimo_vec3_copy(half_extents);
-
-    OimoScalar w = half_extents->x;
-    OimoScalar h = half_extents->y;
-    OimoScalar d = half_extents->z;
-
-    // Update volume
-    box->base.volume = 8.0f * w * h * d;
-
-    // Update inertia coefficient
-    OimoScalar w2 = w * w;
-    OimoScalar h2 = h * h;
-    OimoScalar d2 = d * d;
-
-    box->base.inertia_coeff = oimo_mat3(
-        (1.0f / 3.0f) * (h2 + d2), 0, 0,
-        0, (1.0f / 3.0f) * (w2 + d2), 0,
-        0, 0, (1.0f / 3.0f) * (w2 + h2)
-    );
 }
 
 // Compute AABB for box at given transform
@@ -264,24 +220,5 @@ static inline OimoVec3 oimo_box_geometry_support_local(
         dir->y > 0 ? box->half_extents.y : -box->half_extents.y,
         dir->z > 0 ? box->half_extents.z : -box->half_extents.z
     );
-}
-
-// Get box vertex by index (0-7)
-// Vertices are ordered: (-,-,-), (+,-,-), (-,+,-), (+,+,-), (-,-,+), (+,-,+), (-,+,+), (+,+,+)
-static inline OimoVec3 oimo_box_geometry_get_vertex(const OimoBoxGeometry* box, int index) {
-    OimoScalar sx = (index & 1) ? box->half_extents.x : -box->half_extents.x;
-    OimoScalar sy = (index & 2) ? box->half_extents.y : -box->half_extents.y;
-    OimoScalar sz = (index & 4) ? box->half_extents.z : -box->half_extents.z;
-    return oimo_vec3(sx, sy, sz);
-}
-
-// Get box vertex transformed by given transform
-static inline OimoVec3 oimo_box_geometry_get_vertex_world(
-    const OimoBoxGeometry* box,
-    int index,
-    const OimoTransform* tf
-) {
-    OimoVec3 local = oimo_box_geometry_get_vertex(box, index);
-    return oimo_transform_point(tf, &local);
 }
 
