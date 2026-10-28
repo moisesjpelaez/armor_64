@@ -105,6 +105,7 @@ void button_clear(void);
 void button_scene_init(SceneId scene_id);
 void button_update(float dt);   // Call every frame; handles DPad + analog input
 void button_render(void);       // Call inside canvas_render after images, before labels
+uint32_t button_state_hash(uint32_t h);  // Adds everything button_render draws
 
 #else
 
@@ -121,6 +122,7 @@ static inline void      button_clear(void) {{}}
 static inline void      button_scene_init(SceneId s) {{ (void)s; }}
 static inline void      button_update(float dt) {{ (void)dt; }}
 static inline void      button_render(void) {{}}
+static inline uint32_t  button_state_hash(uint32_t h) {{ return h; }}
 
 #endif // UI_BUTTON_COUNT > 0
 

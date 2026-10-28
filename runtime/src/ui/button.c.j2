@@ -24,6 +24,7 @@
  */
 #include "button.h"
 #include "fonts.h"
+#include "ui_anchor.h"
 #include "../iron/system/input.h"
 #include <libdragon.h>
 #include <string.h>
@@ -131,6 +132,7 @@ static void load_buttons(const UIButtonDef *defs, int count) {{
         btn->on_focus         = NULL;  btn->on_focus_data    = NULL;
 
         if (def->text) {{
+            if (strlen(def->text) >= UI_BUTTON_TEXT_SIZE) ARM_LIMIT_REACHED(UI_BUTTON_TEXT_SIZE);
             strncpy(btn->text, def->text, UI_BUTTON_TEXT_SIZE - 1);
             btn->text[UI_BUTTON_TEXT_SIZE - 1] = '\0';
         }} else {{
@@ -453,6 +455,11 @@ void button_clear(void) {{
     g_stick_direction = -1;
     g_stick_repeat_timer = 0.0f;
     memset(g_buttons, 0, sizeof(g_buttons));
+}}
+
+uint32_t button_state_hash(uint32_t h) {{
+    h = ui_hash(h, &g_button_count, sizeof(g_button_count));
+    return ui_hash(h, g_buttons, sizeof(UIButton) * g_button_count);
 }}
 
 #endif // UI_BUTTON_COUNT > 0

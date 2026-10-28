@@ -166,7 +166,9 @@ void renderer_draw_scene(T3DViewport *viewport, ArmScene *scene) {
 	}
 
 	const T3DFrustum *frustum = &viewport->viewFrustum;
+#ifdef ARM_DEBUG_HUD
 	int visible_count = 0;
+#endif
 	uint16_t drawn_count = has_camera ? scene->object_count : 0;
 
 	// Render dynamic objects with per-frame frustum culling
@@ -183,7 +185,9 @@ void renderer_draw_scene(T3DViewport *viewport, ArmScene *scene) {
 			continue;
 		}
 
+#ifdef ARM_DEBUG_HUD
 		visible_count++;
+#endif
 
 		// Skinned models: select skeleton buffer before drawing
 		if (obj->animation) {

@@ -107,10 +107,18 @@ void panel_render(void) {{
 
     rdpq_set_mode_standard();
     rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
+    bool blending = false;
 
     for (int i = 0; i < g_canvas_panel_count; i++) {{
         UIPanel *panel = g_canvas_panels[i];
         if (!panel || !panel->visible) continue;
+
+        // Blend only translucent panels: opaque fills don't read the framebuffer
+        bool translucent = panel->bg_a < 255 || (panel->border_size > 0 && panel->border_a < 255);
+        if (translucent != blending) {{
+            rdpq_mode_blender(translucent ? RDPQ_BLENDER_MULTIPLY : 0);
+            blending = translucent;
+        }}
 
         int16_t x0 = panel->pos_x, y0 = panel->pos_y;
         int16_t x1 = x0 + panel->width, y1 = y0 + panel->height;
@@ -129,6 +137,13 @@ void panel_render(void) {{
             rdpq_fill_rectangle(x1 - bs, y0 + bs, x1,      y1 - bs);  // right
         }}
     }}
+}}
+
+uint32_t panel_state_hash(uint32_t h) {{
+    h = ui_hash(h, &g_canvas_panel_count, sizeof(g_canvas_panel_count));
+    for (int i = 0; i < g_canvas_panel_count; i++)
+        h = ui_hash(h, g_canvas_panels[i], sizeof(UIPanel));
+    return h;
 }}
 
 #endif // UI_PANEL_COUNT > 0

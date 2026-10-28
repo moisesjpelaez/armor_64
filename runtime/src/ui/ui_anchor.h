@@ -1,5 +1,6 @@
-/* N64 Exporter - Shared UI anchor position helpers
- * Inline anchor calculation used by label, image, and panel modules.
+/* N64 Exporter - Shared UI helpers
+ * Inline anchor calculation used by label, image, and panel modules, and the
+ * state hash every UI module adds to (canvas_render re-records the UI when it changes).
  *
  * Anchor values match the Koui UIAnchor enum (0-8):
  *   0=TopLeft  1=TopCenter  2=TopRight
@@ -8,7 +9,16 @@
  */
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
+
+// FNV-1a over n bytes, continuing from hash h (start with UI_HASH_START)
+#define UI_HASH_START 2166136261u
+static inline uint32_t ui_hash(uint32_t h, const void *data, size_t n) {
+    const uint8_t *b = (const uint8_t *)data;
+    for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 16777619u;
+    return h;
+}
 
 static inline int16_t ui_anchor_x(int16_t pos_x, int16_t width, uint8_t anchor,
                                    int16_t canvas_w) {

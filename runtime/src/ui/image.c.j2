@@ -28,18 +28,25 @@ static int      g_canvas_image_count = 0;
 // ============================================================================
 
 typedef struct {{
-    const char *sprite_name;
+    uint8_t sprite_id;  // Index in UI_SPRITE_PATHS
     int16_t pos_x, pos_y;
     int16_t width, height;
     uint8_t anchor;
     bool    scale;
     bool    visible;
-    sprite_t *sprite;   // Filled at runtime (sprite_load)
     uint8_t align_h;
     int16_t align_width;
 }} UIImageDef;
 
 // Anchor helpers provided by ui_anchor.h (shared across label/image/panel)
+
+// ============================================================================
+// Sprite files (each loaded once, shared by every image that shows it)
+// ============================================================================
+
+{sprite_paths}
+
+static sprite_t *g_sprites[UI_SPRITE_COUNT];
 
 // ============================================================================
 // Per-canvas static image definition arrays
@@ -51,15 +58,13 @@ typedef struct {{
 // Internal load helper
 // ============================================================================
 
-static void load_images(UIImageDef *defs, int count) {{
+static void load_images(const UIImageDef *defs, int count) {{
     for (int i = 0; i < count; i++) {{
-        UIImageDef *def = &defs[i];
-        if (!def->sprite) {{
-            char path[64];
-            snprintf(path, sizeof(path), "rom:/%s.sprite", def->sprite_name);
-            def->sprite = sprite_load(path);
+        const UIImageDef *def = &defs[i];
+        if (!g_sprites[def->sprite_id]) {{
+            g_sprites[def->sprite_id] = sprite_load(UI_SPRITE_PATHS[def->sprite_id]);
         }}
-        UIImage *image = ui_image_create(def->sprite);
+        UIImage *image = ui_image_create(g_sprites[def->sprite_id]);
         if (!image) continue;
         image->pos_x      = ui_anchor_x(def->pos_x, def->width, def->anchor, CANVAS_WIDTH);
         image->pos_y      = ui_anchor_y(def->pos_y, def->height, def->anchor, CANVAS_HEIGHT);
@@ -80,11 +85,27 @@ static void load_images(UIImageDef *defs, int count) {{
 // Scene init switch
 // ============================================================================
 
+// Frees the sprites the scene's canvas doesn't show, then loads its images.
+// Called on a scene switch after rspq_wait(): no freed sprite is still being drawn
 void image_scene_init(SceneId scene_id) {{
+    const UIImageDef *defs = NULL;
+    int count = 0;
     switch (scene_id) {{
 {image_scene_init_cases}
         default: break;
     }}
+
+    bool keep[UI_SPRITE_COUNT] = {{ false }};
+    for (int i = 0; i < count; i++) {{
+        keep[defs[i].sprite_id] = true;
+    }}
+    for (int s = 0; s < UI_SPRITE_COUNT; s++) {{
+        if (g_sprites[s] && !keep[s]) {{
+            sprite_free(g_sprites[s]);
+            g_sprites[s] = NULL;
+        }}
+    }}
+    load_images(defs, count);
 }}
 
 // ============================================================================
@@ -92,7 +113,7 @@ void image_scene_init(SceneId scene_id) {{
 // ============================================================================
 
 void image_clear(void) {{
-    // Sprites stay loaded for reuse across scene init calls
+    // Sprites stay loaded: image_scene_init() keeps the next scene's
     g_image_pool_used     = 0;
     g_image_render_count  = 0;
     g_canvas_image_count  = 0;
@@ -175,6 +196,13 @@ void image_render(void) {{
             rdpq_sprite_blit(image->sprite, render_x, image->pos_y, NULL);
         }}
     }}
+}}
+
+uint32_t image_state_hash(uint32_t h) {{
+    h = ui_hash(h, &g_image_render_count, sizeof(g_image_render_count));
+    for (uint8_t i = 0; i < g_image_render_count; i++)
+        h = ui_hash(h, g_image_render_list[i], sizeof(UIImage));
+    return h;
 }}
 
 #endif // UI_IMAGE_COUNT > 0

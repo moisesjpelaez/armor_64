@@ -117,12 +117,8 @@ UILabel* ui_label_create(const char *text) {{
         return NULL;
     }}
     UILabel *label = &g_label_pool[g_label_pool_used++];
-    if (text) {{
-        strncpy(label->text, text, UI_LABEL_TEXT_SIZE - 1);
-        label->text[UI_LABEL_TEXT_SIZE - 1] = '\0';
-    }} else {{
-        label->text[0] = '\0';
-    }}
+    label->text[0] = '\0';
+    ui_label_set_text(label, text);  // Reports text that doesn't fit
     label->pos_x           = 0;
     label->pos_y           = 0;
     label->baseline_offset = 12;
@@ -201,6 +197,13 @@ void label_render(void) {{
         rdpq_text_print(&parms, label->font_id,
             label->pos_x, label->pos_y + label->baseline_offset, label->text);
     }}
+}}
+
+uint32_t label_state_hash(uint32_t h) {{
+    h = ui_hash(h, &g_label_render_count, sizeof(g_label_render_count));
+    for (uint8_t i = 0; i < g_label_render_count; i++)
+        h = ui_hash(h, g_label_render_list[i], sizeof(UILabel));
+    return h;
 }}
 
 #endif // UI_LABEL_COUNT > 0

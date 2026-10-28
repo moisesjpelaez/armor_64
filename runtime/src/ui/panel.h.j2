@@ -37,6 +37,7 @@ UIPanel* canvas_get_panel(int index);
 void panel_clear(void);
 void panel_scene_init(SceneId scene_id);
 void panel_render(void);
+uint32_t panel_state_hash(uint32_t h);  // Adds everything panel_render draws
 
 #else
 
@@ -44,6 +45,7 @@ static inline UIPanel* canvas_get_panel(int i) {{ (void)i; return NULL; }}
 static inline void panel_clear(void) {{}}
 static inline void panel_scene_init(SceneId s) {{ (void)s; }}
 static inline void panel_render(void) {{}}
+static inline uint32_t panel_state_hash(uint32_t h) {{ return h; }}
 
 #endif // UI_PANEL_COUNT > 0
 

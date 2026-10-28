@@ -355,15 +355,19 @@ def _ui_limits(canvases: Dict, label_text_set: Optional[int]) -> Dict[str, int]:
 
     # Label text: the canvas's, and what the code sets at runtime
     # (label_set_text; null: unbounded, so room as before). Button text only
-    # comes from the canvas
+    # comes from the canvas. Sizes are UTF-8 bytes plus the terminator: an
+    # accented letter takes 2 bytes in the C string
+    def text_size(element):
+        return len(element.get("text", "").encode("utf-8")) + 1
+
     label_text = 1
     button_text = 1
     group_children = 1
     for canvas in canvases.values():
         for label in canvas.get("labels", []):
-            label_text = max(label_text, len(label.get("text", "")) + 1)
+            label_text = max(label_text, text_size(label))
         for button in canvas.get("buttons", []):
-            button_text = max(button_text, len(button.get("text", "")) + 1)
+            button_text = max(button_text, text_size(button))
         for group in canvas.get("groups", []):
             # Children of each kind are listed separately
             group_children = max(group_children, *(len(group.get(f"child_{kind}_indices", []))

@@ -67,6 +67,7 @@ void label_init(void);
 void label_clear(void);
 void label_scene_init(SceneId scene_id);
 void label_render(void);
+uint32_t label_state_hash(uint32_t h);  // Adds everything label_render draws
 
 #else
 
@@ -80,6 +81,7 @@ static inline void     label_init(void) {{}}
 static inline void     label_clear(void) {{}}
 static inline void     label_scene_init(SceneId s) {{ (void)s; }}
 static inline void     label_render(void) {{}}
+static inline uint32_t label_state_hash(uint32_t h) {{ return h; }}
 
 #endif // UI_LABEL_COUNT > 0
 

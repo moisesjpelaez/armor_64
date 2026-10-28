@@ -48,6 +48,7 @@ UIImage* canvas_get_image(int index);
 void image_clear(void);
 void image_scene_init(SceneId scene_id);
 void image_render(void);
+uint32_t image_state_hash(uint32_t h);  // Adds everything image_render draws
 
 #else
 
@@ -60,6 +61,7 @@ static inline UIImage* canvas_get_image(int i) {{ (void)i; return NULL; }}
 static inline void     image_clear(void) {{}}
 static inline void     image_scene_init(SceneId s) {{ (void)s; }}
 static inline void     image_render(void) {{}}
+static inline uint32_t image_state_hash(uint32_t h) {{ return h; }}
 
 #endif // UI_IMAGE_COUNT > 0
 

@@ -1072,6 +1072,19 @@ def write_image_c(exporter):
     canvas_image_arrays = []
     image_scene_init_cases = []
 
+    # One entry per sprite file, so an image shown twice is loaded once
+    def sprite_name(image):
+        return image['image_name'].lower().replace(' ', '_')
+    sprites = sorted({sprite_name(image) for canvas in exporter.ui_canvas_data.values()
+                      for image in canvas.get('images', [])})
+    if len(sprites) > 255:
+        raise ValueError(f'{len(sprites)} UI images: at most 255 are supported (sprite ids are 8-bit)')
+    sprite_ids = {name: i for i, name in enumerate(sprites)}
+    sprite_paths = [f'#define UI_SPRITE_COUNT {max(len(sprites), 1)}',
+                    'static const char *const UI_SPRITE_PATHS[UI_SPRITE_COUNT] = {']
+    sprite_paths += [f'    "rom:/{name}.sprite",' for name in sprites] or ['    NULL,']
+    sprite_paths.append('};')
+
     for canvas_name, canvas in exporter.ui_canvas_data.items():
         images = canvas.get('images', [])
         if not images:
@@ -1080,14 +1093,13 @@ def write_image_c(exporter):
         count_def = f'{safe_canvas.upper()}_IMAGE_COUNT'
         canvas_image_arrays.append(f'// Canvas: {canvas_name} images')
         canvas_image_arrays.append(f'#define {count_def} {len(images)}')
-        canvas_image_arrays.append(f'static UIImageDef g_{safe_canvas}_image_defs[{count_def}] = {{')
+        canvas_image_arrays.append(f'static const UIImageDef g_{safe_canvas}_image_defs[{count_def}] = {{')
         for image in images:
-            safe_name = image['image_name'].lower().replace(' ', '_')
             visible = 'true' if image['visible'] else 'false'
             scale = 'true' if image.get('scale', False) else 'false'
             canvas_image_arrays.append(
-                f'    {{ "{safe_name}", {image["pos_x"]}, {image["pos_y"]}, {image["width"]}, {image["height"]}, '
-                f'{image["anchor"]}, {scale}, {visible}, NULL, {image.get("align_h", 0)}, {image.get("align_width", 0)} }},'
+                f'    {{ {sprite_ids[sprite_name(image)]}, {image["pos_x"]}, {image["pos_y"]}, {image["width"]}, {image["height"]}, '
+                f'{image["anchor"]}, {scale}, {visible}, {image.get("align_h", 0)}, {image.get("align_width", 0)} }},  // {sprite_name(image)}'
             )
         canvas_image_arrays.append('};')
         canvas_image_arrays.append('')
@@ -1101,10 +1113,12 @@ def write_image_c(exporter):
         safe_scene = arm.utils.safesrc(scene_name).upper()
         safe_canvas = arm.utils.safesrc(canvas_name).lower()
         image_scene_init_cases.append(f'        case SCENE_{safe_scene}:')
-        image_scene_init_cases.append(f'            load_images(g_{safe_canvas}_image_defs, {safe_canvas.upper()}_IMAGE_COUNT);')
+        image_scene_init_cases.append(f'            defs = g_{safe_canvas}_image_defs;')
+        image_scene_init_cases.append(f'            count = {safe_canvas.upper()}_IMAGE_COUNT;')
         image_scene_init_cases.append('            break;')
 
     output = tmpl.format(
+        sprite_paths='\n'.join(sprite_paths),
         canvas_image_arrays='\n'.join(canvas_image_arrays) if canvas_image_arrays else '// No images defined',
         image_scene_init_cases='\n'.join(image_scene_init_cases),
     )

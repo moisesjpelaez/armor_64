@@ -6,6 +6,7 @@
 #if UI_LABEL_COUNT > 0 || UI_BUTTON_COUNT > 0
 #include "fonts.h"
 #endif
+#include "ui_anchor.h"
 #include <libdragon.h>
 #include <string.h>
 
@@ -203,7 +204,10 @@ void canvas_scene_init(SceneId scene_id) {{
 // canvas_clear — full reset (used before scene destruction)
 // ============================================================================
 
+static void ui_block_release(void);
+
 void canvas_clear(void) {{
+    ui_block_release();  // The next scene's UI is recorded anew (its sprites may differ)
     label_clear();
     image_clear();
     button_clear();
@@ -397,15 +401,41 @@ void canvas_set_ui_scene(int scene_idx) {{
 // canvas_render — sync pipeline then dispatch to each subsystem
 // ============================================================================
 
+// The UI's draw commands are recorded once and replayed every frame until
+// something drawn changes (text, visibility, focus, position...): building
+// them takes milliseconds of CPU per frame, replaying them almost nothing
+static rspq_block_t *g_ui_block = NULL;
+static uint32_t      g_ui_hash  = 0;
+
+static void ui_block_release(void) {{
+    if (g_ui_block) {{
+        // Frames still in flight may run it: free it once the RSP is past them
+        rspq_call_deferred((void (*)(void *))rspq_block_free, g_ui_block);
+        g_ui_block = NULL;
+    }}
+}}
+
 void canvas_render(void) {{
+    uint32_t hash = panel_state_hash(UI_HASH_START);
+    hash = image_state_hash(hash);
+    hash = button_state_hash(hash);
+    hash = label_state_hash(hash);
+    if (!g_ui_block || hash != g_ui_hash) {{
+        ui_block_release();
+        rspq_block_begin();
+        // Each sub-render fully sets its own mode and exits early if empty
+        panel_render();
+        image_render();
+        button_render();
+        label_render();
+        g_ui_block = rspq_block_end();
+        g_ui_hash  = hash;
+    }}
+
     // Transition from 3D to 2D rendering
     rdpq_sync_pipe();
     rdpq_set_mode_standard();
-    // Each sub-render fully sets its own mode and exits early if empty
-    panel_render();
-    image_render();
-    button_render();
-    label_render();
+    rspq_block_run(g_ui_block);
 }}
 
 #endif // UI_LABEL_COUNT > 0 || UI_IMAGE_COUNT > 0 || UI_GROUP_COUNT > 0 || UI_BUTTON_COUNT > 0 || UI_PANEL_COUNT > 0
