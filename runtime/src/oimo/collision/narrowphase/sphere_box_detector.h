@@ -46,11 +46,11 @@ static inline void oimo_sphere_box_detector_detect(
     OimoMat3 rot_transposed = oimo_mat3_transpose(&tf_box->rotation);
     OimoVec3 box_to_sphere_in_box = oimo_mat3_mul_vec3(&rot_transposed, box_to_sphere);
 
-    // Check if sphere center is inside the box
+    // Check if sphere center is inside the box (strictly, as upstream's aabb_overlap)
     bool inside_box =
-        box_to_sphere_in_box.x >= neg_half_ext.x && box_to_sphere_in_box.x <= half_ext.x &&
-        box_to_sphere_in_box.y >= neg_half_ext.y && box_to_sphere_in_box.y <= half_ext.y &&
-        box_to_sphere_in_box.z >= neg_half_ext.z && box_to_sphere_in_box.z <= half_ext.z;
+        box_to_sphere_in_box.x > neg_half_ext.x && box_to_sphere_in_box.x < half_ext.x &&
+        box_to_sphere_in_box.y > neg_half_ext.y && box_to_sphere_in_box.y < half_ext.y &&
+        box_to_sphere_in_box.z > neg_half_ext.z && box_to_sphere_in_box.z < half_ext.z;
 
     if (inside_box) {
         // Compute distance to each face
@@ -68,7 +68,7 @@ static inline void oimo_sphere_box_detector_detect(
         OimoScalar dist_y = sphere_to_box_surface.y;
         OimoScalar dist_z = sphere_to_box_surface.z;
 
-        if (dist_x <= dist_y && dist_x <= dist_z) {
+        if (dist_x < dist_y && dist_x < dist_z) {  // Ties as upstream compare3min
             // X axis is closest
             if (box_to_sphere_in_box.x > 0.0f) {
                 oimo_vec3_set(&normal_in_box, 1.0f, 0.0f, 0.0f);
@@ -77,7 +77,7 @@ static inline void oimo_sphere_box_detector_detect(
             }
             oimo_vec3_set(&projection_mask, 0.0f, 1.0f, 1.0f);
             depth = dist_x;
-        } else if (dist_y <= dist_x && dist_y <= dist_z) {
+        } else if (dist_x >= dist_y && dist_y < dist_z) {
             // Y axis is closest
             if (box_to_sphere_in_box.y > 0.0f) {
                 oimo_vec3_set(&normal_in_box, 0.0f, 1.0f, 0.0f);

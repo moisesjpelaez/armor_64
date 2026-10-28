@@ -265,8 +265,8 @@ static inline void oimo_rigid_body_integrate(OimoRigidBody* rb, OimoScalar dt) {
     OimoScalar translationLengthSq = oimo_vec3_len_sq(translation);
     OimoScalar rotationLengthSq = oimo_vec3_len_sq(rotation);
 
-    if (translationLengthSq <= OIMO_EPSILON && rotationLengthSq <= OIMO_EPSILON) {
-        return;
+    if (translationLengthSq == 0.0f && rotationLengthSq == 0.0f) {
+        return;  // No need of integration (exactly at rest, as upstream: slow motion still moves)
     }
 
     // Limit linear velocity - use inv_sqrt to avoid sqrt in common case
@@ -291,8 +291,8 @@ static inline void oimo_rigid_body_integrate_pseudo_velocity(OimoRigidBody* rb) 
     OimoScalar pseudoVelLengthSq = oimo_vec3_len_sq(rb->_pseudoVel);
     OimoScalar angPseudoVelLengthSq = oimo_vec3_len_sq(rb->_angPseudoVel);
 
-    if (pseudoVelLengthSq <= OIMO_EPSILON && angPseudoVelLengthSq <= OIMO_EPSILON) {
-        return;
+    if (pseudoVelLengthSq == 0.0f && angPseudoVelLengthSq == 0.0f) {
+        return;  // No need of integration
     }
 
     if (rb->_type == OIMO_RIGID_BODY_STATIC) {
@@ -582,20 +582,4 @@ static inline void oimo_rigid_body_add_shape(OimoRigidBody* rb, OimoShape* shape
 static inline void oimo_rigid_body_remove_shape(OimoRigidBody* rb, OimoShape* shape) {
     oimo_rigid_body_remove_shape_internal(rb, shape);
 }
-
-// Public mass getter/setter (for compatibility with body->mass pattern)
-#define mass _mass
-
-// Compatibility aliases (without underscore between rigid and body)
-// Note: oimo_rigidbody_apply_force maps to _to_center variant (2 args, not 3)
-#define oimo_rigidbody_apply_force           oimo_rigid_body_apply_force_to_center
-#define oimo_rigidbody_apply_force_to_center oimo_rigid_body_apply_force_to_center
-#define oimo_rigidbody_apply_torque          oimo_rigid_body_apply_torque
-#define oimo_rigidbody_apply_impulse         oimo_rigid_body_apply_impulse
-#define oimo_rigidbody_apply_linear_impulse  oimo_rigid_body_apply_linear_impulse
-#define oimo_rigidbody_apply_angular_impulse oimo_rigid_body_apply_angular_impulse
-#define oimo_rigidbody_wake_up               oimo_rigid_body_wake_up
-#define oimo_rigidbody_sleep                 oimo_rigid_body_sleep
-#define oimo_rigidbody_get_type              oimo_rigid_body_get_type
-#define oimo_rigidbody_set_type              oimo_rigid_body_set_type
 

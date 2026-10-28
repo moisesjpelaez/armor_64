@@ -220,10 +220,10 @@ static inline void oimo_capsule_mesh_detector_detect(
         OimoVec3 closest_world = oimo_mat3_mul_vec3(&tf_mesh->rotation, c->closest);
         OimoVec3 mesh_contact = oimo_vec3_add(closest_world, tf_mesh->position);
 
-        // Capsule contact point: mesh contact offset by (depth - radius) along normal
-        // This places the contact on the capsule surface
+        // Capsule contact point: its deepest point, depth below the mesh surface
+        // against the normal (the manifold recomputes depth from the two points)
         OimoVec3 cap_contact = oimo_vec3_add(mesh_contact,
-            oimo_vec3_scale(normal_world, c->depth));
+            oimo_vec3_scale(normal_world, -c->depth));
 
         oimo_detector_add_point(&detector->base, result, &cap_contact, &mesh_contact,
             c->depth, c->id);

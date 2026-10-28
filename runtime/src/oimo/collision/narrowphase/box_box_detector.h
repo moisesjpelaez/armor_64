@@ -168,7 +168,7 @@ static inline void oimo_face_clipper_clip(OimoFaceClipper* clipper) {
  * Reduce vertices to 4 or fewer for manifold.
  */
 static inline void oimo_face_clipper_reduce(OimoFaceClipper* clipper) {
-    if (clipper->num_vertices <= 4) {
+    if (clipper->num_vertices < 4) {  // As upstream: 4 vertices are reduced (reordered) too
         return;
     }
 

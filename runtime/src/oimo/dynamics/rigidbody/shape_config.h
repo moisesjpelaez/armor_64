@@ -16,10 +16,6 @@ typedef struct OimoShapeConfig {
     int collisionMask;         // Collision mask bits
 } OimoShapeConfig;
 
-// Snake_case compatibility aliases for Armory code generator
-#define collision_group collisionGroup
-#define collision_mask collisionMask
-
 static inline void oimo_shape_config_init(OimoShapeConfig* config) {
     config->position = oimo_vec3_zero();
     config->rotation = oimo_mat3_identity();

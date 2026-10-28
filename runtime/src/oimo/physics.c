@@ -224,10 +224,7 @@ static bool setup_body_common(ArmObject* obj, int type, const PhysicsBodyParams*
     if (!g_initialized || !obj || !params) return false;
 
     OimoRigidBody* rb = alloc_body();
-    if (!rb) {
-        debugf("Physics: body pool exhausted\\n");
-        return false;
-    }
+    if (!rb) return false;  // alloc_body() reported the limit
 
     out->rb = rb;
     out->idx = get_body_index(rb);
@@ -398,13 +395,13 @@ bool physics_create_mesh_full(ArmObject* obj,
     }
 
     if (idx < 0) {
-        debugf("Physics: mesh collider pool exhausted\\n");
+        ARM_LIMIT_REACHED(MAX_MESH_COLLIDERS);
         return false;
     }
 
     // Initialize mesh geometry
     if (!oimo_static_mesh_geometry_init(&g_mesh_geometries[idx], vertices, indices, vertex_count, index_count)) {
-        debugf("Physics: failed to create mesh geometry\\n");
+        debugf("Physics: failed to create mesh geometry\n");
         return false;
     }
 

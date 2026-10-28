@@ -252,18 +252,17 @@ static inline void oimo_manifold_updater_incremental_update(
         m->_points[i]._warmStarted = true;
     }
 
-    // Remove outdated points
-    oimo_manifold_updater_remove_outdated_points(updater);
+    // Incremental results (GJK) hold a single point
+    const OimoDetectorResultPoint* newPoint = &result->points[0];
 
-    // Add new points
-    for (int i = 0; i < result->num_points; i++) {
-        const OimoDetectorResultPoint* newPoint = &result->points[i];
-        int idx = oimo_manifold_updater_find_nearest_index(updater, newPoint, tf1, tf2);
-
-        if (idx == -1) {
-            oimo_manifold_updater_add_point(updater, newPoint, tf1, tf2);
-        } else {
-            oimo_manifold_point_update_depth_and_positions(&m->_points[idx], newPoint, tf1, tf2);
-        }
+    // Add or update point
+    int idx = oimo_manifold_updater_find_nearest_index(updater, newPoint, tf1, tf2);
+    if (idx == -1) {
+        oimo_manifold_updater_add_point(updater, newPoint, tf1, tf2);
+    } else {
+        oimo_manifold_point_update_depth_and_positions(&m->_points[idx], newPoint, tf1, tf2);
     }
+
+    // Remove some points
+    oimo_manifold_updater_remove_outdated_points(updater);
 }

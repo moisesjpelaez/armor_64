@@ -82,29 +82,11 @@ static inline void oimo_contact_attach(OimoContact* c, OimoShape* s1, OimoShape*
     c->_link1._other = c->_b2;
     c->_link2._other = c->_b1;
 
-    // Add to rigid body contact link lists
-    // Link1 to b1
-    c->_link1._next = c->_b1->_contactLinkList;
-    c->_link1._prev = NULL;
-    if (c->_b1->_contactLinkList != NULL) {
-        c->_b1->_contactLinkList->_prev = &c->_link1;
-    }
-    c->_b1->_contactLinkList = &c->_link1;
-    if (c->_b1->_contactLinkListLast == NULL) {
-        c->_b1->_contactLinkListLast = &c->_link1;
-    }
+    // Append to the bodies' contact link lists (upstream attachLinks: M.list_push
+    // adds at the end, which decides the island and solver order)
+    oimo_contact_link_push(&c->_b1->_contactLinkList, &c->_b1->_contactLinkListLast, &c->_link1);
+    oimo_contact_link_push(&c->_b2->_contactLinkList, &c->_b2->_contactLinkListLast, &c->_link2);
     c->_b1->_numContactLinks++;
-
-    // Link2 to b2
-    c->_link2._next = c->_b2->_contactLinkList;
-    c->_link2._prev = NULL;
-    if (c->_b2->_contactLinkList != NULL) {
-        c->_b2->_contactLinkList->_prev = &c->_link2;
-    }
-    c->_b2->_contactLinkList = &c->_link2;
-    if (c->_b2->_contactLinkListLast == NULL) {
-        c->_b2->_contactLinkListLast = &c->_link2;
-    }
     c->_b2->_numContactLinks++;
 
     oimo_contact_constraint_attach(&c->_contactConstraint, s1, s2);
@@ -176,11 +158,21 @@ static inline void oimo_contact_update_manifold_with_matrix(
         // Build basis from normal
         oimo_manifold_build_basis(&c->_manifold, c->_detectorResult.normal);
 
-        // Incremental update for persistent contacts
-        if (c->_manifold._numPoints > 0) {
-            oimo_manifold_updater_incremental_update(&c->_updater, &c->_detectorResult, tf1, tf2);
+        // Position correction: deeply overlapping contacts use the alternative
+        // algorithm (split impulse), slightly overlapping ones the default
+        if (oimo_detector_result_get_max_depth(&c->_detectorResult) > OIMO_CONTACT_USE_ALT_POS_CORRECTION_DEPTH_THRESHOLD) {
+            c->_contactConstraint._positionCorrectionAlgorithm = OIMO_ALTERNATIVE_CONTACT_POSITION_CORRECTION_ALGORITHM;
         } else {
-            oimo_manifold_updater_total_update(&c->_updater, &c->_detectorResult, tf1, tf2);
+            c->_contactConstraint._positionCorrectionAlgorithm = OIMO_DEFAULT_CONTACT_POSITION_CORRECTION_ALGORITHM;
+        }
+
+        // Manifold points are relative to the bodies: update with the bodies'
+        // transforms. Incremental results (GJK) add one point, the others
+        // replace the whole manifold
+        if (c->_detectorResult.incremental) {
+            oimo_manifold_updater_incremental_update(&c->_updater, &c->_detectorResult, &c->_b1->_transform, &c->_b2->_transform);
+        } else {
+            oimo_manifold_updater_total_update(&c->_updater, &c->_detectorResult, &c->_b1->_transform, &c->_b2->_transform);
         }
 
         c->_touching = true;

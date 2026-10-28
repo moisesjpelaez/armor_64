@@ -265,8 +265,9 @@ def _scene_limits(scenes: List[Dict], notes: Dict[str, str]) -> Dict[str, int]:
         "MAX_PHYSICS_BODIES": bodies,
         "MAX_MESH_COLLIDERS": need("mesh_colliders"),
         "OIMO_MAX_PROXIES": max(1, bodies + need("mesh_colliders")),
-        # Islands only hold movable bodies (mesh colliders are static)
-        "OIMO_MAX_ISLAND_BODIES": bodies,
+        # Islands hold the movable bodies and the static ones they touch, mesh
+        # colliders included (as upstream: statics join, but don't extend, an island)
+        "OIMO_MAX_ISLAND_BODIES": bodies + need("mesh_colliders"),
         "OIMO_MAX_RIGID_BODIES": bodies,
         "MAX_CONTACT_BODIES": need("contact_bodies"),
         "MAX_CONTACT_SUBSCRIBERS": need("contact_subscribers"),

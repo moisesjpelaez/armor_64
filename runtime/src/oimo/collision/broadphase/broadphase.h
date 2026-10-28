@@ -25,6 +25,9 @@ typedef struct OimoBroadPhase {
     OimoProxyPair _pairStorage[OIMO_MAX_PROXY_PAIRS];
     int _proxyStorageUsed;
     int _pairStorageUsed;
+    // Destroyed proxies, reused before new storage (upstream lets the GC free them)
+    OimoProxy* _freeProxies[OIMO_MAX_PROXIES];
+    int _freeProxyCount;
     // Dynamic proxies and their list positions, gathered per pair collection
     OimoProxy* _dynamic[OIMO_MAX_PROXIES];
     int16_t _dynamicPos[OIMO_MAX_PROXIES];
@@ -179,15 +182,19 @@ static inline void oimo_broadphase_init(OimoBroadPhase* bp, int type) {
     bp->_idCount = 0;
     bp->_proxyStorageUsed = 0;
     bp->_pairStorageUsed = 0;
+    bp->_freeProxyCount = 0;
 }
 
 static inline OimoProxy* oimo_broadphase_create_proxy(OimoBroadPhase* bp, void* userData, const OimoAabb* aabb) {
-    if (bp->_proxyStorageUsed >= OIMO_MAX_PROXIES) {
+    OimoProxy* p;
+    if (bp->_freeProxyCount > 0) {
+        p = bp->_freeProxies[--bp->_freeProxyCount];
+    } else if (bp->_proxyStorageUsed < OIMO_MAX_PROXIES) {
+        p = &bp->_proxyStorage[bp->_proxyStorageUsed++];
+    } else {
         ARM_LIMIT_REACHED(OIMO_MAX_PROXIES);
         return NULL;
     }
-
-    OimoProxy* p = &bp->_proxyStorage[bp->_proxyStorageUsed++];
     oimo_proxy_init(p, userData, bp->_idCount++);
 
     // Set AABB
@@ -202,6 +209,7 @@ static inline OimoProxy* oimo_broadphase_create_proxy(OimoBroadPhase* bp, void* 
 
 static inline void oimo_broadphase_destroy_proxy(OimoBroadPhase* bp, OimoProxy* p) {
     oimo_broadphase_remove_proxy(bp, p);
+    bp->_freeProxies[bp->_freeProxyCount++] = p;
 }
 
 static inline void oimo_broadphase_add_proxy(OimoBroadPhase* bp, OimoProxy* p) {

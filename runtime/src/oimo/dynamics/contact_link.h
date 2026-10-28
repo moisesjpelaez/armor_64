@@ -23,6 +23,18 @@ static inline OimoContactLink oimo_contact_link_create(void) {
     return link;
 }
 
+// Append a link at the end of a list (upstream M.list_push)
+static inline void oimo_contact_link_push(OimoContactLink** first, OimoContactLink** last, OimoContactLink* link) {
+    link->_prev = *last;
+    link->_next = NULL;
+    if (*first == NULL) {
+        *first = link;
+    } else {
+        (*last)->_next = link;
+    }
+    *last = link;
+}
+
 static inline struct OimoContact* oimo_contact_link_get_contact(const OimoContactLink* link) {
     return link->_contact;
 }

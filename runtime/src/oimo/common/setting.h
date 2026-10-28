@@ -21,6 +21,10 @@ typedef float OimoScalar;
 #define OIMO_POSITION_NGS_BAUMGARTE                1.0f
 
 #define OIMO_CONTACT_USE_ALT_POS_CORRECTION_DEPTH_THRESHOLD  0.05f
+// Slightly overlapping contacts use the default; deeper ones the alternative
+// (OIMO_POSITION_CORRECTION_* from dynamics/constraint/position_correction_algorithm.h)
+#define OIMO_DEFAULT_CONTACT_POSITION_CORRECTION_ALGORITHM      OIMO_POSITION_CORRECTION_BAUMGARTE
+#define OIMO_ALTERNATIVE_CONTACT_POSITION_CORRECTION_ALGORITHM  OIMO_POSITION_CORRECTION_SPLIT_IMPULSE
 #define OIMO_CONTACT_PERSISTENCE_THRESHOLD         0.05f
 #define OIMO_MAX_MANIFOLD_POINTS                   4  // Reduce value for performance, but may cause tunneling at high speeds
 

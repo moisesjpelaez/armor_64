@@ -16,13 +16,11 @@ extern "C" {
 // Box vs Capsule detector
 // Analytical approach: find closest point on capsule segment to box
 typedef struct OimoBoxCapsuleDetector {
-    OimoDetector base;
-    bool swapped;  // true if capsule is geom1, box is geom2
+    OimoDetector base;  // base.swapped: the capsule is geom1, the box geom2
 } OimoBoxCapsuleDetector;
 
 static inline void oimo_box_capsule_detector_init(OimoBoxCapsuleDetector* detector, bool swapped) {
     oimo_detector_init(&detector->base, swapped ? OIMO_DETECTOR_CAPSULE_BOX : OIMO_DETECTOR_BOX_CAPSULE, swapped);
-    detector->swapped = swapped;
 }
 
 // Clamp a point to box bounds
@@ -167,33 +165,44 @@ static inline void oimo_box_capsule_detector_detect(
     }
 
     OimoScalar dist = oimo_sqrt(dist2);
-    OimoVec3 localNormal;
+    OimoVec3 localNormal;  // Out of the box, towards the capsule's segment
+    OimoScalar depth;
 
     if (dist > OIMO_EPSILON) {
-        // Normal points from box to capsule segment
         OimoScalar invDist = 1.0f / dist;
         localNormal.x = diff.x * invDist;
         localNormal.y = diff.y * invDist;
         localNormal.z = diff.z * invDist;
+        depth = capsuleRadius - dist;
     } else {
-        // Segment point is inside box - find closest face normal
+        // Segment point is inside the box: push out through the nearest face,
+        // as deep as the point is below it plus the radius
         OimoScalar dx = boxHalfExtents.x - oimo_abs(closestOnSeg.x);
         OimoScalar dy = boxHalfExtents.y - oimo_abs(closestOnSeg.y);
         OimoScalar dz = boxHalfExtents.z - oimo_abs(closestOnSeg.z);
+        OimoScalar faceDist;
 
         if (dx <= dy && dx <= dz) {
             localNormal.x = closestOnSeg.x >= 0 ? 1.0f : -1.0f;
             localNormal.y = 0;
             localNormal.z = 0;
+            faceDist = dx;
         } else if (dy <= dz) {
             localNormal.x = 0;
             localNormal.y = closestOnSeg.y >= 0 ? 1.0f : -1.0f;
             localNormal.z = 0;
+            faceDist = dy;
         } else {
             localNormal.x = 0;
             localNormal.y = 0;
             localNormal.z = closestOnSeg.z >= 0 ? 1.0f : -1.0f;
+            faceDist = dz;
         }
+        // The box's contact point is on that face
+        closestOnBox.x = closestOnSeg.x + localNormal.x * faceDist;
+        closestOnBox.y = closestOnSeg.y + localNormal.y * faceDist;
+        closestOnBox.z = closestOnSeg.z + localNormal.z * faceDist;
+        depth = capsuleRadius + faceDist;
     }
 
     // Transform normal back to world space
@@ -219,20 +228,11 @@ static inline void oimo_box_capsule_detector_detect(
     pos2.y = worldClosestOnSeg.y - worldNormal.y * capsuleRadius;
     pos2.z = worldClosestOnSeg.z - worldNormal.z * capsuleRadius;
 
-    OimoScalar depth = capsuleRadius - dist;
-
-    // If swapped, flip normal (normal points from geom1 to geom2)
-    if (detector->swapped) {
-        worldNormal.x = -worldNormal.x;
-        worldNormal.y = -worldNormal.y;
-        worldNormal.z = -worldNormal.z;
-        // Also swap pos1 and pos2
-        oimo_detector_add_point(&detector->base, result, &pos2, &pos1, depth, 0);
-    } else {
-        oimo_detector_add_point(&detector->base, result, &pos1, &pos2, depth, 0);
-    }
-
-    oimo_detector_set_normal(&detector->base, result, &worldNormal);
+    // Oimo's convention: the normal points from geom2 (capsule) to geom1 (box);
+    // the base detector swaps it and the points when the shapes come swapped
+    OimoVec3 normal = {-worldNormal.x, -worldNormal.y, -worldNormal.z};
+    oimo_detector_set_normal(&detector->base, result, &normal);
+    oimo_detector_add_point(&detector->base, result, &pos1, &pos2, depth, 0);
 }
 
 #ifdef __cplusplus
