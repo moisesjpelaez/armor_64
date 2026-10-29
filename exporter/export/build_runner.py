@@ -13,7 +13,7 @@ import bpy
 import arm.utils
 import arm.log as log
 import armor64.utils as n64_utils
-from armor64.export import linked_export
+from armor64.export import scene_exporter
 
 
 def write_makefile(exporter):
@@ -33,11 +33,7 @@ def write_makefile(exporter):
         tmpl_content = f.read()
 
     scene_files = []
-    for scene in bpy.data.scenes:
-        if scene.library:
-            continue
-        if linked_export.is_temp_scene(scene):
-            continue
+    for scene in scene_exporter.exported_scenes():
         scene_files.append(f'src/scenes/{arm.utils.safesrc(scene.name).lower()}.c')
     autoload_files = [f'src/autoloads/{c_name}.c' for c_name in exporter.autoload_info.get('autoloads', [])]
 

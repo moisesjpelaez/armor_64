@@ -133,12 +133,7 @@ class N64Exporter:
 
         try:
             # Phase 3: Build scene data (sets has_physics flag)
-            for scene in bpy.data.scenes:
-                if scene.library:
-                    continue
-                # Skip temp scene used for linked object export
-                if linked_export.is_temp_scene(scene):
-                    continue
+            for scene in scene_exporter.exported_scenes():
                 # Reset per-scene counters before building scene data
                 self.physics_body_count = 0
                 self.mesh_collider_count = 0

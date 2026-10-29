@@ -32,6 +32,79 @@ def _warn_if_out_of_range(obj, pos):
                  f"±{DRAWABLE_RANGE:.0f} Blender units from the origin: it can't be drawn there on N64")
 
 
+def exported_scenes():
+    """The scenes the game has, in SceneId order: the project's (not linked ones,
+    nor the linked export's temporary one) with Armory's Export checked."""
+    return [scene for scene in bpy.data.scenes
+            if not scene.library and not linked_export.is_temp_scene(scene)
+            and getattr(scene, 'arm_export', True)]
+
+
+def is_exported(obj):
+    """Armory's object Export checkbox: an object out of the export takes its
+    children with it (Armory exports children from their parent)."""
+    while obj is not None:
+        if not getattr(obj, 'arm_export', True):
+            return False
+        obj = obj.parent
+    return True
+
+
+def is_visible(obj, drawn=True):
+    """Armory's visibility: Disable in Renders or Armory's Visible off hides the
+    object; Camera ray visibility off only stops drawing its mesh, but the N64 has
+    one flag for both (drawn: the object has a mesh)."""
+    visible = not obj.hide_render and getattr(obj, 'arm_visible', True)
+    return visible and (obj.visible_camera if drawn else True)
+
+
+def _inlines(obj):
+    """An instance Armory replaces by the collection's objects: a linked
+    collection instanced by an empty without traits."""
+    return (obj.instance_type == 'COLLECTION' and obj.instance_collection is not None
+            and obj.instance_collection.library is not None
+            and not len(getattr(obj, 'arm_traitlist', [])))
+
+
+def _group_size(collection):
+    """Objects of a group as Armory references them (export_collection): the
+    collection's own exported objects whose parent isn't in it, an inlined
+    instance counting the instanced collection's own such objects."""
+    def is_root(obj, coll):
+        return obj.parent is None or obj.parent.name not in coll.objects
+
+    size = 0
+    for obj in collection.objects:
+        if not getattr(obj, 'arm_export', True):
+            continue
+        if _inlines(obj):
+            # Its collection's exported roots (a nested inlined instance isn't one)
+            inner = obj.instance_collection
+            size += sum(1 for o in inner.objects
+                        if getattr(o, 'arm_export', True) and is_root(o, inner) and not _inlines(o))
+        elif is_root(obj, collection):
+            size += 1
+    return size
+
+
+def _scene_groups(exporter, scene):
+    """Armory's groups of a scene: the collections the scene uses or instances
+    (not inlined ones, nor the rigid body world's and traits' ones), by name
+    (before a Blender rename of an appended one), with their size."""
+    instanced = [o for o, _, _ in collect_scene_objects(scene)] + list(scene.collection.all_objects)
+    referenced = {o.instance_collection for o in instanced
+                  if o.instance_type == 'COLLECTION' and o.instance_collection is not None and not _inlines(o)}
+    inlined = {o.instance_collection for o in instanced if _inlines(o)}
+    groups = {}
+    for collection in bpy.data.collections:
+        if collection.name.startswith(('RigidBodyWorld', 'Trait|')) or collection in inlined:
+            continue
+        if scene.user_of_id(collection) or collection in referenced:
+            name = exporter.collection_original_names.get(collection.name, collection.name)
+            groups[name] = {'original_name': name, 'count': _group_size(collection)}
+    return groups
+
+
 def collect_scene_objects(scene):
     """Every object of a scene, including those of instanced collections (also
     collections instanced inside them), each instance at its own transform.
@@ -51,6 +124,8 @@ def collect_scene_objects(scene):
         collection = instancer.instance_collection
         base = instancer_matrix @ Matrix.Translation(-collection.instance_offset)
         for cobj in collection.all_objects:
+            if not is_exported(cobj):
+                continue
             matrix = base @ cobj.matrix_world
             if cobj.instance_type == 'COLLECTION' and cobj.instance_collection is not None:
                 add_instance(cobj, matrix, instancer_parent)
@@ -58,6 +133,8 @@ def collect_scene_objects(scene):
                 objects.append((cobj, matrix, instancer_parent))
 
     for obj in scene.collection.all_objects:
+        if not is_exported(obj):
+            continue
         if obj.instance_type == 'COLLECTION' and obj.instance_collection is not None:
             add_instance(obj, obj.matrix_world, obj.parent)  # Parent: e.g. Cube
         else:
@@ -151,33 +228,8 @@ def build_scene_data(exporter, scene):
     except (AttributeError, KeyError):
         ambient_color = [0.2, 0.2, 0.2]  # Default ambient
 
-    # Collect groups from Blender collections
-    # Each collection used in this scene becomes a group with object count
-    groups = {}
-    for collection in bpy.data.collections:
-        if collection.name.startswith(('RigidBodyWorld', 'Trait|')):
-            continue
-        # Check if collection is used in this scene
-        collection_used = (
-            scene.user_of_id(collection) or
-            collection in scene.collection.children_recursive or
-            any(obj.name in scene.objects for obj in collection.objects)
-        )
-        if collection_used:
-            # Count mesh objects, including those inside linked/instanced collections
-            mesh_count = 0
-            for obj in collection.all_objects:
-                if obj.type == 'MESH':
-                    mesh_count += 1
-                elif obj.instance_type == 'COLLECTION' and obj.instance_collection is not None:
-                    mesh_count += sum(1 for cobj in obj.instance_collection.all_objects if cobj.type == 'MESH')
-            # Use original name before Blender's dedup rename (e.g. "Gems.001" → "Gems")
-            # so runtime lookups from Haxe code match the expected group name.
-            original_name = exporter.collection_original_names.get(collection.name, collection.name)
-            groups[original_name] = {
-                'original_name': original_name,
-                'count': mesh_count
-            }
+    # Collections as Armory's groups (Scene.getGroup)
+    groups = _scene_groups(exporter, scene)
 
     exporter.scene_data[scene_name] = {
         "canvas": canvas_name,  # UI canvas for this scene (or None)
@@ -195,6 +247,9 @@ def build_scene_data(exporter, scene):
     }
 
     for obj, instance_matrix, _ in collect_scene_objects(scene):
+        if not getattr(obj, 'arm_spawn', True):
+            log.warn(f'N64: "{obj.name}" has Spawn off, which the N64 does not support yet: '
+                     'it is in the scene from the start')
         if obj.type == 'LIGHT':
             _process_light(exporter, scene_name, obj, instance_matrix)
 
@@ -392,7 +447,7 @@ def _process_empty_object(exporter, scene_name, obj, object_name_to_index=None):
         "pos": world_pos,
         "rot": [world_quat.x, world_quat.y, world_quat.z, world_quat.w],
         "scale": list(world_scale),
-        "visible": not obj.hide_render,
+        "visible": is_visible(obj, drawn=False),
         "bounds_center": [0, 0, 0],
         "bounds_half": [0, 0, 0],
         "traits": _extract_traits(obj),
@@ -498,7 +553,7 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object
         "pos": world_pos,
         "rot": [world_quat.x, world_quat.y, world_quat.z, world_quat.w],
         "scale": list(world_scale),
-        "visible": not obj.hide_render,
+        "visible": is_visible(obj),
         "bounds_center": bounds_center,
         "bounds_half": half_extents,
         "traits": _extract_traits(obj),
@@ -679,6 +734,9 @@ def _extract_traits(obj):
     for trait in obj.arm_traitlist:
         if not trait.enabled_prop:
             continue
+        if trait.type_prop not in ('Haxe Script', 'UI Canvas'):
+            log.warn(f'N64: "{obj.name}" has the {trait.type_prop} trait "{trait.name}": only Haxe Script '
+                     'traits are supported on N64 for now, it is left out')
         if trait.type_prop != 'Haxe Script' or not trait.class_name_prop:
             continue
 
@@ -718,11 +776,7 @@ def write_scenes(exporter):
     codegen.convert_scene_data(exporter.scene_data)
 
     # Write converted scene data to C files
-    for scene in bpy.data.scenes:
-        if scene.library:
-            continue
-        if linked_export.is_temp_scene(scene):
-            continue
+    for scene in exported_scenes():
         write_scene_c(exporter, scene)
 
 
@@ -740,12 +794,6 @@ def write_scene_c(exporter, scene):
     n64_utils.write_if_changed(out_path, text)
 
 
-def _exported_scenes():
-    """The scenes the game has, in SceneId order (linked and temporary ones left out)."""
-    return [scene for scene in bpy.data.scenes
-            if not scene.library and not linked_export.is_temp_scene(scene)]
-
-
 def write_scenes_c(exporter):
     """Copy scenes.c and generate scenes_data.h: by SceneId, each scene's definition,
     name, groups (collections: name -> object count) and the models it uses.
@@ -756,7 +804,7 @@ def write_scenes_c(exporter):
     n64_utils.copy_src('scenes.c', 'src/data')
 
     inits, names, group_tables, groups, model_rows = [], [], [], [], []
-    for scene in _exported_scenes():
+    for scene in exported_scenes():
         scene_name = arm.utils.safesrc(scene.name).lower()
         scene_id = f'SCENE_{scene_name.upper()}'
         inits.append(f'    [{scene_id}] = &scene_def_{scene_name},')
@@ -790,7 +838,7 @@ def write_scenes_h(exporter):
     """
     n64_utils.copy_src('scenes.h', 'src/data')
 
-    scenes = _exported_scenes()
+    scenes = exported_scenes()
     lines = ['typedef enum SceneId {']
     lines += [f'    SCENE_{arm.utils.safesrc(scene.name).upper()} = {i},' for i, scene in enumerate(scenes)]
     lines += [f'    SCENE_COUNT = {len(scenes)}', '} SceneId;', '']
@@ -813,7 +861,10 @@ def start_scene():
     """The scene the game starts in (Armory's exporter list), which also sets
     the game's resolution."""
     wrd = bpy.data.worlds['Arm']
-    return wrd.arm_exporterlist[wrd.arm_exporterlist_index].arm_project_scene
+    scene = wrd.arm_exporterlist[wrd.arm_exporterlist_index].arm_project_scene
+    if scene not in exported_scenes():
+        raise ValueError(f'N64: the start scene "{scene.name}" is not exported (its Export checkbox is off)')
+    return scene
 
 
 def write_main(exporter):

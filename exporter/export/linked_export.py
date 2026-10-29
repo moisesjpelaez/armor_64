@@ -40,7 +40,8 @@ def _collect_linked_instance_collections():
     """Find all instance collections containing linked objects."""
     collections = set()
     for scene in bpy.data.scenes:
-        if scene.library:
+        # The exported scenes (scene_exporter.exported_scenes, which imports this module)
+        if scene.library or not getattr(scene, 'arm_export', True):
             continue
         for obj in scene.collection.all_objects:
             if obj.instance_type == 'COLLECTION' and obj.instance_collection:

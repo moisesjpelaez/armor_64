@@ -648,9 +648,7 @@ def _mesh_jobs(exporter):
             use_scene(temp_scene)
             yield local_obj, mesh_name, original_mesh, _find_armature(local_obj), True
 
-        for scene in bpy.data.scenes:
-            if scene.library or linked_export.is_temp_scene(scene):
-                continue
+        for scene in scene_exporter.exported_scenes():
             for obj, _, _ in scene_exporter.collect_scene_objects(scene):
                 if obj.type != 'MESH' or obj.library or obj.data in meshes:
                     continue
