@@ -50,22 +50,14 @@ def scan_and_copy_audio(exporter):
         safe_name = filename.lower().replace(' ', '_')
         dst_path = os.path.join(n64_assets, safe_name)
 
-        # Sounds in a "music" folder are converted with loop data (audioconv64
-        # --wav-loop: the loop start aligned, the decoder's state and first samples
-        # there), so they loop seamlessly when the game plays them looped
-        rel_path = os.path.relpath(src_path, assets_dir).lower()
-        is_music = 'music' in rel_path
-
         if n64_utils.copy_if_changed(src_path, dst_path):
-            log.info(f'Copied audio: {safe_name} (music={is_music})')
+            log.info(f'Copied audio: {safe_name}')
 
         # Store audio info (without extension, as audioconv64 changes it)
         audio_name = os.path.splitext(safe_name)[0]
         exporter.exported_audio[audio_name] = {
             'source_path': src_path,
             'dest_name': safe_name,
-            'is_music': is_music,
-            'loop': is_music  # Music loops by default
         }
 
 
@@ -79,46 +71,28 @@ def write_audio_config(exporter):
 
 
 def generate_audio_makefile_entries(exported_audio):
-    """Generate Makefile entries for audio conversion.
+    """The Makefile's audio targets and rules: each sound to .wav64 with
+    audioconv64. Returns (audio_targets, audio_rules).
 
-    Uses audioconv64 to convert .wav/.mp3 files to .wav64 format.
-    All audio uses VADPCM compression (--wav-compress 1) for stability with t3d.
-    Opus (level 3) has known RSP conflicts with t3d rendering on real hardware.
-
-    Args:
-        exported_audio: Dict of {audio_name: {dest_name, is_music, loop, ...}}
-
-    Returns:
-        tuple: (audio_targets_str, audio_rules_str)
+    VADPCM (--wav-compress 1) for every sound: Opus (3) conflicts with tiny3d's
+    RSP use on hardware. Every sound is converted with loop data (--wav-loop:
+    the loop start aligned, the decoder's state and first samples there), so
+    whichever sound the game plays looped loops without a click; the runtime sets
+    looping at each play (wav64_set_loop), so the others play once.
     """
     if not exported_audio:
         return 'audio_conv =', '# No audio'
 
     targets = []
     rules = []
-
     for audio_name, audio_info in exported_audio.items():
-        dest_name = audio_info['dest_name']
-        is_music = audio_info['is_music']
-
-        # Target: filesystem/audio_name.wav64
         target = f'filesystem/{audio_name}.wav64'
         targets.append(target)
-
-        # Use VADPCM (level 1) for all audio - stable with t3d
-        # Opus (level 3) causes RSP conflicts with t3d rendering
-        if is_music:
-            compress_flag = '--wav-compress 1 --wav-loop true'
-        else:
-            compress_flag = '--wav-compress 1'
-
-        rule = f'''{target}: assets/{dest_name}
+        rules.append(f'''{target}: assets/{audio_info['dest_name']}
 	@mkdir -p $(dir $@)
 	@echo "    [AUDIO] $@"
-	@$(N64_AUDIOCONV) {compress_flag} -o filesystem "$<"'''
-        rules.append(rule)
+	@$(N64_AUDIOCONV) --wav-compress 1 --wav-loop true -o filesystem "$<"''')
 
     audio_targets = 'audio_conv = ' + ' \\\n             '.join(targets)
     audio_rules = '\n\n'.join(rules)
-
     return audio_targets, audio_rules

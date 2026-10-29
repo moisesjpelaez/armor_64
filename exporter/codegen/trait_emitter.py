@@ -1261,7 +1261,8 @@ class TraitEmitter:
             sound_path = '"rom:/sound.wav64"'
 
         mix_channel = props.get("mix_channel", "AUDIO_MIX_MASTER")
-        loop = props.get("loop", "false")
+        # A literal loop is in props, an expression is the second argument
+        loop = props.get("loop") or (self.emit(args[1]) if len(args) > 1 else "false")
 
         return f"arm_audio_load({sound_path}, {mix_channel}, {loop})"
 

@@ -79,21 +79,19 @@ class AudioCallConverter implements ICallConverter {
                     var loopArg = args[1];
                     var mixChArg = args[2];
 
-                    // Loop boolean
-                    var loopVal = loopArg.value != null ? (loopArg.value == true ? "true" : "false") : "false";
-
                     // Mix channel - extract from Aura.mixChannels["name"]
                     var mixCh = extractMixChannelFromArg(rawParams[2]);
 
-                    // Return node with args - let emitter handle sound path
+                    // The sound (path or variable) and whether it loops: a literal
+                    // goes in props, any other expression is the second argument
                     // Using audio_load instead of audio_play - doesn't start playing
+                    var literalLoop = loopArg.type == "bool";
+                    var props:Dynamic = { mix_channel: mixCh };
+                    if (literalLoop) props.loop = loopArg.value == true ? "true" : "false";
                     return {
                         type: "audio_load",
-                        args: [soundArg],  // Sound path/variable
-                        props: {
-                            mix_channel: mixCh,
-                            loop: loopVal
-                        }
+                        args: literalLoop ? [soundArg] : [soundArg, loopArg],
+                        props: props
                     };
                 }
                 // Fallback with fewer args - likely missing parameters
