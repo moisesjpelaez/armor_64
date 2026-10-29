@@ -1,14 +1,16 @@
 """
-UI Exporter - Handles canvas, fonts, and UI-related code generation for N64.
+UI exporter: turns the koui_editor canvases of the exported scenes into the N64 UI.
 
-This module provides functions for detecting UI canvases, parsing themes,
-and generating canvas and font C code files.
+Each canvas JSON (Bundled/koui_canvas) is flattened to fixed positions (labels,
+images, buttons, panels, and groups for containers), with the colors, fonts and
+borders read from the Koui themes (koui_theme_parser). Writes the ui/*_defs.h and
+ui/*_data.h files of the runtime's ui/ module, copies the fonts and images, and
+gives build_runner their Makefile rules. Used by exporter.py.
 """
 
 import os
 import json
 import glob
-import shutil
 
 import arm.utils
 import armor64.utils as n64_utils
@@ -35,6 +37,16 @@ ANCHOR_BOTTOM_RIGHT = 8
 # Default UI values
 DEFAULT_FONT_SIZE = 15
 DEFAULT_TEXT_COLOR = (221, 221, 221, 255)  # #dddddd
+
+# Kha font size (pixel height) -> N64 font. Measured, not derived: chosen so text
+# looks the same size as on Krom, and its baseline lands where Koui draws it.
+MKFONT_SIZE_SCALE = 0.82      # Kha size -> mkfont's --size (points)
+MKFONT_LINE_HEIGHT = 1.22     # mkfont size -> drawn line height (pixels)
+MKFONT_BASELINE = 0.80        # line height -> baseline, from the line's top
+
+
+def _mkfont_size(kha_size):
+    return max(8, int(kha_size * MKFONT_SIZE_SCALE))
 
 
 def detect_ui_canvas(exporter):
@@ -290,121 +302,35 @@ def _append_child_indices(group_data, labels, images, buttons, panels, groups, s
             group_data['child_panel_indices'].append(i)
 
 
-def _create_group_with_children(exporter, elem, children, final_x, final_y,
-                                 elem_by_key, children_by_parent,
-                                 labels, images, buttons, panels, groups, elements,
-                                 is_root=False,
-                                 parent_path: str = ""):
-    """Create a group element and process its children, tracking indices."""
-    group_index = len(groups)
-    elem_key = elem.get('key')
-    full_path = _build_full_path(parent_path, elem_key)
-
-    group_data = {
-        'key': full_path,  # Use full path as key
-        'visible': elem.get('visible', True),
-        'child_image_indices': [],
-        'child_label_indices': [],
-        'child_button_indices': [],
-        'child_panel_indices': [],
-        'child_group_indices': [],
-    }
-
-    # Reserve group slot immediately so child groups get correct indices
-    groups.append(group_data)
-
-    # Only root elements are added to the unified elements array
-    if is_root:
-        elements.append({'type': 'group', 'index': group_index})
-
-    container_width = elem['width']
-    container_height = elem['height']
-
-    # Process children - track their indices for the group
-    for child in children:
-        snap = _snapshot_child_counts(labels, images, buttons, panels, groups)
-        _flatten_element(
-            exporter, child, elem_by_key, children_by_parent,
-            container_width, container_height,
-            final_x, final_y,
-            labels, images, buttons, panels, groups, elements,
-            is_root=False,
-            parent_path=full_path
-        )
-        _append_child_indices(group_data, labels, images, buttons, panels, groups, snap)
-
-
-def _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y,
-                            elem_by_key, children_by_parent,
-                            labels, images, buttons, panels, groups, elements, is_root,
-                            parent_path: str = ""):
-    """Handle RowLayout and ColLayout - process children in cells."""
-    if not children:
-        return
-
-    elem_key = elem.get('key')
-    full_path = _build_full_path(parent_path, elem_key)
-
-    # Create a group for this layout so visibility can be controlled
-    group_index = len(groups)
-    group_data = {
-        'key': full_path,
-        'visible': elem.get('visible', True),
-        'child_image_indices': [],
-        'child_label_indices': [],
-        'child_button_indices': [],
-        'child_panel_indices': [],
-        'child_group_indices': [],
-    }
-
-    # Reserve group slot immediately so child groups get correct indices
-    groups.append(group_data)
-
-    if is_root:
-        elements.append({'type': 'group', 'index': group_index})
-
-    layout_width = elem['width']
-    layout_height = elem['height']
-    num_children = len(children)
-
+def _layout_cells(elem, count):
+    """The cell (x, y, width, height) of each of an element's `count` children:
+    one row or column per child in Row/ColLayout, rows x cols in GridLayout,
+    the whole element otherwise (AnchorPane)."""
+    width, height = elem['width'], elem['height']
+    elem_type = elem.get('type')
     if elem_type == 'RowLayout':
-        cell_width = layout_width
-        cell_height = layout_height // num_children
-    else:  # ColLayout
-        cell_width = layout_width // num_children
-        cell_height = layout_height
-
-    for idx, child in enumerate(children):
-        if elem_type == 'RowLayout':
-            cell_x, cell_y = 0, cell_height * idx
-        else:
-            cell_x, cell_y = cell_width * idx, 0
-
-        snap = _snapshot_child_counts(labels, images, buttons, panels, groups)
-        _flatten_element(
-            exporter, child, elem_by_key, children_by_parent,
-            cell_width, cell_height,
-            final_x + cell_x, final_y + cell_y,
-            labels, images, buttons, panels, groups, elements,
-            is_root=False,
-            parent_path=full_path
-        )
-        _append_child_indices(group_data, labels, images, buttons, panels, groups, snap)
+        cell_height = height // count
+        return [(0, cell_height * i, width, cell_height) for i in range(count)]
+    if elem_type == 'ColLayout':
+        cell_width = width // count
+        return [(cell_width * i, 0, cell_width, height) for i in range(count)]
+    if elem_type == 'GridLayout':
+        props = elem.get('properties', {})
+        rows, cols = props.get('rows', 1), props.get('cols', 1)
+        cell_width = width // cols if cols > 0 else width
+        cell_height = height // rows if rows > 0 else height
+        return [(cell_width * (i % cols), cell_height * (i // cols), cell_width, cell_height)
+                for i in range(count)]
+    return [(0, 0, width, height)] * count
 
 
-def _handle_grid_layout(exporter, elem, children, final_x, final_y,
-                         elem_by_key, children_by_parent,
-                         labels, images, buttons, panels, groups, elements, is_root,
-                         parent_path: str = ""):
-    """Handle GridLayout - place children in grid cells."""
-    if not children:
-        return
-
-    elem_key = elem.get('key')
-    full_path = _build_full_path(parent_path, elem_key)
-
-    # Create a group for this layout
-    group_index = len(groups)
+def _create_group(exporter, elem, children, final_x, final_y,
+                  elem_by_key, children_by_parent,
+                  labels, images, buttons, panels, groups, elements, is_root,
+                  parent_path: str = ""):
+    """Export a container as a group (so its visibility can be toggled) and its
+    children inside their cells, tracking their indices."""
+    full_path = _build_full_path(parent_path, elem.get('key'))
     group_data = {
         'key': full_path,
         'visible': elem.get('visible', True),
@@ -415,28 +341,12 @@ def _handle_grid_layout(exporter, elem, children, final_x, final_y,
         'child_group_indices': [],
     }
 
-    # Reserve group slot immediately so child groups get correct indices
+    # Reserve the group's slot first, so child groups get the indices after it
+    if is_root:
+        elements.append({'type': 'group', 'index': len(groups)})
     groups.append(group_data)
 
-    if is_root:
-        elements.append({'type': 'group', 'index': group_index})
-
-    layout_width = elem['width']
-    layout_height = elem['height']
-    props = elem.get('properties', {})
-
-    num_rows = props.get('rows', 1)
-    num_cols = props.get('cols', 1)
-
-    cell_width = layout_width // num_cols if num_cols > 0 else layout_width
-    cell_height = layout_height // num_rows if num_rows > 0 else layout_height
-
-    for idx, child in enumerate(children):
-        row = idx // num_cols
-        col = idx % num_cols
-        cell_x = cell_width * col
-        cell_y = cell_height * row
-
+    for child, (cell_x, cell_y, cell_width, cell_height) in zip(children, _layout_cells(elem, len(children))):
         snap = _snapshot_child_counts(labels, images, buttons, panels, groups)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
@@ -701,8 +611,6 @@ def _handle_image(exporter, elem, final_x, final_y, images, elements, is_root,
     if not image_name:
         return
 
-    if not hasattr(exporter, 'ui_images'):
-        exporter.ui_images = set()
     exporter.ui_images.add(image_name)
 
     # Build full path for key
@@ -771,27 +679,12 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
     has_children = len(children) > 0
 
     # Dispatch to type-specific handlers
-    if elem_type in ('RowLayout', 'ColLayout'):
-        _handle_row_col_layout(exporter, elem, elem_type, children, final_x, final_y,
-                                elem_by_key, children_by_parent,
-                                labels, images, buttons, panels, groups, elements, is_root,
-                                parent_path=parent_path)
-        return
-
-    if elem_type == 'GridLayout':
-        _handle_grid_layout(exporter, elem, children, final_x, final_y,
-                             elem_by_key, children_by_parent,
-                             labels, images, buttons, panels, groups, elements, is_root,
-                             parent_path=parent_path)
-        return
-
-    if elem_type == 'AnchorPane':
+    if elem_type in ('AnchorPane', 'RowLayout', 'ColLayout', 'GridLayout'):
         if has_children:
-            _create_group_with_children(exporter, elem, children, final_x, final_y,
-                                         elem_by_key, children_by_parent,
-                                         labels, images, buttons, panels, groups, elements,
-                                         is_root=is_root,
-                                         parent_path=parent_path)
+            _create_group(exporter, elem, children, final_x, final_y,
+                          elem_by_key, children_by_parent,
+                          labels, images, buttons, panels, groups, elements, is_root,
+                          parent_path=parent_path)
         return
 
     if elem_type == 'Label':
@@ -813,11 +706,10 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
 
     # Generic container with children - create a group
     if has_children and is_root:
-        _create_group_with_children(exporter, elem, children, final_x, final_y,
-                                     elem_by_key, children_by_parent,
-                                     labels, images, buttons, panels, groups, elements,
-                                     is_root=True,
-                                     parent_path=parent_path)
+        _create_group(exporter, elem, children, final_x, final_y,
+                      elem_by_key, children_by_parent,
+                      labels, images, buttons, panels, groups, elements, is_root=True,
+                      parent_path=parent_path)
         return
 
     # Non-root elements with children - just process children
@@ -888,7 +780,7 @@ def copy_canvas_images(exporter):
     Images are searched recursively in the project Assets/ folder.
     The Makefile converts them to .sprite files.
     """
-    if not hasattr(exporter, 'ui_images') or not exporter.ui_images:
+    if not exporter.ui_images:
         return
 
     n64_assets = os.path.join(arm.utils.build_dir(), 'n64', 'assets')
@@ -927,115 +819,98 @@ def copy_canvas_images(exporter):
         log.info(f'Copied {copied_count} canvas image(s) to build/n64/assets/')
 
 
+def _key_defines(exporter, name):
+    """The `UI_<NAME>_<key>` defines (each element's index in its canvas) of every
+    canvas's `<name>s`, plus one without the scene (`Scene/path/key` -> `path/key`)
+    when no other key took it. Returns the lines and the largest canvas's count."""
+    lines, seen, count = [], set(), 0
+    for canvas_name, canvas in exporter.ui_canvas_data.items():
+        items = canvas.get(f'{name}s', [])
+        if not items:
+            continue
+        lines.append(f'// Canvas: {canvas_name} {name}s')
+        for idx, item in enumerate(items):
+            for key in (item['key'], item['key'].split('/', 1)[-1]):
+                safe = arm.utils.safesrc(key).upper()
+                if safe not in seen:
+                    lines.append(f'#define UI_{name.upper()}_{safe} {idx}')
+                    seen.add(safe)
+        lines.append('')
+        count = max(count, len(items))
+    return lines, count
+
+
+def _canvas_tables(exporter, name, ctype, row, comment=None):
+    """Each canvas's `g_<canvas>_<name>_defs` table, one `row(item)` per element of
+    its `<name>s` (followed by `// comment(item)` if given), and its `<CANVAS>_<NAME>_COUNT`."""
+    lines = []
+    for canvas_name, canvas in exporter.ui_canvas_data.items():
+        items = canvas.get(f'{name}s', [])
+        if not items:
+            continue
+        safe_canvas = arm.utils.safesrc(canvas_name).lower()
+        count = f'{safe_canvas.upper()}_{name.upper()}_COUNT'
+        lines += [f'// Canvas: {canvas_name} {name}s',
+                  f'#define {count} {len(items)}',
+                  f'static const {ctype} g_{safe_canvas}_{name}_defs[{count}] = {{',
+                  *(f'    {row(item)},' + (f'  // {comment(item)}' if comment else '') for item in items),
+                  '};', '']
+    return lines
+
+
+def _scene_rows(exporter, name):
+    """The rows of a `g_..._scenes` table: each scene's canvas's `<name>` table
+    and count, by SceneId (scenes without a canvas, or without any, stay zeroed)."""
+    rows = []
+    for scene_name, data in exporter.scene_data.items():
+        canvas_name = data.get('canvas')
+        if not exporter.ui_canvas_data.get(canvas_name, {}).get(f'{name}s'):
+            continue
+        safe_scene = arm.utils.safesrc(scene_name).upper()
+        safe_canvas = arm.utils.safesrc(canvas_name).lower()
+        rows.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_{name}_defs, {safe_canvas.upper()}_{name.upper()}_COUNT }},')
+    return rows
+
+
+def _c_bool(value) -> str:
+    return 'true' if value else 'false'
+
+
 def write_label_h(exporter):
     """Generate label_defs.h (for label.h): the label keys, counts and sizes."""
-    label_defines_lines = []
-    total_label_count = 0
-    seen = {}
-    for canvas_name, canvas in exporter.ui_canvas_data.items():
-        labels = canvas.get('labels', [])
-        if not labels:
-            continue
-        label_defines_lines.append(f'// Canvas: {canvas_name}')
-        for idx, label in enumerate(labels):
-            safe = arm.utils.safesrc(label['key']).upper()
-            if safe not in seen:
-                label_defines_lines.append(f'#define UI_LABEL_{safe} {idx}')
-                seen[safe] = idx
-            # Also emit a bare-path alias (without scene prefix) when unambiguous.
-            parts = label['key'].split('/', 1)
-            if len(parts) == 2:
-                bare_safe = arm.utils.safesrc(parts[1]).upper()
-                if bare_safe != safe and bare_safe not in seen:
-                    label_defines_lines.append(f'#define UI_LABEL_{bare_safe} {idx}')
-                    seen[bare_safe] = idx
-        label_defines_lines.append('')
-        total_label_count = max(total_label_count, len(labels))
-
-    label_defines_lines += [f'#define UI_LABEL_COUNT      {total_label_count}',
-                            f'#define UI_MAX_LABELS       {exporter.limits["UI_MAX_LABELS"]}',
-                            f'#define UI_LABEL_TEXT_SIZE  {exporter.limits["UI_LABEL_TEXT_SIZE"]}']
-    n64_utils.write_generated('ui/label_defs.h', '\n'.join(label_defines_lines), 'ui_exporter.write_label_h', 'ui/label.h')
+    lines, count = _key_defines(exporter, 'label')
+    lines += [f'#define UI_LABEL_COUNT      {count}',
+              f'#define UI_MAX_LABELS       {exporter.limits["UI_MAX_LABELS"]}',
+              f'#define UI_LABEL_TEXT_SIZE  {exporter.limits["UI_LABEL_TEXT_SIZE"]}']
+    n64_utils.write_generated('ui/label_defs.h', '\n'.join(lines), 'ui_exporter.write_label_h', 'ui/label.h')
 
 
 def write_label_c(exporter):
     """Generate label_data.h (for label.c): each canvas's labels, and g_label_scenes
     (the labels of each scene's canvas, by SceneId)."""
-    canvas_label_arrays = []
-    label_scenes = []
-
-    for canvas_name, canvas in exporter.ui_canvas_data.items():
-        labels = canvas.get('labels', [])
-        if not labels:
-            continue
-        safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        count_def = f'{safe_canvas.upper()}_LABEL_COUNT'
-        canvas_label_arrays.append(f'// Canvas: {canvas_name}')
-        canvas_label_arrays.append(f'#define {count_def} {len(labels)}')
-        canvas_label_arrays.append(f'static const UILabelDef g_{safe_canvas}_label_defs[{count_def}] = {{')
-        for label in labels:
-            visible = 'true' if label['visible'] else 'false'
-            shadow = 'true' if label.get('shadow', False) else 'false'
-            canvas_label_arrays.append(
-                f'    {{ {c_string(label["text"])}, {label["pos_x"]}, {label["pos_y"]}, {label["width"]}, {label["height"]}, '
+    def row(label):
+        return (f'{{ {c_string(label["text"])}, {label["pos_x"]}, {label["pos_y"]}, {label["width"]}, {label["height"]}, '
                 f'{label.get("baseline_offset", 12)}, {label["anchor"]}, {label.get("style_id", 0)}, '
-                f'{label.get("font_id", 0)}, {visible}, {shadow}, {label.get("shadow_dx", 0)}, '
-                f'{label.get("shadow_dy", 0)}, {label.get("shadow_style_id", 0)}, '
-                f'{label.get("align_h", 0)}, {label.get("align_width", 0)} }},'
-            )
-        canvas_label_arrays.append('};')
-        canvas_label_arrays.append('')
+                f'{label.get("font_id", 0)}, {_c_bool(label["visible"])}, {_c_bool(label.get("shadow", False))}, '
+                f'{label.get("shadow_dx", 0)}, {label.get("shadow_dy", 0)}, {label.get("shadow_style_id", 0)}, '
+                f'{label.get("align_h", 0)}, {label.get("align_width", 0)} }}')
 
-    for scene_name, data in exporter.scene_data.items():
-        canvas_name = data.get('canvas')
-        if not canvas_name or canvas_name not in exporter.ui_canvas_data:
-            continue
-        if not exporter.ui_canvas_data[canvas_name].get('labels'):
-            continue
-        safe_scene = arm.utils.safesrc(scene_name).upper()
-        safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        label_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_label_defs, {safe_canvas.upper()}_LABEL_COUNT }},')
-
-    lines = canvas_label_arrays + ['static const LabelSceneDefs g_label_scenes[SCENE_COUNT] = {', *label_scenes, '};']
+    lines = _canvas_tables(exporter, 'label', 'UILabelDef', row)
+    lines += ['static const LabelSceneDefs g_label_scenes[SCENE_COUNT] = {', *_scene_rows(exporter, 'label'), '};']
     n64_utils.write_generated('ui/label_data.h', '\n'.join(lines), 'ui_exporter.write_label_c', 'ui/label.c')
 
 
 def write_image_h(exporter):
     """Generate image_defs.h (for image.h): the image keys, counts and sizes."""
-    image_defines_lines = []
-    total_image_count = 0
-    seen = {}
-    for canvas_name, canvas in exporter.ui_canvas_data.items():
-        images = canvas.get('images', [])
-        if not images:
-            continue
-        image_defines_lines.append(f'// Canvas: {canvas_name}')
-        for idx, image in enumerate(images):
-            safe = arm.utils.safesrc(image['key']).upper()
-            if safe not in seen:
-                image_defines_lines.append(f'#define UI_IMAGE_{safe} {idx}')
-                seen[safe] = idx
-            # Also emit a bare-path alias (without scene prefix) when unambiguous.
-            parts = image['key'].split('/', 1)
-            if len(parts) == 2:
-                bare_safe = arm.utils.safesrc(parts[1]).upper()
-                if bare_safe != safe and bare_safe not in seen:
-                    image_defines_lines.append(f'#define UI_IMAGE_{bare_safe} {idx}')
-                    seen[bare_safe] = idx
-        image_defines_lines.append('')
-        total_image_count = max(total_image_count, len(images))
-
-    image_defines_lines += [f'#define UI_IMAGE_COUNT  {total_image_count}',
-                            f'#define UI_MAX_IMAGES   {exporter.limits["UI_MAX_IMAGES"]}']
-    n64_utils.write_generated('ui/image_defs.h', '\n'.join(image_defines_lines), 'ui_exporter.write_image_h', 'ui/image.h')
+    lines, count = _key_defines(exporter, 'image')
+    lines += [f'#define UI_IMAGE_COUNT  {count}',
+              f'#define UI_MAX_IMAGES   {exporter.limits["UI_MAX_IMAGES"]}']
+    n64_utils.write_generated('ui/image_defs.h', '\n'.join(lines), 'ui_exporter.write_image_h', 'ui/image.h')
 
 
 def write_image_c(exporter):
     """Generate image_data.h (for image.c): the sprite files (each loaded once),
     each canvas's images, and g_image_scenes (by SceneId)."""
-    canvas_image_arrays = []
-    image_scenes = []
-
     # One entry per sprite file, so an image shown twice is loaded once
     def sprite_name(image):
         return image['image_name'].lower().replace(' ', '_')
@@ -1044,260 +919,97 @@ def write_image_c(exporter):
     if len(sprites) > 255:
         raise ValueError(f'{len(sprites)} UI images: at most 255 are supported (sprite ids are 8-bit)')
     sprite_ids = {name: i for i, name in enumerate(sprites)}
-    sprite_paths = [f'#define UI_SPRITE_COUNT {max(len(sprites), 1)}',
-                    'static const char *const UI_SPRITE_PATHS[UI_SPRITE_COUNT] = {']
-    sprite_paths += [f'    "rom:/{name}.sprite",' for name in sprites] or ['    NULL,']
-    sprite_paths.append('};')
+    lines = [f'#define UI_SPRITE_COUNT {max(len(sprites), 1)}',
+             'static const char *const UI_SPRITE_PATHS[UI_SPRITE_COUNT] = {']
+    lines += [f'    "rom:/{name}.sprite",' for name in sprites] or ['    NULL,']
+    lines += ['};', '']
 
-    for canvas_name, canvas in exporter.ui_canvas_data.items():
-        images = canvas.get('images', [])
-        if not images:
-            continue
-        safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        count_def = f'{safe_canvas.upper()}_IMAGE_COUNT'
-        canvas_image_arrays.append(f'// Canvas: {canvas_name} images')
-        canvas_image_arrays.append(f'#define {count_def} {len(images)}')
-        canvas_image_arrays.append(f'static const UIImageDef g_{safe_canvas}_image_defs[{count_def}] = {{')
-        for image in images:
-            visible = 'true' if image['visible'] else 'false'
-            scale = 'true' if image.get('scale', False) else 'false'
-            canvas_image_arrays.append(
-                f'    {{ {sprite_ids[sprite_name(image)]}, {image["pos_x"]}, {image["pos_y"]}, {image["width"]}, {image["height"]}, '
-                f'{image["anchor"]}, {scale}, {visible}, {image.get("align_h", 0)}, {image.get("align_width", 0)} }},  // {sprite_name(image)}'
-            )
-        canvas_image_arrays.append('};')
-        canvas_image_arrays.append('')
+    def row(image):
+        return (f'{{ {sprite_ids[sprite_name(image)]}, {image["pos_x"]}, {image["pos_y"]}, {image["width"]}, {image["height"]}, '
+                f'{image["anchor"]}, {_c_bool(image.get("scale", False))}, {_c_bool(image["visible"])}, '
+                f'{image.get("align_h", 0)}, {image.get("align_width", 0)} }}')
 
-    for scene_name, data in exporter.scene_data.items():
-        canvas_name = data.get('canvas')
-        if not canvas_name or canvas_name not in exporter.ui_canvas_data:
-            continue
-        if not exporter.ui_canvas_data[canvas_name].get('images'):
-            continue
-        safe_scene = arm.utils.safesrc(scene_name).upper()
-        safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        image_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_image_defs, {safe_canvas.upper()}_IMAGE_COUNT }},')
-
-    lines = sprite_paths + [''] + canvas_image_arrays
-    lines += ['static const ImageSceneDefs g_image_scenes[SCENE_COUNT] = {', *image_scenes, '};']
+    lines += _canvas_tables(exporter, 'image', 'UIImageDef', row, sprite_name)
+    lines += ['static const ImageSceneDefs g_image_scenes[SCENE_COUNT] = {', *_scene_rows(exporter, 'image'), '};']
     n64_utils.write_generated('ui/image_data.h', '\n'.join(lines), 'ui_exporter.write_image_c', 'ui/image.c')
 
 
 def write_button_h(exporter):
     """Generate button_defs.h (for button.h): the button keys, counts and sizes."""
-    button_defines_lines = []
-    total_button_count = 0
-    seen = {}
-    for canvas_name, canvas in exporter.ui_canvas_data.items():
-        buttons = canvas.get('buttons', [])
-        if not buttons:
-            continue
-        button_defines_lines.append(f'// Canvas: {canvas_name}')
-        for idx, btn in enumerate(buttons):
-            safe = arm.utils.safesrc(btn['key']).upper()
-            if safe not in seen:
-                button_defines_lines.append(f'#define UI_BUTTON_{safe} {idx}')
-                seen[safe] = idx
-            # Also emit a bare-path alias (without scene prefix) when unambiguous.
-            # Key format is "Scene/path/key"; strip the first segment to get "path/key".
-            parts = btn['key'].split('/', 1)
-            if len(parts) == 2:
-                bare_safe = arm.utils.safesrc(parts[1]).upper()
-                if bare_safe != safe and bare_safe not in seen:
-                    button_defines_lines.append(f'#define UI_BUTTON_{bare_safe} {idx}')
-                    seen[bare_safe] = idx
-        button_defines_lines.append('')
-        total_button_count = max(total_button_count, len(buttons))
+    lines, count = _key_defines(exporter, 'button')
+    lines += [f'#define UI_BUTTON_COUNT     {count}',
+              f'#define UI_MAX_BUTTONS      {exporter.limits["UI_MAX_BUTTONS"]}',
+              f'#define UI_BUTTON_TEXT_SIZE {exporter.limits["UI_BUTTON_TEXT_SIZE"]}']
+    n64_utils.write_generated('ui/button_defs.h', '\n'.join(lines), 'ui_exporter.write_button_h', 'ui/button.h')
 
-    button_defines_lines += [f'#define UI_BUTTON_COUNT     {total_button_count}',
-                             f'#define UI_MAX_BUTTONS      {exporter.limits["UI_MAX_BUTTONS"]}',
-                             f'#define UI_BUTTON_TEXT_SIZE {exporter.limits["UI_BUTTON_TEXT_SIZE"]}']
-    n64_utils.write_generated('ui/button_defs.h', '\n'.join(button_defines_lines), 'ui_exporter.write_button_h', 'ui/button.h')
+
+# The button colors (RGBA) of each state, in UIButtonDef's order, when the themes don't set them
+_BUTTON_COLORS = (
+    ('bg_default', (38, 40, 51, 255)), ('border_default', (31, 32, 40, 255)),
+    ('bg_hover', (43, 43, 51, 255)), ('border_hover', (239, 100, 19, 255)),
+    ('bg_click', (52, 55, 70, 255)), ('border_click', (255, 255, 255, 255)),
+    ('bg_disabled', (38, 40, 51, 153)), ('border_disabled', (31, 32, 40, 153)),
+)
 
 
 def write_button_c(exporter):
     """Generate button_data.h (for button.c): each canvas's buttons, and g_button_scenes
     (the buttons of each scene's canvas, by SceneId)."""
-    canvas_button_arrays = []
-    button_scenes = []
-
-    for canvas_name, canvas in exporter.ui_canvas_data.items():
-        buttons = canvas.get('buttons', [])
-        if not buttons:
-            continue
-        safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        count_def = f'{safe_canvas.upper()}_BUTTON_COUNT'
-        canvas_button_arrays.append(f'// Canvas: {canvas_name} buttons')
-        canvas_button_arrays.append(f'#define {count_def} {len(buttons)}')
-        canvas_button_arrays.append(f'static const UIButtonDef g_{safe_canvas}_button_defs[{count_def}] = {{')
-        for btn in buttons:
-            bg = btn.get('bg_default', (38, 40, 51, 255))
-            bd = btn.get('border_default', (31, 32, 40, 255))
-            hbg = btn.get('bg_hover', (43, 43, 51, 255))
-            hbd = btn.get('border_hover', (239, 100, 19, 255))
-            cbg = btn.get('bg_click', (52, 55, 70, 255))
-            cbd = btn.get('border_click', (255, 255, 255, 255))
-            dbg = btn.get('bg_disabled', (38, 40, 51, 153))
-            dbd = btn.get('border_disabled', (31, 32, 40, 153))
-
-            visible = 'true' if btn.get('visible', True) else 'false'
-            focus_up    = btn.get('focus_up', -1)
-            focus_down  = btn.get('focus_down', -1)
-            focus_left  = btn.get('focus_left', -1)
-            focus_right = btn.get('focus_right', -1)
-            canvas_button_arrays.append(
-                f'    {{ {btn["pos_x"]}, {btn["pos_y"]}, {btn["width"]}, {btn["height"]}, '
-                f'{bg[0]}, {bg[1]}, {bg[2]}, {bg[3]}, '
-                f'{bd[0]}, {bd[1]}, {bd[2]}, {bd[3]}, '
-                f'{hbg[0]}, {hbg[1]}, {hbg[2]}, {hbg[3]}, '
-                f'{hbd[0]}, {hbd[1]}, {hbd[2]}, {hbd[3]}, '
-                f'{cbg[0]}, {cbg[1]}, {cbg[2]}, {cbg[3]}, '
-                f'{cbd[0]}, {cbd[1]}, {cbd[2]}, {cbd[3]}, '
-                f'{dbg[0]}, {dbg[1]}, {dbg[2]}, {dbg[3]}, '
-                f'{dbd[0]}, {dbd[1]}, {dbd[2]}, {dbd[3]}, '
-                f'{btn.get("border_size", 2)}, '
+    def row(btn):
+        colors = ', '.join(str(c) for field, default in _BUTTON_COLORS for c in btn.get(field, default))
+        return (f'{{ {btn["pos_x"]}, {btn["pos_y"]}, {btn["width"]}, {btn["height"]}, '
+                f'{colors}, {btn.get("border_size", 2)}, '
                 f'{c_string(btn.get("text", ""))}, {btn.get("font_id", 0)}, {btn.get("font_baseline_offset", 20)}, '
                 f'{btn.get("text_style_id", 0)}, {btn.get("hover_text_style_id", 0)}, '
-                f'{focus_up}, {focus_down}, {focus_left}, {focus_right}, {visible} }},'
-            )
-        canvas_button_arrays.append('};')
-        canvas_button_arrays.append('')
+                f'{btn.get("focus_up", -1)}, {btn.get("focus_down", -1)}, {btn.get("focus_left", -1)}, '
+                f'{btn.get("focus_right", -1)}, {_c_bool(btn.get("visible", True))} }}')
 
-    for scene_name, data in exporter.scene_data.items():
-        canvas_name = data.get('canvas')
-        if not canvas_name or canvas_name not in exporter.ui_canvas_data:
-            continue
-        if not exporter.ui_canvas_data[canvas_name].get('buttons'):
-            continue
-        safe_scene = arm.utils.safesrc(scene_name).upper()
-        safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        button_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_button_defs, {safe_canvas.upper()}_BUTTON_COUNT }},')
-
-    lines = canvas_button_arrays + ['static const ButtonSceneDefs g_button_scenes[SCENE_COUNT] = {', *button_scenes, '};']
+    lines = _canvas_tables(exporter, 'button', 'UIButtonDef', row)
+    lines += ['static const ButtonSceneDefs g_button_scenes[SCENE_COUNT] = {', *_scene_rows(exporter, 'button'), '};']
     n64_utils.write_generated('ui/button_data.h', '\n'.join(lines), 'ui_exporter.write_button_c', 'ui/button.c')
 
 
 def write_panel_h(exporter):
     """Generate panel_defs.h (for panel.h): the panel keys, counts and sizes."""
-    panel_defines_lines = []
-    total_panel_count = 0
-    seen = {}
-    for canvas_name, canvas in exporter.ui_canvas_data.items():
-        panels = canvas.get('panels', [])
-        if not panels:
-            continue
-        panel_defines_lines.append(f'// Canvas: {canvas_name}')
-        for idx, panel in enumerate(panels):
-            safe = arm.utils.safesrc(panel['key']).upper()
-            if safe not in seen:
-                panel_defines_lines.append(f'#define UI_PANEL_{safe} {idx}')
-                seen[safe] = idx
-            # Also emit a bare-path alias (without scene prefix) when unambiguous.
-            parts = panel['key'].split('/', 1)
-            if len(parts) == 2:
-                bare_safe = arm.utils.safesrc(parts[1]).upper()
-                if bare_safe != safe and bare_safe not in seen:
-                    panel_defines_lines.append(f'#define UI_PANEL_{bare_safe} {idx}')
-                    seen[bare_safe] = idx
-        panel_defines_lines.append('')
-        total_panel_count = max(total_panel_count, len(panels))
-
-    panel_defines_lines += [f'#define UI_PANEL_COUNT  {total_panel_count}',
-                            f'#define UI_MAX_PANELS   {exporter.limits["UI_MAX_PANELS"]}']
-    n64_utils.write_generated('ui/panel_defs.h', '\n'.join(panel_defines_lines), 'ui_exporter.write_panel_h', 'ui/panel.h')
+    lines, count = _key_defines(exporter, 'panel')
+    lines += [f'#define UI_PANEL_COUNT  {count}',
+              f'#define UI_MAX_PANELS   {exporter.limits["UI_MAX_PANELS"]}']
+    n64_utils.write_generated('ui/panel_defs.h', '\n'.join(lines), 'ui_exporter.write_panel_h', 'ui/panel.h')
 
 
 def write_panel_c(exporter):
     """Generate panel_data.h (for panel.c): each canvas's panels, and g_panel_scenes
     (the panels of each scene's canvas, by SceneId)."""
-    canvas_panel_arrays = []
-    panel_scenes = []
-
-    for canvas_name, canvas in exporter.ui_canvas_data.items():
-        panels = canvas.get('panels', [])
-        if not panels:
-            continue
-        safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        count_def = f'{safe_canvas.upper()}_PANEL_COUNT'
-        canvas_panel_arrays.append(f'// Canvas: {canvas_name} panels')
-        canvas_panel_arrays.append(f'#define {count_def} {len(panels)}')
-        canvas_panel_arrays.append(f'static const UIPanelDef g_{safe_canvas}_panel_defs[{count_def}] = {{')
-        for panel in panels:
-            visible = 'true' if panel.get('visible', True) else 'false'
-            canvas_panel_arrays.append(
-                f'    {{ {panel["pos_x"]}, {panel["pos_y"]}, {panel["width"]}, {panel["height"]}, '
-                f'{panel["anchor"]}, '
+    def row(panel):
+        return (f'{{ {panel["pos_x"]}, {panel["pos_y"]}, {panel["width"]}, {panel["height"]}, {panel["anchor"]}, '
                 f'{panel["bg_r"]}, {panel["bg_g"]}, {panel["bg_b"]}, {panel["bg_a"]}, '
                 f'{panel["border_r"]}, {panel["border_g"]}, {panel["border_b"]}, {panel["border_a"]}, '
-                f'{panel["border_size"]}, {visible} }},'
-            )
-        canvas_panel_arrays.append('};')
-        canvas_panel_arrays.append('')
+                f'{panel["border_size"]}, {_c_bool(panel.get("visible", True))} }}')
 
-    for scene_name, data in exporter.scene_data.items():
-        canvas_name = data.get('canvas')
-        if not canvas_name or canvas_name not in exporter.ui_canvas_data:
-            continue
-        if not exporter.ui_canvas_data[canvas_name].get('panels'):
-            continue
-        safe_scene = arm.utils.safesrc(scene_name).upper()
-        safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        panel_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_panel_defs, {safe_canvas.upper()}_PANEL_COUNT }},')
-
-    lines = canvas_panel_arrays + ['static const PanelSceneDefs g_panel_scenes[SCENE_COUNT] = {', *panel_scenes, '};']
+    lines = _canvas_tables(exporter, 'panel', 'UIPanelDef', row)
+    lines += ['static const PanelSceneDefs g_panel_scenes[SCENE_COUNT] = {', *_scene_rows(exporter, 'panel'), '};']
     n64_utils.write_generated('ui/panel_data.h', '\n'.join(lines), 'ui_exporter.write_panel_c', 'ui/panel.c')
 
 
 def write_canvas_h(exporter):
     """Generate canvas_defs.h (for canvas.h): group and Koui scene keys, counts."""
-    # Build group defines
-    group_defines_lines = []
-    total_group_count = 0
-    seen_group_keys = {}
+    lines, group_count = _key_defines(exporter, 'group')
 
-    for canvas_name, canvas in exporter.ui_canvas_data.items():
-        groups = canvas.get('groups', [])
-        if groups:
-            group_defines_lines.append(f'// Canvas: {canvas_name} groups')
-            for group_idx, group in enumerate(groups):
-                safe_key = arm.utils.safesrc(group['key']).upper()
-                define_name = f'UI_GROUP_{safe_key}'
-                if safe_key not in seen_group_keys:
-                    group_defines_lines.append(f'#define {define_name} {group_idx}')
-                    seen_group_keys[safe_key] = group_idx
-                # Also emit a bare-path alias (without scene prefix) when unambiguous.
-                parts = group['key'].split('/', 1)
-                if len(parts) == 2:
-                    bare_safe = arm.utils.safesrc(parts[1]).upper()
-                    bare_define = f'UI_GROUP_{bare_safe}'
-                    if bare_safe != safe_key and bare_safe not in seen_group_keys:
-                        group_defines_lines.append(f'#define {bare_define} {group_idx}')
-                        seen_group_keys[bare_safe] = group_idx
-            group_defines_lines.append('')
-        total_group_count = max(total_group_count, len(groups))
-
-    total_element_count = max(
-        (len(canvas.get('elements', [])) for canvas in exporter.ui_canvas_data.values()),
-        default=0
-    )
-
-    # Build UI scene defines (Koui scenes within a canvas)
-    ui_scene_defines_lines = []
-    max_ui_scene_count = 0
+    # The Koui scenes of each canvas (no aliases: their keys have no scene part)
+    ui_scene_count = 0
     for canvas_name, canvas in exporter.ui_canvas_data.items():
         ui_scenes = canvas.get('ui_scenes', [])
         if ui_scenes:
-            ui_scene_defines_lines.append(f'// Canvas: {canvas_name} UI scenes')
-            for scene_idx, scene in enumerate(ui_scenes):
-                safe_key = arm.utils.safesrc(scene['key']).upper()
-                ui_scene_defines_lines.append(f'#define UI_SCENE_{safe_key} {scene_idx}')
-            ui_scene_defines_lines.append('')
-            max_ui_scene_count = max(max_ui_scene_count, len(ui_scenes))
+            lines.append(f'// Canvas: {canvas_name} ui_scenes')
+            lines += [f'#define UI_SCENE_{arm.utils.safesrc(scene["key"]).upper()} {idx}'
+                      for idx, scene in enumerate(ui_scenes)]
+            lines.append('')
+            ui_scene_count = max(ui_scene_count, len(ui_scenes))
 
-    lines = group_defines_lines + ui_scene_defines_lines
-    lines += [f'#define UI_GROUP_COUNT {total_group_count}',
-              f'#define UI_ELEMENT_COUNT {total_element_count}',
-              f'#define UI_SCENE_COUNT {max_ui_scene_count}',
+    element_count = max((len(canvas.get('elements', [])) for canvas in exporter.ui_canvas_data.values()), default=0)
+    lines += [f'#define UI_GROUP_COUNT {group_count}',
+              f'#define UI_ELEMENT_COUNT {element_count}',
+              f'#define UI_SCENE_COUNT {ui_scene_count}',
               f'#define UI_MAX_GROUPS         {exporter.limits["UI_MAX_GROUPS"]}',
               f'#define UI_MAX_GROUP_CHILDREN {exporter.limits["UI_MAX_GROUP_CHILDREN"]}']
     n64_utils.write_generated('ui/canvas_defs.h', '\n'.join(lines), 'ui_exporter.write_canvas_h', 'ui/canvas.h')
@@ -1306,108 +1018,43 @@ def write_canvas_h(exporter):
 def write_canvas_c(exporter):
     """Generate canvas_data.h (for canvas.c): each canvas's groups, elements and
     Koui scenes, the tables of each scene's (by SceneId), and the text colors."""
-    # Build per-canvas group definition arrays
-    canvas_group_arrays = []
-    for canvas_name, canvas in exporter.ui_canvas_data.items():
-        groups = canvas.get('groups', [])
-        if not groups:
-            continue
-        safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        canvas_group_arrays.append(f'// Canvas: {canvas_name} groups')
-        canvas_group_arrays.append(f'#define {safe_canvas.upper()}_GROUP_COUNT {len(groups)}')
-        canvas_group_arrays.append(f'static const UIGroupDef g_{safe_canvas}_group_defs[{safe_canvas.upper()}_GROUP_COUNT] = {{')
-        for group in groups:
-            img_indices = group.get('child_image_indices', [])
-            lbl_indices = group.get('child_label_indices', [])
-            btn_indices = group.get('child_button_indices', [])
-            pnl_indices = group.get('child_panel_indices', [])
-            grp_indices = group.get('child_group_indices', [])
-            # Padded to the arrays' size (UI_MAX_GROUP_CHILDREN, codegen/limits.py)
-            max_ch = exporter.limits['UI_MAX_GROUP_CHILDREN']
-            img_padded = list(img_indices[:max_ch]) + [0] * (max_ch - min(len(img_indices), max_ch))
-            lbl_padded = list(lbl_indices[:max_ch]) + [0] * (max_ch - min(len(lbl_indices), max_ch))
-            btn_padded = list(btn_indices[:max_ch]) + [0] * (max_ch - min(len(btn_indices), max_ch))
-            pnl_padded = list(pnl_indices[:max_ch]) + [0] * (max_ch - min(len(pnl_indices), max_ch))
-            grp_padded = list(grp_indices[:max_ch]) + [0] * (max_ch - min(len(grp_indices), max_ch))
-            img_str = ', '.join(str(i) for i in img_padded)
-            lbl_str = ', '.join(str(i) for i in lbl_padded)
-            btn_str = ', '.join(str(i) for i in btn_padded)
-            pnl_str = ', '.join(str(i) for i in pnl_padded)
-            grp_str = ', '.join(str(i) for i in grp_padded)
-            visible = 'true' if group.get('visible', True) else 'false'
-            canvas_group_arrays.append(f'    {{ {{ {img_str} }}, {{ {lbl_str} }}, {{ {btn_str} }}, {{ {pnl_str} }}, {{ {grp_str} }}, {len(img_indices)}, {len(lbl_indices)}, {len(btn_indices)}, {len(pnl_indices)}, {len(grp_indices)}, {visible} }},')
-        canvas_group_arrays.append('};')
-        canvas_group_arrays.append('')
+    max_children = exporter.limits['UI_MAX_GROUP_CHILDREN']
 
-    # Build per-canvas element definition arrays
-    canvas_element_arrays = []
-    for canvas_name, canvas in exporter.ui_canvas_data.items():
-        elements = canvas.get('elements', [])
-        if not elements:
-            continue
-        safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        canvas_element_arrays.append(f'// Canvas: {canvas_name} elements')
-        canvas_element_arrays.append(f'#define {safe_canvas.upper()}_ELEMENT_COUNT {len(elements)}')
-        canvas_element_arrays.append(f'static const UIElementDef g_{safe_canvas}_element_defs[{safe_canvas.upper()}_ELEMENT_COUNT] = {{')
-        for elem in elements:
-            t = 'UI_ELEM_GROUP' if elem.get('type') == 'group' else 'UI_ELEM_IMAGE'
-            canvas_element_arrays.append(f'    {{ {t}, {elem["index"]} }},')
-        canvas_element_arrays.append('};')
-        canvas_element_arrays.append('')
+    def group_row(group):
+        # Each child list padded to the arrays' size (UI_MAX_GROUP_CHILDREN, codegen/limits.py), then the counts
+        kinds = ('image', 'label', 'button', 'panel', 'group')
+        children = [group.get(f'child_{kind}_indices', []) for kind in kinds]
+        padded = [list(c[:max_children]) + [0] * (max_children - min(len(c), max_children)) for c in children]
+        arrays = ', '.join(f'{{ {", ".join(str(i) for i in p)} }}' for p in padded)
+        counts = ', '.join(str(len(c)) for c in children)
+        return f'{{ {arrays}, {counts}, {_c_bool(group.get("visible", True))} }}'
+
+    def element_row(elem):
+        return f'{{ {"UI_ELEM_GROUP" if elem.get("type") == "group" else "UI_ELEM_IMAGE"}, {elem["index"]} }}'
+
+    def ui_scene_row(scene):
+        return (f'{{ {scene["first_label"]}, {scene["label_count"]}, {scene["first_image"]}, {scene["image_count"]}, '
+                f'{scene["first_button"]}, {scene["button_count"]}, {scene["first_panel"]}, {scene["panel_count"]}, '
+                f'{_c_bool(scene.get("active", True))} }}')
+
+    lines = (_canvas_tables(exporter, 'group', 'UIGroupDef', group_row)
+             + _canvas_tables(exporter, 'element', 'UIElementDef', element_row)
+             + _canvas_tables(exporter, 'ui_scene', 'UISceneRange', ui_scene_row, lambda scene: scene['key']))
 
     # The groups, elements and Koui scenes of each scene's canvas, by SceneId
-    group_scenes, element_scenes, koui_scenes = [], [], []
-    for scene_name, data in exporter.scene_data.items():
-        canvas_name = data.get('canvas')
-        if not canvas_name or canvas_name not in exporter.ui_canvas_data:
-            continue
-        canvas = exporter.ui_canvas_data[canvas_name]
-        safe_scene = arm.utils.safesrc(scene_name).upper()
-        safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        if canvas.get('groups'):
-            group_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_group_defs, {safe_canvas.upper()}_GROUP_COUNT }},')
-        if canvas.get('elements'):
-            element_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_element_defs, {safe_canvas.upper()}_ELEMENT_COUNT }},')
-        if canvas.get('ui_scenes'):
-            koui_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_ui_scene_defs, {safe_canvas.upper()}_UI_SCENE_COUNT }},')
-
-    # Build per-canvas UI scene range arrays
-    canvas_ui_scene_arrays = []
-    for canvas_name, canvas in exporter.ui_canvas_data.items():
-        ui_scenes = canvas.get('ui_scenes', [])
-        if not ui_scenes:
-            continue
-        safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        canvas_ui_scene_arrays.append(f'// Canvas: {canvas_name} UI scenes')
-        canvas_ui_scene_arrays.append(f'#define {safe_canvas.upper()}_UI_SCENE_COUNT {len(ui_scenes)}')
-        canvas_ui_scene_arrays.append(f'static const UISceneRange g_{safe_canvas}_ui_scene_defs[{safe_canvas.upper()}_UI_SCENE_COUNT] = {{')
-        for scene in ui_scenes:
-            active = 'true' if scene.get('active', True) else 'false'
-            canvas_ui_scene_arrays.append(
-                f'    {{ {scene["first_label"]}, {scene["label_count"]}, '
-                f'{scene["first_image"]}, {scene["image_count"]}, '
-                f'{scene["first_button"]}, {scene["button_count"]}, '
-                f'{scene["first_panel"]}, {scene["panel_count"]}, '
-                f'{active} }},  // {scene["key"]}'
-            )
-        canvas_ui_scene_arrays.append('};')
-        canvas_ui_scene_arrays.append('')
+    for name, table in (('group', 'GroupSceneDefs g_group_scenes'),
+                        ('element', 'ElementSceneDefs g_element_scenes'),
+                        ('ui_scene', 'KouiSceneDefs g_koui_scenes')):
+        rows = _scene_rows(exporter, name)
+        if rows:
+            lines += [f'static const {table}[SCENE_COUNT] = {{', *rows, '};', '']
 
     # The text colors: font style ids, the same on every font size (canvas_init)
     colors = sorted(exporter.color_style_map.items(), key=lambda x: x[1])
-    style_lines = [f'#define UI_FONT_STYLE_COUNT {len(colors)}',
-                   f'static const color_t g_font_style_colors[{max(len(colors), 1)}] = {{']
-    style_lines += [f'    {{ .r = {r}, .g = {g}, .b = {b}, .a = {a} }},' for (r, g, b, a), _ in colors]
-    style_lines.append('};')
-
-    lines = canvas_group_arrays + canvas_element_arrays + canvas_ui_scene_arrays
-    if group_scenes:
-        lines += ['static const GroupSceneDefs g_group_scenes[SCENE_COUNT] = {', *group_scenes, '};', '']
-    if element_scenes:
-        lines += ['static const ElementSceneDefs g_element_scenes[SCENE_COUNT] = {', *element_scenes, '};', '']
-    if koui_scenes:
-        lines += ['static const KouiSceneDefs g_koui_scenes[SCENE_COUNT] = {', *koui_scenes, '};', '']
-    lines += style_lines
+    lines += [f'#define UI_FONT_STYLE_COUNT {len(colors)}',
+              f'static const color_t g_font_style_colors[{max(len(colors), 1)}] = {{']
+    lines += [f'    {{ .r = {r}, .g = {g}, .b = {b}, .a = {a} }},' for (r, g, b, a), _ in colors]
+    lines.append('};')
     n64_utils.write_generated('ui/canvas_data.h', '\n'.join(lines), 'ui_exporter.write_canvas_c', 'ui/canvas.c')
 
 
@@ -1503,18 +1150,17 @@ def _assign_font_ids_to_labels(exporter):
             kha_size = label.get('font_size', 15)
             font_id = exporter.font_id_map.get(kha_size, 0)
             label['font_id'] = font_id
-            mkfont_size = max(8, int(kha_size * exporter.FONT_SIZE_SCALE))
-            rendered_height = mkfont_size * 1.22
-            label['baseline_offset'] = int(rendered_height * 0.80)
+            mkfont_size = _mkfont_size(kha_size)
+            rendered_height = mkfont_size * MKFONT_LINE_HEIGHT
+            label['baseline_offset'] = int(rendered_height * MKFONT_BASELINE)
             log.debug(f"Label '{label.get('key', 'unnamed')}': kha {kha_size} -> mkfont {mkfont_size}, font_id {font_id}")
 
         for button in canvas.get('buttons', []):
             kha_size = button.get('font_size', 15)
             font_id = exporter.font_id_map.get(kha_size, 0)
             button['font_id'] = font_id
-            mkfont_size = max(8, int(kha_size * exporter.FONT_SIZE_SCALE))
-            rendered_height = mkfont_size * 1.22
-            baseline_in_font = int(rendered_height * 0.80)
+            rendered_height = _mkfont_size(kha_size) * MKFONT_LINE_HEIGHT
+            baseline_in_font = int(rendered_height * MKFONT_BASELINE)
             btn_height = button.get('height', 40)
             top_of_text = (btn_height - rendered_height) / 2
             button['font_baseline_offset'] = max(0, round(top_of_text + baseline_in_font))
@@ -1536,7 +1182,7 @@ def generate_font_makefile_entries(exporter):
     for font_key, font_info in exporter.exported_fonts.items():
         font_name = font_info['name']
         kha_size = font_info['size']
-        mkfont_size = max(8, int(kha_size * exporter.FONT_SIZE_SCALE))
+        mkfont_size = _mkfont_size(kha_size)
         target = f'filesystem/{font_key}.font64'
         targets.append(target)
 
@@ -1561,7 +1207,7 @@ def generate_ui_sprite_rules(exporter):
     Returns:
         str: Makefile per-file variable assignments, or a comment if no UI images.
     """
-    if not hasattr(exporter, 'ui_images') or not exporter.ui_images:
+    if not exporter.ui_images:
         return '# No UI sprites'
 
     rules = []

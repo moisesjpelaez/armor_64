@@ -32,12 +32,6 @@ from armor64.export import linked_export
 class N64Exporter:
     """N64 Exporter - Orchestrates export of Armory scenes to N64 C code."""
 
-    # Font size conversion factor: Kha pixel height -> mkfont point size.
-    # libdragon's mkfont uses point sizes while Kha uses pixel heights.
-    # This factor accounts for the difference (empirically determined to
-    # produce visually equivalent text sizes on N64).
-    FONT_SIZE_SCALE = 0.82
-
     def __init__(self):
         # Export state
         self.scene_data = {}
@@ -61,6 +55,7 @@ class N64Exporter:
         self.theme_parser = None
         self.color_style_map = {}
         self.font_id_map = {}
+        self.ui_images = set()           # Image names the canvases show (ui_exporter)
 
         # External blend state (for arm_external_blends_path support)
         self.external_scene_names = []   # Appended scene names (for cleanup)
