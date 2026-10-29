@@ -19,12 +19,6 @@ extern "C" {
 void object_remove(ArmObject* obj);
 
 /**
- * Remove an object and recycle its slot back to the pool.
- * Use this version when you want the slot to be available for scene_alloc_object().
- */
-void object_remove_and_recycle(ArmObject* obj, SceneId scene_id);
-
-/**
  * Process all queued object removals: their physics bodies leave the world (with
  * the contact subscriptions on them). Called after each contact dispatch, once per
  * frame after the updates, and at a scene switch.

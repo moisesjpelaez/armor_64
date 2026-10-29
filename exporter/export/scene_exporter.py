@@ -723,219 +723,106 @@ def write_scenes(exporter):
 
 
 def write_scene_c(exporter, scene):
-    """Generate individual scene C file.
+    """Write a scene's C file: its definition (scene_def_<name>), constant tables the
+    runtime builds the scene from (codegen.generate_scene_file).
 
     Args:
         exporter: N64Exporter instance with scene_data and trait_info
         scene: Blender scene object
     """
     scene_name = arm.utils.safesrc(scene.name).lower()
-    scene_data = exporter.scene_data[scene_name]
-
-    clear_color = scene_data['world']['clear_color']
-    ambient_color = scene_data['world']['ambient_color']
-
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'scenes', 'scene.c.j2')
     out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'scenes', f'{scene_name}.c')
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
+    text = codegen.generate_scene_file(exporter.scene_data[scene_name], scene_name, scene.name, exporter.trait_info)
+    n64_utils.write_if_changed(out_path, text)
 
-    scene_traits = scene_data.get('traits', [])
-    objects = scene_data['objects']
 
-    # Count objects with physics bodies, animations, render2d callbacks, and parented objects
-    physics_count = sum(1 for obj in objects if obj.get('rigid_body') is not None)
-    animated_count = sum(1 for obj in objects if obj.get('is_skinned', False))
-    has_parented = any(obj.get('parent_index', -1) >= 0 for obj in objects)
-
-    # Count render2d objects from trait info
-    render2d_count = 0
-    for obj in objects:
-        for trait in obj.get('traits', []):
-            trait_ir = n64_utils.get_trait(exporter.trait_info, trait['class_name'])
-            if 'on_render2d' in trait_ir.get('events', {}):
-                render2d_count += 1
-                break  # Only count once per object
-
-    # Use at least 1 for array sizes to avoid zero-length arrays
-    physics_object_count = max(1, physics_count)
-    animated_object_count = max(1, animated_count)
-    render2d_object_count = max(1, render2d_count)
-
-    output = tmpl_content.format(
-        scene_name=scene_name,
-        cr=n64_utils.to_uint8(clear_color[0]),
-        cg=n64_utils.to_uint8(clear_color[1]),
-        cb=n64_utils.to_uint8(clear_color[2]),
-        ar=n64_utils.to_uint8(ambient_color[0]),
-        ag=n64_utils.to_uint8(ambient_color[1]),
-        ab=n64_utils.to_uint8(ambient_color[2]),
-        camera_count=len(scene_data['cameras']),
-        cameras_block=codegen.generate_camera_block(scene_data['cameras'], exporter.trait_info, scene_name),
-        light_count=len(scene_data['lights']),
-        lights_block=codegen.generate_light_block(scene_data['lights'], exporter.trait_info, scene_name),
-        object_count=len(objects),
-        physics_object_count=physics_object_count,
-        animated_object_count=animated_object_count,
-        render2d_object_count=render2d_object_count,
-        has_parented_objects='true' if has_parented else 'false',
-        objects_block=codegen.generate_object_block(objects, exporter.trait_info, scene_name),
-        physics_block=codegen.generate_physics_block(objects, scene_data['world']),
-        scene_trait_count=len(scene_traits),
-        scene_traits_block=codegen.generate_scene_traits_block(scene_traits, exporter.trait_info, scene_name)
-    )
-
-    n64_utils.write_if_changed(out_path, output)
+def _exported_scenes():
+    """The scenes the game has, in SceneId order (linked and temporary ones left out)."""
+    return [scene for scene in bpy.data.scenes
+            if not scene.library and not linked_export.is_temp_scene(scene)]
 
 
 def write_scenes_c(exporter):
-    """Generate scenes.c master file.
+    """Copy scenes.c and generate scenes_data.h: by SceneId, each scene's definition,
+    name, groups (collections: name -> object count) and the models it uses.
 
     Args:
         exporter: N64Exporter instance
     """
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'data', 'scenes.c.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'scenes.c')
+    n64_utils.copy_src('scenes.c', 'src/data')
 
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
-
-    init_lines = []
-    init_switch_cases_lines = []
-    name_entry_lines = []
-    group_data_lines = []
-    group_lookup_lines = []
-    model_rows = []
-    scene_count = 0
-
-    for scene in bpy.data.scenes:
-        if scene.library:
-            continue
-        if linked_export.is_temp_scene(scene):
-            continue
+    inits, names, group_tables, groups, model_rows = [], [], [], [], []
+    for scene in _exported_scenes():
         scene_name = arm.utils.safesrc(scene.name).lower()
-        original_name = scene.name
-        init_lines.append(f'    scene_{scene_name}_init(&g_scenes[SCENE_{scene_name.upper()}]);')
-        init_switch_cases_lines.append(f'        case SCENE_{scene_name.upper()}:\n'
-                                       f'            scene_{scene_name}_init(&g_scenes[SCENE_{scene_name.upper()}]);\n'
-                                       f'            break;')
-        name_entry_lines.append(f'    {{"{original_name}", SCENE_{scene_name.upper()}}},')
+        scene_id = f'SCENE_{scene_name.upper()}'
+        inits.append(f'    [{scene_id}] = &scene_def_{scene_name},')
+        names.append(f'    [{scene_id}] = "{scene.name}",')
 
-        # Generate group data for this scene
         scene_data = exporter.scene_data.get(scene_name, {})
-
         models = sorted({o["mesh"] for o in scene_data.get("objects", []) if o.get("mesh")})
-        model_rows.append(f'    [SCENE_{scene_name.upper()}] = {{' + ''.join(f' [{m}] = true,' for m in models) + ' },')
-        groups = scene_data.get('groups', {})
-        if groups:
-            entries = []
-            for norm_name, group_info in groups.items():
-                orig_name = group_info['original_name']
-                count = group_info['count']
-                entries.append(f'    {{"{orig_name}", {count}}}')
-            group_data_lines.append(f'static const SceneGroupEntry g_scene_{scene_name}_groups[] = {{\n' +
-                                    ',\n'.join(entries) + '\n};')
-            group_data_lines.append(f'static const uint16_t g_scene_{scene_name}_group_count = {len(groups)};')
+        model_rows.append(f'    [{scene_id}] = {{' + ''.join(f' [{m}] = true,' for m in models) + ' },')
+        scene_groups = scene_data.get('groups', {})
+        if scene_groups:
+            group_tables.append(f'static const SceneGroupEntry g_scene_{scene_name}_groups[] = {{')
+            group_tables += [f'    {{"{info["original_name"]}", {info["count"]}}},' for info in scene_groups.values()]
+            group_tables += ['};', '']
+            groups.append(f'    [{scene_id}] = {{ g_scene_{scene_name}_groups, {len(scene_groups)} }},')
 
-            # Add lookup case
-            group_lookup_lines.append(f'    if (g_current_scene == SCENE_{scene_name.upper()}) {{')
-            group_lookup_lines.append(f'        for (uint16_t i = 0; i < g_scene_{scene_name}_group_count; i++) {{')
-            group_lookup_lines.append(f'            if (strcmp(group_name, g_scene_{scene_name}_groups[i].name) == 0) {{')
-            group_lookup_lines.append(f'                return g_scene_{scene_name}_groups[i].count;')
-            group_lookup_lines.append(f'            }}')
-            group_lookup_lines.append(f'        }}')
-            group_lookup_lines.append(f'    }}')
-
-        scene_count += 1
-
-    scene_inits = '\n'.join(init_lines)
-    scene_init_switch_cases = '\n'.join(init_switch_cases_lines)
-    scene_name_entries = '\n'.join(name_entry_lines)
-    scene_group_data = '\n'.join(group_data_lines) if group_data_lines else '// No groups defined'
-    scene_group_lookup = '\n'.join(group_lookup_lines) if group_lookup_lines else '    // No groups defined'
-
-    output = tmpl_content.format(
-        scene_inits=scene_inits,
-        scene_init_switch_cases=scene_init_switch_cases,
-        scene_name_entries=scene_name_entries,
-        scene_count=scene_count,
-        scene_group_data=scene_group_data,
-        scene_group_lookup=scene_group_lookup,
-        scene_model_rows='\n'.join(model_rows)
-    )
-
-    n64_utils.write_if_changed(out_path, output)
+    lines = group_tables
+    lines += ['static const ArmSceneDef *const g_scene_defs[SCENE_COUNT] = {', *inits, '};', '']
+    lines += ['static const char *const g_scene_names[SCENE_COUNT] = {', *names, '};', '']
+    lines += ['static const SceneGroups g_scene_groups[SCENE_COUNT] = {', *groups, '};', '']
+    lines += ['static const bool g_scene_models[SCENE_COUNT][MODEL_COUNT] = {', *model_rows, '};']
+    body = '\n'.join(lines)
+    n64_utils.write_generated('data/scenes_data.h', body, 'scene_exporter.write_scenes_c', 'data/scenes.c')
 
 
 def write_scenes_h(exporter):
-    """Generate scenes.h header file.
+    """Copy scenes.h and generate scenes_defs.h: SceneId, each scene's definition,
+    and the sizes of the storage the scenes share.
 
     Args:
         exporter: N64Exporter instance
     """
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'data', 'scenes.h.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'scenes.h')
+    n64_utils.copy_src('scenes.h', 'src/data')
 
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
+    scenes = _exported_scenes()
+    lines = ['typedef enum SceneId {']
+    lines += [f'    SCENE_{arm.utils.safesrc(scene.name).upper()} = {i},' for i, scene in enumerate(scenes)]
+    lines += [f'    SCENE_COUNT = {len(scenes)}', '} SceneId;', '']
+    lines += [f'extern const ArmSceneDef scene_def_{arm.utils.safesrc(scene.name).lower()};' for scene in scenes]
 
-    enum_lines = []
-    declaration_lines = []
-    scene_count = 0
-    for scene in bpy.data.scenes:
-        if scene.library:
-            continue
-        if linked_export.is_temp_scene(scene):
-            continue
-        scene_name = arm.utils.safesrc(scene.name).lower()
-        enum_lines.append(f'    SCENE_{scene_name.upper()} = {scene_count},')
-        declaration_lines.append(f'void scene_{scene_name.lower()}_init(ArmScene *scene);')
-        scene_count += 1
-    scene_enum_entries = '\n'.join(enum_lines)
-    scene_declarations = '\n'.join(declaration_lines)
-
-    output = tmpl_content.format(
-        scene_enum_entries=scene_enum_entries,
-        scene_declarations=scene_declarations,
-        scene_count=scene_count
-    )
-
-    n64_utils.write_if_changed(out_path, output)
+    # The storage the scenes share: the largest scene's (at least 1 of each)
+    data = [exporter.scene_data.get(arm.utils.safesrc(scene.name).lower(), {}) for scene in scenes]
+    sizes = {
+        'SCENE_MAX_OBJECTS': max((len(d.get('objects', [])) for d in data), default=0),
+        'SCENE_MAX_CAMERAS': max((len(d.get('cameras', [])) for d in data), default=0),
+        'SCENE_MAX_LIGHTS': max((len(d.get('lights', [])) for d in data), default=0),
+        'SCENE_MAX_TRAITS': max((codegen.scene_trait_count(d) for d in data), default=0),
+    }
+    lines.append('')
+    lines += [f'#define {name} {max(size, 1)}' for name, size in sizes.items()]
+    n64_utils.write_generated('data/scenes_defs.h', '\n'.join(lines), 'scene_exporter.write_scenes_h', 'data/scenes.h')
 
 
 def write_main(exporter):
-    """Generate main.c from template.
+    """Copy main.c and generate main_config.h: the start scene, Armory's physics
+    fixed step, the physics debug drawing mode and whether there are autoloads.
 
     Args:
         exporter: N64Exporter instance with autoload_info
     """
     wrd = bpy.data.worlds['Arm']
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'main.c.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'main.c')
+    n64_utils.copy_src('main.c', 'src')
 
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
-
-    # Get physics fixed timestep from Armory settings (default 0.02 = 50Hz)
-    fixed_timestep = getattr(wrd, 'arm_physics_fixed_step', 0.02)
-
-    # Get physics debug mode
-    physics_debug_mode = n64_utils.get_physics_debug_mode()
-
-    # Autoload include and init
+    start_scene = wrd.arm_exporterlist[wrd.arm_exporterlist_index].arm_project_scene.name
     has_autoloads = exporter.autoload_info.get('has_autoloads', False)
-    autoloads_include = '#include "autoloads/autoloads.h"' if has_autoloads else ''
-    autoloads_init = '    autoloads_init();\n' if has_autoloads else ''
-
-    output = tmpl_content.format(
-        initial_scene_id=f'SCENE_{arm.utils.safesrc(wrd.arm_exporterlist[wrd.arm_exporterlist_index].arm_project_scene.name).upper()}',
-        fixed_timestep=fixed_timestep,
-        physics_debug_mode=physics_debug_mode,
-        autoloads_include=autoloads_include,
-        autoloads_init=autoloads_init
-    )
-
-    n64_utils.write_if_changed(out_path, output)
+    body = (f'#define INITIAL_SCENE SCENE_{arm.utils.safesrc(start_scene).upper()}\n'
+            # Armory's physics fixed step (default 0.02 s = 50 Hz)
+            f'#define FIXED_TIMESTEP ({getattr(wrd, "arm_physics_fixed_step", 0.02)}f)\n'
+            f'#define PHYSICS_DEBUG_MODE {n64_utils.get_physics_debug_mode()}\n'
+            f'#define HAS_AUTOLOADS {1 if has_autoloads else 0}\n')
+    n64_utils.write_generated('main_config.h', body, 'scene_exporter.write_main', 'main.c')
 
 
 def write_models(exporter):
@@ -956,42 +843,20 @@ def _model_names(exporter) -> list:
 
 
 def write_models_c(exporter):
-    """Generate models.c from template."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'data', 'models.c.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'models.c')
+    """Copy models.c and generate models_data.h: the model files, by ModelId."""
+    n64_utils.copy_src('models.c', 'src/data')
 
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
-
-    lines = []
-    for model_name in _model_names(exporter):
-        lines.append(f'    "rom:/{model_name}.t3dm"')
-    mesh_paths = ',\n'.join(lines)
-
-    output = tmpl_content.format(
-        mesh_paths=mesh_paths,
-        model_count=len(exporter.exported_meshes)
-    )
-
-    n64_utils.write_if_changed(out_path, output)
+    lines = ['static const char *MODEL_PATHS[MODEL_COUNT] = {']
+    lines += [f'    "rom:/{model_name}.t3dm",' for model_name in _model_names(exporter)]
+    lines.append('};')
+    n64_utils.write_generated('data/models_data.h', '\n'.join(lines), 'scene_exporter.write_models_c', 'data/models.c')
 
 
 def write_models_h(exporter):
-    """Generate models.h from template."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'data', 'models.h.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'data', 'models.h')
+    """Copy models.h and generate models_defs.h: ModelId."""
+    n64_utils.copy_src('models.h', 'src/data')
 
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
-
-    lines = []
-    for i, model_name in enumerate(_model_names(exporter)):
-        lines.append(f'    MODEL_{model_name.upper()} = {i},')
-    model_enum_entries = '\n'.join(lines)
-
-    output = tmpl_content.format(
-        model_enum_entries=model_enum_entries,
-        model_count=len(exporter.exported_meshes)
-    )
-
-    n64_utils.write_if_changed(out_path, output)
+    lines = ['typedef enum {']
+    lines += [f'    MODEL_{model_name.upper()} = {i},' for i, model_name in enumerate(_model_names(exporter))]
+    lines += [f'    MODEL_COUNT = {len(exporter.exported_meshes)}', '} ModelId;']
+    n64_utils.write_generated('data/models_defs.h', '\n'.join(lines), 'scene_exporter.write_models_h', 'data/models.h')

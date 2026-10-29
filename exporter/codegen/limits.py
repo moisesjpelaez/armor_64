@@ -67,17 +67,17 @@ DEFAULTS = {
     "ARM_BOOL_ARRAY_CAPACITY": (32, "Items of an Array<Bool>"),
     "ARM_STRING_ARRAY_CAPACITY": (16, "Items of an Array<String>"),
     "ARM_MAP_CAPACITY": (16, "Keys of a Map<String, *>"),
-    "ARM_MAP_MAX_KEY_LEN": (32, "Characters of a Map key, including the terminator"),
+    "ARM_MAP_MAX_KEY_LEN": (32, "Bytes (UTF-8) of a Map key, including the terminator"),
     "ARM_SOUND_HANDLE_ARRAY_CAPACITY": (8, "Items of an Array<BaseChannelHandle>"),
     "ARM_SOUND_CHANNEL_MAP_CAPACITY": (16, "Keys of a Map<String, Array<BaseChannelHandle>>"),
 
     # Strings
-    "STR_FMT_BUFFER_SIZE": (64, "Characters of a string built by concatenation"),
+    "STR_FMT_BUFFER_SIZE": (64, "Bytes (UTF-8) of a string built by concatenation, with the terminator"),
     "STR_FMT_BUFFER_COUNT": (4, "Concatenated strings alive at once (rotating buffers)"),
 
     # UI (defined in the UI headers)
     "UI_MAX_LABELS": (1, "Labels"),
-    "UI_LABEL_TEXT_SIZE": (32, "Characters of a label"),
+    "UI_LABEL_TEXT_SIZE": (32, "Bytes (UTF-8) of a label's text, with the terminator"),
     "UI_MAX_IMAGES": (1, "Images"),
     "UI_MAX_BUTTONS": (1, "Buttons"),
     "UI_BUTTON_TEXT_SIZE": (32, "Characters of a button"),

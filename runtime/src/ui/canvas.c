@@ -1,7 +1,4 @@
-/* N64 Exporter - Generated UI canvas implementation
- * This file is auto-generated from Koui canvas data. Do not edit.
- * Template: canvas.c.j2
- */
+// UI canvas: groups, elements, Koui scenes, and drawing every frame. Canvas data: canvas_data.h (generated).
 #include "canvas.h"
 #if UI_LABEL_COUNT > 0 || UI_BUTTON_COUNT > 0
 #include "fonts.h"
@@ -39,7 +36,7 @@ static bool g_initialized = false;
 // ============================================================================
 
 #if UI_GROUP_COUNT > 0
-typedef struct {{
+typedef struct {
     uint8_t child_image_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t child_label_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t child_button_indices[UI_MAX_GROUP_CHILDREN];
@@ -51,19 +48,19 @@ typedef struct {{
     uint8_t num_child_panels;
     uint8_t num_child_groups;
     bool visible;
-}} UIGroupDef;
+} UIGroupDef;
 #endif
 
 #if UI_ELEMENT_COUNT > 0
-typedef struct {{
+typedef struct {
     UIElementType type;
     uint8_t index;
-}} UIElementDef;
+} UIElementDef;
 #endif
 
 // UI scene range — tracks element ranges for each Koui scene within a canvas
 #if UI_SCENE_COUNT > 0
-typedef struct {{
+typedef struct {
     uint8_t first_label;
     uint8_t label_count;
     uint8_t first_image;
@@ -73,7 +70,7 @@ typedef struct {{
     uint8_t first_panel;
     uint8_t panel_count;
     bool    active;          // Initial active state from canvas JSON
-}} UISceneRange;
+} UISceneRange;
 
 static const UISceneRange *g_ui_scenes = NULL;
 static int g_ui_scene_count = 0;
@@ -84,17 +81,35 @@ static int g_current_ui_scene = -1;
 // Per-canvas group, element, and UI scene data arrays
 // ============================================================================
 
-{canvas_group_arrays}
+// The groups, elements and Koui scenes of each scene's canvas (generated)
+#if UI_GROUP_COUNT > 0
+typedef struct {
+    const UIGroupDef *defs;
+    uint16_t count;
+} GroupSceneDefs;
+#endif
+#if UI_ELEMENT_COUNT > 0
+typedef struct {
+    const UIElementDef *defs;
+    uint16_t count;
+} ElementSceneDefs;
+#endif
+#if UI_SCENE_COUNT > 0
+typedef struct {
+    const UISceneRange *defs;
+    uint16_t count;
+} KouiSceneDefs;
+#endif
 
-{canvas_element_arrays}
-
-{canvas_ui_scene_arrays}
+// The canvases' definitions, g_group_scenes, g_element_scenes, g_koui_scenes,
+// and the text colors (font styles)
+#include "canvas_data.h"
 
 #if UI_GROUP_COUNT > 0
 // Internal: load groups from static definition array
-static void load_groups(const UIGroupDef *defs, int count) {{
+static void load_groups(const UIGroupDef *defs, int count) {
     if (g_group_pool_used + count > UI_MAX_GROUPS) ARM_LIMIT_REACHED(UI_MAX_GROUPS);
-    for (int i = 0; i < count && g_group_pool_used < UI_MAX_GROUPS; i++) {{
+    for (int i = 0; i < count && g_group_pool_used < UI_MAX_GROUPS; i++) {
         const UIGroupDef *def = &defs[i];
         UIGroup *group = &g_group_pool[g_group_pool_used++];
         for (uint8_t j = 0; j < def->num_child_images && j < UI_MAX_GROUP_CHILDREN; j++)
@@ -115,8 +130,8 @@ static void load_groups(const UIGroupDef *defs, int count) {{
         group->visible = def->visible;
         if (g_canvas_group_count < UI_GROUP_COUNT)
             g_canvas_groups[g_canvas_group_count++] = group;
-    }}
-}}
+    }
+}
 
 static void group_set_visible(UIGroup *group, bool visible);
 static void group_propagate(UIGroup *group, bool parent_effective);
@@ -125,27 +140,27 @@ static void apply_initial_group_visibility(void);
 #endif
 
 #if UI_ELEMENT_COUNT > 0
-static void load_elements(const UIElementDef *defs, int count) {{
-    for (int i = 0; i < count && i < UI_ELEMENT_COUNT; i++) {{
+static void load_elements(const UIElementDef *defs, int count) {
+    for (int i = 0; i < count && i < UI_ELEMENT_COUNT; i++) {
         g_canvas_elements[i].type  = defs[i].type;
         g_canvas_elements[i].index = defs[i].index;
         g_canvas_element_count++;
-    }}
-}}
+    }
+}
 #endif
 
 #if UI_SCENE_COUNT > 0
-static void load_ui_scenes(const UISceneRange *defs, int count) {{
+static void load_ui_scenes(const UISceneRange *defs, int count) {
     g_ui_scenes = defs;
     g_ui_scene_count = count;
-}}
+}
 #endif
 
 // ============================================================================
 // canvas_init — one-time startup; font style registration
 // ============================================================================
 
-void canvas_init(void) {{
+void canvas_init(void) {
     if (g_initialized) return;
     g_initialized = true;
 
@@ -153,16 +168,22 @@ void canvas_init(void) {{
     button_init();
 
 #if UI_LABEL_COUNT > 0 || UI_BUTTON_COUNT > 0
-    // Register font styles on all loaded font size variants
-{font_style_registration}
+    // The text colors, as font styles on every font size
+    for (int f = 0; f < FONT_COUNT; f++) {
+        rdpq_font_t *font = fonts_get(f);
+        if (!font) continue;
+        for (int s = 0; s < UI_FONT_STYLE_COUNT; s++) {
+            rdpq_font_style(font, s, &(rdpq_fontstyle_t){ .color = g_font_style_colors[s] });
+        }
+    }
 #endif
-}}
+}
 
 // ============================================================================
 // canvas_scene_init — clear and reload for a new scene
 // ============================================================================
 
-void canvas_scene_init(SceneId scene_id) {{
+void canvas_scene_init(SceneId scene_id) {
     // Reset all pools before loading (labels, images, buttons, groups, elements)
     canvas_clear();
 
@@ -171,34 +192,39 @@ void canvas_scene_init(SceneId scene_id) {{
     button_scene_init(scene_id);   // also auto-focuses first visible button
     panel_scene_init(scene_id);
 
-    switch (scene_id) {{
-{group_element_scene_init_cases}
-        default: break;
-    }}
+#if UI_GROUP_COUNT > 0
+    if (g_group_scenes[scene_id].count > 0) load_groups(g_group_scenes[scene_id].defs, g_group_scenes[scene_id].count);
+#endif
+#if UI_ELEMENT_COUNT > 0
+    if (g_element_scenes[scene_id].count > 0) load_elements(g_element_scenes[scene_id].defs, g_element_scenes[scene_id].count);
+#endif
+#if UI_SCENE_COUNT > 0
+    if (g_koui_scenes[scene_id].count > 0) load_ui_scenes(g_koui_scenes[scene_id].defs, g_koui_scenes[scene_id].count);
+#endif
 
 #if UI_GROUP_COUNT > 0
     apply_initial_group_visibility();
 #endif
 
     // Snapshot post-group visibility into initial_visible for scene switching
-    for (int i = 0; i < UI_LABEL_COUNT; i++) {{ UILabel *l = canvas_get_label(i); if (l) l->initial_visible = l->visible; }}
-    for (int i = 0; i < UI_IMAGE_COUNT; i++) {{ UIImage *im = canvas_get_image(i); if (im) im->initial_visible = im->visible; }}
-    for (int i = 0; i < UI_BUTTON_COUNT; i++) {{ UIButton *b = canvas_get_button(i); if (b) b->initial_visible = b->visible; }}
-    for (int i = 0; i < UI_PANEL_COUNT; i++) {{ UIPanel *p = canvas_get_panel(i); if (p) p->initial_visible = p->visible; }}
+    for (int i = 0; i < UI_LABEL_COUNT; i++) { UILabel *l = canvas_get_label(i); if (l) l->initial_visible = l->visible; }
+    for (int i = 0; i < UI_IMAGE_COUNT; i++) { UIImage *im = canvas_get_image(i); if (im) im->initial_visible = im->visible; }
+    for (int i = 0; i < UI_BUTTON_COUNT; i++) { UIButton *b = canvas_get_button(i); if (b) b->initial_visible = b->visible; }
+    for (int i = 0; i < UI_PANEL_COUNT; i++) { UIPanel *p = canvas_get_panel(i); if (p) p->initial_visible = p->visible; }
 
 #if UI_SCENE_COUNT > 0
     // Apply initial Koui scene visibility: show only the active scene's elements
     g_current_ui_scene = -1;  // Reset before first scene switch
-    if (g_ui_scene_count > 0) {{
-        for (int i = 0; i < g_ui_scene_count; i++) {{
-            if (g_ui_scenes[i].active) {{
+    if (g_ui_scene_count > 0) {
+        for (int i = 0; i < g_ui_scene_count; i++) {
+            if (g_ui_scenes[i].active) {
                 canvas_set_ui_scene(i);
                 break;
-            }}
-        }}
-    }}
+            }
+        }
+    }
 #endif
-}}
+}
 
 // ============================================================================
 // canvas_clear — full reset (used before scene destruction)
@@ -206,7 +232,7 @@ void canvas_scene_init(SceneId scene_id) {{
 
 static void ui_block_release(void);
 
-void canvas_clear(void) {{
+void canvas_clear(void) {
     ui_block_release();  // The next scene's UI is recorded anew (its sprites may differ)
     label_clear();
     image_clear();
@@ -228,75 +254,75 @@ void canvas_clear(void) {{
     g_ui_scene_count = 0;
     g_current_ui_scene = -1;
 #endif
-}}
+}
 
 // ============================================================================
 // canvas_update — delegate input to button subsystem
 // ============================================================================
 
-void canvas_update(float dt) {{
+void canvas_update(float dt) {
     button_update(dt);
-}}
+}
 
 // ============================================================================
 // Group management
 // ============================================================================
 
 #if UI_GROUP_COUNT > 0
-UIGroup* canvas_get_group(int index) {{
+UIGroup* canvas_get_group(int index) {
     if (index >= 0 && index < g_canvas_group_count)
         return g_canvas_groups[index];
     return NULL;
-}}
+}
 
-static void group_propagate(UIGroup *group, bool parent_effective) {{
+static void group_propagate(UIGroup *group, bool parent_effective) {
     if (!group) return;
     bool eff = group->visible && parent_effective;
-    for (uint8_t i = 0; i < group->num_child_images; i++) {{
+    for (uint8_t i = 0; i < group->num_child_images; i++) {
         UIImage *img = canvas_get_image(group->child_image_indices[i]);
         if (img) img->visible = eff;
-    }}
-    for (uint8_t i = 0; i < group->num_child_labels; i++) {{
+    }
+    for (uint8_t i = 0; i < group->num_child_labels; i++) {
         UILabel *lbl = canvas_get_label(group->child_label_indices[i]);
         if (lbl) lbl->visible = eff;
-    }}
-    for (uint8_t i = 0; i < group->num_child_buttons; i++) {{
+    }
+    for (uint8_t i = 0; i < group->num_child_buttons; i++) {
         UIButton *btn = canvas_get_button(group->child_button_indices[i]);
         if (btn) btn->visible = eff;
-    }}
-    for (uint8_t i = 0; i < group->num_child_panels; i++) {{
+    }
+    for (uint8_t i = 0; i < group->num_child_panels; i++) {
         UIPanel *pnl = canvas_get_panel(group->child_panel_indices[i]);
         if (pnl) pnl->visible = eff;
-    }}
-    for (uint8_t i = 0; i < group->num_child_groups; i++) {{
+    }
+    for (uint8_t i = 0; i < group->num_child_groups; i++) {
         UIGroup *child = canvas_get_group(group->child_group_indices[i]);
         if (child) group_propagate(child, eff);
-    }}
-}}
+    }
+}
 
-static void group_set_visible(UIGroup *group, bool visible) {{
+static void group_set_visible(UIGroup *group, bool visible) {
     if (!group) return;
     group->visible = visible;
     canvas_recompute_visibility();
-}}
+}
 
-void ui_group_set_visible(UIGroup *group, bool visible) {{
+void ui_group_set_visible(UIGroup *group, bool visible) {
     group_set_visible(group, visible);
-}}
+}
 
-static void canvas_recompute_visibility(void) {{
-    for (int i = 0; i < g_canvas_element_count; i++) {{
+static void canvas_recompute_visibility(void) {
+    for (int i = 0; i < g_canvas_element_count; i++) {
         UIElement *e = &g_canvas_elements[i];
-        if (e->type == UI_ELEM_GROUP) {{
+        if (e->type == UI_ELEM_GROUP) {
             UIGroup *g = canvas_get_group(e->index);
             if (g) group_propagate(g, true);
-        }}
-    }}
-}}
+        }
+    }
+}
 
-static void apply_initial_group_visibility(void) {{
+static void apply_initial_group_visibility(void) {
     canvas_recompute_visibility();
-}}
+}
 #endif // UI_GROUP_COUNT > 0
 
 // ============================================================================
@@ -304,30 +330,30 @@ static void apply_initial_group_visibility(void) {{
 // ============================================================================
 
 #if UI_ELEMENT_COUNT > 0
-UIElement* canvas_get_element(int index) {{
+UIElement* canvas_get_element(int index) {
     if (index >= 0 && index < g_canvas_element_count)
         return &g_canvas_elements[index];
     return NULL;
-}}
+}
 
-void canvas_element_set_visible(int index, bool visible) {{
+void canvas_element_set_visible(int index, bool visible) {
     UIElement *elem = canvas_get_element(index);
     if (!elem) return;
-    if (elem->type == UI_ELEM_IMAGE) {{
+    if (elem->type == UI_ELEM_IMAGE) {
         UIImage *img = canvas_get_image(elem->index);
         if (img) img->visible = visible;
 #if UI_GROUP_COUNT > 0
-    }} else if (elem->type == UI_ELEM_GROUP) {{
+    } else if (elem->type == UI_ELEM_GROUP) {
         UIGroup *grp = canvas_get_group(elem->index);
-        if (grp) {{
+        if (grp) {
             grp->visible = visible;
             canvas_recompute_visibility();
-        }}
+        }
 #endif
-    }}
-}}
+    }
+}
 #else
-void canvas_element_set_visible(int index, bool visible) {{ (void)index; (void)visible; }}
+void canvas_element_set_visible(int index, bool visible) { (void)index; (void)visible; }
 #endif // UI_ELEMENT_COUNT > 0
 
 // ============================================================================
@@ -335,66 +361,66 @@ void canvas_element_set_visible(int index, bool visible) {{ (void)index; (void)v
 // ============================================================================
 
 #if UI_SCENE_COUNT > 0
-void canvas_set_ui_scene(int scene_idx) {{
+void canvas_set_ui_scene(int scene_idx) {
     if (scene_idx < 0 || scene_idx >= g_ui_scene_count) return;
 
     // 0. Save current visibility of the outgoing scene so runtime changes persist
-    if (g_current_ui_scene >= 0 && g_current_ui_scene < g_ui_scene_count) {{
+    if (g_current_ui_scene >= 0 && g_current_ui_scene < g_ui_scene_count) {
         const UISceneRange *prev = &g_ui_scenes[g_current_ui_scene];
-        for (int i = prev->first_label; i < prev->first_label + prev->label_count; i++) {{
+        for (int i = prev->first_label; i < prev->first_label + prev->label_count; i++) {
             UILabel *lbl = canvas_get_label(i); if (lbl) lbl->initial_visible = lbl->visible;
-        }}
-        for (int i = prev->first_image; i < prev->first_image + prev->image_count; i++) {{
+        }
+        for (int i = prev->first_image; i < prev->first_image + prev->image_count; i++) {
             UIImage *img = canvas_get_image(i); if (img) img->initial_visible = img->visible;
-        }}
-        for (int i = prev->first_button; i < prev->first_button + prev->button_count; i++) {{
+        }
+        for (int i = prev->first_button; i < prev->first_button + prev->button_count; i++) {
             UIButton *btn = canvas_get_button(i); if (btn) btn->initial_visible = btn->visible;
-        }}
-        for (int i = prev->first_panel; i < prev->first_panel + prev->panel_count; i++) {{
+        }
+        for (int i = prev->first_panel; i < prev->first_panel + prev->panel_count; i++) {
             UIPanel *pnl = canvas_get_panel(i); if (pnl) pnl->initial_visible = pnl->visible;
-        }}
-    }}
+        }
+    }
 
     // 1. Hide ALL labels, images, and buttons
-    for (int i = 0; i < UI_LABEL_COUNT; i++) {{
+    for (int i = 0; i < UI_LABEL_COUNT; i++) {
         UILabel *lbl = canvas_get_label(i);
         if (lbl) lbl->visible = false;
-    }}
-    for (int i = 0; i < UI_IMAGE_COUNT; i++) {{
+    }
+    for (int i = 0; i < UI_IMAGE_COUNT; i++) {
         UIImage *img = canvas_get_image(i);
         if (img) img->visible = false;
-    }}
-    for (int i = 0; i < UI_BUTTON_COUNT; i++) {{
+    }
+    for (int i = 0; i < UI_BUTTON_COUNT; i++) {
         UIButton *btn = canvas_get_button(i);
         if (btn) btn->visible = false;
-    }}
-    for (int i = 0; i < UI_PANEL_COUNT; i++) {{
+    }
+    for (int i = 0; i < UI_PANEL_COUNT; i++) {
         UIPanel *pnl = canvas_get_panel(i);
         if (pnl) pnl->visible = false;
-    }}
+    }
     button_clear_focus();
 
     // 2. Show elements belonging to the target scene
     const UISceneRange *r = &g_ui_scenes[scene_idx];
-    for (int i = r->first_label; i < r->first_label + r->label_count; i++) {{
+    for (int i = r->first_label; i < r->first_label + r->label_count; i++) {
         UILabel *lbl = canvas_get_label(i);
         if (lbl) lbl->visible = lbl->initial_visible;
-    }}
-    for (int i = r->first_image; i < r->first_image + r->image_count; i++) {{
+    }
+    for (int i = r->first_image; i < r->first_image + r->image_count; i++) {
         UIImage *img = canvas_get_image(i);
         if (img) img->visible = img->initial_visible;
-    }}
-    for (int i = r->first_button; i < r->first_button + r->button_count; i++) {{
+    }
+    for (int i = r->first_button; i < r->first_button + r->button_count; i++) {
         UIButton *btn = canvas_get_button(i);
         if (btn) btn->visible = btn->initial_visible;
-    }}
-    for (int i = r->first_panel; i < r->first_panel + r->panel_count; i++) {{
+    }
+    for (int i = r->first_panel; i < r->first_panel + r->panel_count; i++) {
         UIPanel *pnl = canvas_get_panel(i);
         if (pnl) pnl->visible = pnl->initial_visible;
-    }}
+    }
 
     g_current_ui_scene = scene_idx;
-}}
+}
 #endif // UI_SCENE_COUNT > 0
 
 // ============================================================================
@@ -407,20 +433,20 @@ void canvas_set_ui_scene(int scene_idx) {{
 static rspq_block_t *g_ui_block = NULL;
 static uint32_t      g_ui_hash  = 0;
 
-static void ui_block_release(void) {{
-    if (g_ui_block) {{
+static void ui_block_release(void) {
+    if (g_ui_block) {
         // Frames still in flight may run it: free it once the RSP is past them
         rspq_call_deferred((void (*)(void *))rspq_block_free, g_ui_block);
         g_ui_block = NULL;
-    }}
-}}
+    }
+}
 
-void canvas_render(void) {{
+void canvas_render(void) {
     uint32_t hash = panel_state_hash(UI_HASH_START);
     hash = image_state_hash(hash);
     hash = button_state_hash(hash);
     hash = label_state_hash(hash);
-    if (!g_ui_block || hash != g_ui_hash) {{
+    if (!g_ui_block || hash != g_ui_hash) {
         ui_block_release();
         rspq_block_begin();
         // Each sub-render fully sets its own mode and exits early if empty
@@ -430,12 +456,12 @@ void canvas_render(void) {{
         label_render();
         g_ui_block = rspq_block_end();
         g_ui_hash  = hash;
-    }}
+    }
 
     // Transition from 3D to 2D rendering
     rdpq_sync_pipe();
     rdpq_set_mode_standard();
     rspq_block_run(g_ui_block);
-}}
+}
 
 #endif // UI_LABEL_COUNT > 0 || UI_IMAGE_COUNT > 0 || UI_GROUP_COUNT > 0 || UI_BUTTON_COUNT > 0 || UI_PANEL_COUNT > 0

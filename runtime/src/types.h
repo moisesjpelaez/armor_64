@@ -1,61 +1,16 @@
 /**
- * N64 Engine Type System
- * =======================
+ * The runtime's core types: objects, cameras, lights, scenes, traits, signals.
  *
- * COORDINATE SYSTEM
- * -----------------
- * Blender uses Z-up, N64/T3D uses Y-up. Conversion is automatic:
- *   Blender (x, y, z) → N64 (x, z, -y)
+ * Units: positions are in Blender units (BU), Y-up (Blender's x, y, z is x, z, -y
+ * here). tiny3d stores models at MODEL_UNITS_PER_BU (64) model units per BU; the
+ * renderer scales them when it draws.
  *
- * Scale factor: Blender units * 0.015625 = N64 units (1/64 scale)
- *   - 1 Blender unit = 64 N64 units
- *   - Typical N64 world scale: -500 to +500 units
+ * Haxe to C: Vec2/Vec3/Vec4 -> ArmVec2/ArmVec3/ArmVec4 (values), Object ->
+ * ArmObject*, Transform -> ArmTransform (inside ArmObject), Camera/Light ->
+ * ArmCamera* and ArmLight*, Float/Int/Bool -> float/int32_t/bool, String -> const char*.
  *
- * TYPE MAPPING (Haxe/Armory → C)
- * ------------------------------
- *   Vec2, Vec3, Vec4    → ArmVec2, ArmVec3, ArmVec4 (value types)
- *   Object              → ArmObject* (pointer)
- *   Transform           → ArmTransform (embedded in ArmObject)
- *   Camera, Light       → ArmCamera*, ArmLight* (pointers)
- *   Scene               → ArmScene (global)
- *   Float, Int, Bool    → float, int32_t, bool
- *   String              → const char*
- *
- * MEMORY LIMITS (N64 Hardware)
- * ----------------------------
- *   Total RAM:           4 MB (8 MB with Expansion Pak)
- *   Heap available:      ~380 KB typical after engine + assets
- *   Stack size:          64 KB (libdragon STACK_SIZE 0x10000 in system.c)
- *   Uncached memory:     Shared heap with regular malloc - used for DMA,
- *                        display lists, RSP mixer sample buffers, model matrices
- *
- *   NOTE: sbrk() prevents the heap from growing within 64 KB of the stack
- *   pointer. Stack overflow into heap is NOT a concern with ~1200 bytes
- *   worst-case physics stack usage. However, the uncached heap
- *   (malloc_uncached) is shared between the RSP mixer (sample buffers)
- *   and the scene system (model_mat allocations). Heap corruption from
- *   any source can crash the mixer (e.g., corrupted DRAM pointer in
- *   RSP mixer overlay).
- *
- *   Recommended limits:
- *     - Objects per scene:     64-128 max
- *     - Traits per object:     2-4 max
- *     - Vertices per model:    500-2000 (depending on complexity)
- *     - Textures:              64x64 or 32x32 preferred
- *
- * PHYSICS LIMITS (OimoPhysics)
- * ----------------------------
- *   MAX_PHYSICS_BODIES, MAX_CONTACT_BODIES, MAX_CONTACT_SUBSCRIBERS, ...:
- *   see limits.h (computed by exporter/codegen/limits.py)
- *
- *   Collision shapes: box, sphere, capsule, mesh (static only)
- *   Body types: static, dynamic, kinematic, trigger
- *
- * PERFORMANCE NOTES
- * -----------------
- *   - Traits are compiled to C functions, not runtime objects
- *   - Transform matrices only recomputed when dirty flag set
- *   - Frustum culling uses cached world-space bounds
+ * Capacities (objects, bodies, contacts, signal subscribers...) are in limits.h,
+ * computed for each project by exporter/codegen/limits.py.
  */
 
 #pragma once
@@ -64,18 +19,19 @@
 #include <stdint.h>
 #include <string.h>
 #include "limits.h"
+#include "engine.h"
 #include <rspq.h>
 #include <t3d/t3dmath.h>
 #include <t3d/t3dmodel.h>
 
 #ifdef __cplusplus
-extern "C" {{
+extern "C" {
 #endif
 
 // Forward declaration — full definition in iron/object/animation.h
 typedef struct ArmAnimation ArmAnimation;
 
-#define FB_COUNT 3 {debug_hud_define}
+#define FB_COUNT 3
 
 // A changed transform is written into each framebuffer's matrix slot, one per frame
 // (the RSP may still read the other slots for the frames in flight)
@@ -88,9 +44,9 @@ typedef struct ArmAnimation ArmAnimation;
 
 struct OimoRigidBody;
 
-typedef struct {{ float x, y; }} ArmVec2;
-typedef struct {{ float x, y, z; }} ArmVec3;
-typedef struct {{ float x, y, z, w; }} ArmVec4;
+typedef struct { float x, y; } ArmVec2;
+typedef struct { float x, y, z; } ArmVec3;
+typedef struct { float x, y, z, w; } ArmVec4;
 
 typedef void (*ArmTraitAddFn)(void *entity, void *data);
 typedef void (*ArmTraitReadyFn)(void *entity, void *data);
@@ -109,7 +65,7 @@ typedef void (*ArmFloatCallback)(float);
 typedef void (*ArmCallback)(void *obj, void *data);
 typedef void (*ArmFloatObjCallback)(float value, void *obj, void *data);
 
-typedef struct {{
+typedef struct {
     ArmTraitAddFn on_add;
     ArmTraitReadyFn on_ready;
     ArmTraitFixedUpdateFn on_fixed_update;
@@ -118,17 +74,17 @@ typedef struct {{
     ArmTraitRemoveFn on_remove;
     ArmTraitRender2DFn on_render2d;
     void *data;
-}} ArmTrait;
+} ArmTrait;
 
 // =============================================================================
 // Signal System - Per-instance event dispatch
 // =============================================================================
 
 // Haxe string equality: compares the text, and a null string only equals null
-static inline bool arm_string_equals(const char *a, const char *b) {{
+static inline bool arm_string_equals(const char *a, const char *b) {
     if (a == b) return true;
     return a != NULL && b != NULL && strcmp(a, b) == 0;
-}}
+}
 
 /**
  * Signal handler function type.
@@ -141,10 +97,10 @@ typedef void (*ArmSignalHandler)(void *ctx, void *payload);
 /**
  * Signal subscriber entry - keeps handler + context together for cache efficiency
  */
-typedef struct {{
+typedef struct {
     ArmSignalHandler handler;
     void *ctx;  // Handler's context (passed as first arg)
-}} ArmSignalEntry;
+} ArmSignalEntry;
 
 /**
  * ArmSignal - Per-instance signal with up to ARM_SIGNAL_MAX_SUBS subscribers.
@@ -153,15 +109,15 @@ typedef struct {{
  * Usage in traits:
  *   - Declare: var onDeath:Signal; (Haxe) → ArmSignal onDeath; (C struct member)
  *   - Connect: onDeath.connect(callback) → signal_connect(&data->onDeath, handler, data)
- *   - Emit: onDeath.emit(damage) → {{ payload_t _p = {{damage}}; signal_emit(&data->onDeath, &_p); }}
+ *   - Emit: onDeath.emit(damage) → { payload_t _p = {damage}; signal_emit(&data->onDeath, &_p); }
  *   - Disconnect: onDeath.disconnect(callback) → signal_disconnect(&data->onDeath, handler, data)
  */
-typedef struct {{
+typedef struct {
     uint8_t count;
     uint8_t emitting;  // Nested emits in progress: removals are deferred meanwhile
     uint8_t removed;   // Entries cleared during an emit, compacted after it
     ArmSignalEntry entries[ARM_SIGNAL_MAX_SUBS];
-}} ArmSignal;
+} ArmSignal;
 
 // Signal functions (implemented in signal.c)
 void signal_connect(ArmSignal *signal, ArmSignalHandler handler, void *ctx);
@@ -169,12 +125,12 @@ void signal_disconnect(ArmSignal *signal, ArmSignalHandler handler, void *ctx);
 void signal_emit(ArmSignal *signal, void *payload);
 void signal_clear(ArmSignal *signal);
 
-typedef struct {{
+typedef struct {
     T3DVec3 loc;
     T3DQuat rot;
     T3DVec3 scale;
     uint8_t dirty;
-}} ArmTransform;
+} ArmTransform;
 
 /**
  * ArmObject - Core entity type
@@ -186,7 +142,7 @@ typedef struct {{
  * The world matrix and cached world bounds are rebuilt only in the frame the
  * transform changes; the next frames copy the matrix into their own slot.
  */
-typedef struct ArmObject {{
+typedef struct ArmObject {
     // === HOT DATA (accessed every frame) ===
     ArmTransform transform;       // 44 bytes: position, rotation, scale (world-space for roots, local-space for parented objects)
     T3DMat4FP *model_mat;         // 4 bytes: FB_COUNT world matrices for rendering, one per framebuffer (RSP reads via DMA)
@@ -209,10 +165,9 @@ typedef struct ArmObject {{
     ArmAnimation *animation;      // 4 bytes: skeletal animation (NULL = static mesh)
     ArmTrait *traits;             // 4 bytes
 
-    // === LIFECYCLE FLAGS (bitmask for fast dispatch) ===
-    // Bit 0: has on_fixed_update, Bit 1: has on_update, Bit 2: has on_late_update
+    // === LIFECYCLE FLAGS (ARM_LIFECYCLE_*: which callbacks the traits have) ===
     uint8_t lifecycle_flags;      // 1 byte
-}} ArmObject;
+} ArmObject;
 
 // Lifecycle flag bits
 #define ARM_LIFECYCLE_FIXED_UPDATE (1 << 0)
@@ -220,16 +175,16 @@ typedef struct ArmObject {{
 #define ARM_LIFECYCLE_LATE_UPDATE  (1 << 2)
 #define ARM_LIFECYCLE_RENDER2D     (1 << 3)
 
-typedef struct ArmLight {{
+typedef struct ArmLight {
     ArmTransform transform;
     uint8_t color[4];
     T3DVec3 dir;
     uint8_t trait_count;
     uint8_t lifecycle_flags;
     ArmTrait *traits;
-}} ArmLight;
+} ArmLight;
 
-typedef struct ArmCamera {{
+typedef struct ArmCamera {
     ArmTransform transform;
     T3DVec3 target;               // World-space look-at target (updated per-frame)
     T3DVec3 look_dir;             // target - position: the camera keeps its rotation when moved
@@ -245,14 +200,14 @@ typedef struct ArmCamera {{
     uint8_t trait_count;
     uint8_t lifecycle_flags;
     ArmTrait *traits;
-}} ArmCamera;
+} ArmCamera;
 
-typedef struct {{
+typedef struct {
     uint8_t clear_color[4];
     uint8_t ambient_color[4];
-}} ArmWorld;
+} ArmWorld;
 
-typedef struct ArmScene {{
+typedef struct ArmScene {
     ArmWorld world;
 
     uint8_t camera_count;
@@ -262,14 +217,8 @@ typedef struct ArmScene {{
     uint8_t light_count;
     ArmLight *lights;
 
-    uint16_t object_count;        // Total slots in object array
-    uint16_t active_count;        // Number of active (non-removed) objects
+    uint16_t object_count;
     ArmObject *objects;
-
-    // Object pool recycling - free list for removed object slots
-    uint16_t *free_list;          // Array of free slot indices
-    uint16_t free_count;          // Number of free slots available
-    uint16_t free_capacity;       // Maximum slots (same as object_count)
 
     // Active object tracking - indices of objects that need lifecycle updates
     // Avoids iterating entire object array when most objects have no traits
@@ -294,10 +243,76 @@ typedef struct ArmScene {{
     bool has_parented_objects;    // True if any object has parent_index >= 0
 
     uint8_t trait_count;
-    uint8_t lifecycle_flags;      // Scene-level trait lifecycle flags
     ArmTrait *traits;
-}} ArmScene;
+} ArmScene;
+
+// =============================================================================
+// Scene definitions: what the exporter writes for each Blender scene (constant
+// tables in scenes/<scene>.c). scene_init builds the scene from them, in the
+// storage the scenes share (only one exists at a time).
+// =============================================================================
+
+struct PhysicsBodyDef;
+
+typedef struct {
+    T3DVec3 loc;                  // Local to the parent for parented objects
+    T3DQuat rot;
+    T3DVec3 scale;
+    T3DVec3 bounds_center;        // Model units
+    T3DVec3 bounds_half;
+    int16_t model;                // ModelId; -1: an empty (no mesh)
+    int16_t parent_index;         // -1: none
+    uint16_t first_trait;         // In the scene's traits
+    uint8_t trait_count;
+    uint8_t lifecycle_flags;
+    bool visible;
+    bool skinned;
+} ArmObjectDef;
+
+typedef struct {
+    T3DVec3 loc;
+    T3DVec3 target;
+    float fov, near, far;
+    int16_t parent_index;         // An object, -1: none
+    T3DVec3 local_pos;            // Relative to the parent
+    T3DVec3 local_target;
+    uint16_t first_trait;
+    uint8_t trait_count;
+    uint8_t lifecycle_flags;
+} ArmCameraDef;
+
+typedef struct {
+    uint8_t color[3];
+    T3DVec3 dir;
+    uint16_t first_trait;
+    uint8_t trait_count;
+    uint8_t lifecycle_flags;
+} ArmLightDef;
+
+typedef struct {
+    uint8_t clear_color[3];
+    uint8_t ambient_color[3];
+    const ArmCameraDef *cameras;
+    uint8_t camera_count;
+    const ArmLightDef *lights;
+    uint8_t light_count;
+    const ArmObjectDef *objects;
+    uint16_t object_count;
+    // Every trait of the scene: the objects', cameras', lights' and the scene's
+    // own (scene_traits_first..), each with its data pointer
+    const ArmTrait *traits;
+    uint16_t trait_count;
+    uint16_t scene_traits_first;
+    uint8_t scene_trait_count;
+    void (*init_trait_data)(void);  // The traits' initial data (their members' initial values)
+    bool has_parented_objects;
+    // Physics: the bodies (in object order), the world's gravity and time scale
+    const struct PhysicsBodyDef *bodies;
+    uint16_t body_count;
+    float gravity[3];
+    float physics_time_scale;
+} ArmSceneDef;
 
 #ifdef __cplusplus
-}}
+}
 #endif

@@ -9,7 +9,7 @@ Public API:
     prepare_traits_template_data() - Prepare data for traits.h/c templates
     prepare_autoload_template_data() - Prepare data for autoload templates
     convert_scene_data() - Apply coordinate conversion to scene data
-    generate_* functions - Scene code generation helpers
+    generate_scene_file() - A scene as constant tables (its ArmSceneDef)
 """
 
 # Re-export public API from submodules
@@ -28,13 +28,8 @@ from armor64.codegen.autoload_generator import (
 
 from armor64.codegen.scene_generator import (
     convert_scene_data,
-    generate_transform_block,
-    generate_trait_block,
-    generate_camera_block,
-    generate_light_block,
-    generate_object_block,
-    generate_physics_block,
-    generate_scene_traits_block,
+    generate_scene_file,
+    scene_trait_count,
 )
 
 from armor64.codegen.trait_emitter import TraitEmitter
@@ -52,13 +47,8 @@ __all__ = [
     'prepare_autoload_template_data',
     # Scene functions
     'convert_scene_data',
-    'generate_transform_block',
-    'generate_trait_block',
-    'generate_camera_block',
-    'generate_light_block',
-    'generate_object_block',
-    'generate_physics_block',
-    'generate_scene_traits_block',
+    'generate_scene_file',
+    'scene_trait_count',
     # Classes
     'TraitEmitter',
     'AutoloadEmitter',

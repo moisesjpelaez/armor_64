@@ -1,7 +1,4 @@
-/* N64 Exporter - UI Image declarations
- * Auto-generated from Koui canvas data. Do not edit directly.
- * Template: image.h.j2
- */
+// UI images: declarations. Keys and counts: image_defs.h (generated).
 #pragma once
 
 #include <stdint.h>
@@ -9,21 +6,18 @@
 #include "../data/scenes.h"
 
 #ifdef __cplusplus
-extern "C" {{
+extern "C" {
 #endif
 
-// Image key defines (generated from Koui Editor canvas JSON)
-{image_defines}
-
-#define UI_IMAGE_COUNT  {image_count}
-#define UI_MAX_IMAGES   {max_images}
+// Image keys (UI_IMAGE_*), UI_IMAGE_COUNT, UI_MAX_IMAGES
+#include "image_defs.h"
 
 // Forward declaration for sprite_t (avoids including libdragon in this header)
 struct sprite_s;
 typedef struct sprite_s sprite_t;
 
 // Runtime image element (always defined for type compatibility)
-typedef struct {{
+typedef struct {
     int16_t  pos_x, pos_y;
     int16_t  width, height;
     sprite_t *sprite;     // Pointer to loaded sprite (NULL until scene init)
@@ -32,7 +26,7 @@ typedef struct {{
     bool     initial_visible;
     uint8_t  align_h;     // 0=left, 1=center, 2=right
     int16_t  align_width; // Container width for alignment (0=none)
-}} UIImage;
+} UIImage;
 
 #if UI_IMAGE_COUNT > 0
 
@@ -52,19 +46,19 @@ uint32_t image_state_hash(uint32_t h);  // Adds everything image_render draws
 
 #else
 
-static inline UIImage* ui_image_create(sprite_t *s) {{ (void)s; return NULL; }}
-static inline void     ui_image_add(UIImage *i) {{ (void)i; }}
-static inline void     ui_image_remove(UIImage *i) {{ (void)i; }}
-static inline void     ui_image_set_position(UIImage *img, int16_t x, int16_t y) {{ (void)img; (void)x; (void)y; }}
-static inline void     ui_image_set_size(UIImage *img, int16_t w, int16_t h) {{ (void)img; (void)w; (void)h; }}
-static inline UIImage* canvas_get_image(int i) {{ (void)i; return NULL; }}
-static inline void     image_clear(void) {{}}
-static inline void     image_scene_init(SceneId s) {{ (void)s; }}
-static inline void     image_render(void) {{}}
-static inline uint32_t image_state_hash(uint32_t h) {{ return h; }}
+static inline UIImage* ui_image_create(sprite_t *s) { (void)s; return NULL; }
+static inline void     ui_image_add(UIImage *i) { (void)i; }
+static inline void     ui_image_remove(UIImage *i) { (void)i; }
+static inline void     ui_image_set_position(UIImage *img, int16_t x, int16_t y) { (void)img; (void)x; (void)y; }
+static inline void     ui_image_set_size(UIImage *img, int16_t w, int16_t h) { (void)img; (void)w; (void)h; }
+static inline UIImage* canvas_get_image(int i) { (void)i; return NULL; }
+static inline void     image_clear(void) {}
+static inline void     image_scene_init(SceneId s) { (void)s; }
+static inline void     image_render(void) {}
+static inline uint32_t image_state_hash(uint32_t h) { return h; }
 
 #endif // UI_IMAGE_COUNT > 0
 
 #ifdef __cplusplus
-}}
+}
 #endif

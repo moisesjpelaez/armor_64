@@ -1,7 +1,4 @@
-/* N64 Exporter - UI Button declarations
- * Auto-generated from Koui canvas data. Do not edit directly.
- * Template: button.h.j2
- */
+// UI buttons: declarations. Keys, counts and sizes: button_defs.h (generated).
 #pragma once
 
 #include <stdint.h>
@@ -9,15 +6,11 @@
 #include "../data/scenes.h"
 
 #ifdef __cplusplus
-extern "C" {{
+extern "C" {
 #endif
 
-// Button key defines (generated from Koui Editor canvas JSON)
-{button_defines}
-
-#define UI_BUTTON_COUNT    {button_count}
-#define UI_MAX_BUTTONS     {max_buttons}
-#define UI_BUTTON_TEXT_SIZE {button_text_size}
+// Button keys (UI_BUTTON_*), UI_BUTTON_COUNT, UI_MAX_BUTTONS, UI_BUTTON_TEXT_SIZE
+#include "button_defs.h"
 
 // Callback type for button events.
 // button_index: pool index of the button that fired the event.
@@ -26,7 +19,7 @@ typedef void (*ButtonCallback)(int button_index, void* user_data);
 
 // Runtime button element.
 // Colors stored as RGBA components — no libdragon dependency in this header.
-typedef struct {{
+typedef struct {
     int16_t pos_x, pos_y, width, height;
 
     // Normal state
@@ -73,7 +66,7 @@ typedef struct {{
     void*          on_released_data;
     ButtonCallback on_focus;         // Fires when button gains focus   (Koui: FocusGet)
     void*          on_focus_data;
-}} UIButton;
+} UIButton;
 
 #if UI_BUTTON_COUNT > 0
 
@@ -84,7 +77,7 @@ UIButton* canvas_get_button(int index);
 
 // Returns true if the button was activated (A pressed while focused) since the
 // last call, then clears the flag.  Intended for use in Armory trait code:
-//   if (button_was_pressed(UI_BUTTON_PLAY_BUTTON)) {{ start_game(); }}
+//   if (button_was_pressed(UI_BUTTON_PLAY_BUTTON)) { start_game(); }
 bool button_was_pressed(int index);
 
 // Manually set or clear focus (useful from trait code or cutscenes).
@@ -109,23 +102,23 @@ uint32_t button_state_hash(uint32_t h);  // Adds everything button_render draws
 
 #else
 
-static inline UIButton* canvas_get_button(int i) {{ (void)i; return NULL; }}
-static inline bool      button_was_pressed(int i) {{ (void)i; return false; }}
-static inline void      button_set_focus(int i) {{ (void)i; }}
-static inline void      button_clear_focus(void) {{}}
-static inline void      button_on_pressed(int i, ButtonCallback cb, void* ud) {{ (void)i; (void)cb; (void)ud; }}
-static inline void      button_on_released(int i, ButtonCallback cb, void* ud) {{ (void)i; (void)cb; (void)ud; }}
-static inline void      button_on_focus(int i, ButtonCallback cb, void* ud) {{ (void)i; (void)cb; (void)ud; }}
-static inline void      button_set_text(int i, const char *t) {{ (void)i; (void)t; }}
-static inline void      button_init(void) {{}}
-static inline void      button_clear(void) {{}}
-static inline void      button_scene_init(SceneId s) {{ (void)s; }}
-static inline void      button_update(float dt) {{ (void)dt; }}
-static inline void      button_render(void) {{}}
-static inline uint32_t  button_state_hash(uint32_t h) {{ return h; }}
+static inline UIButton* canvas_get_button(int i) { (void)i; return NULL; }
+static inline bool      button_was_pressed(int i) { (void)i; return false; }
+static inline void      button_set_focus(int i) { (void)i; }
+static inline void      button_clear_focus(void) {}
+static inline void      button_on_pressed(int i, ButtonCallback cb, void* ud) { (void)i; (void)cb; (void)ud; }
+static inline void      button_on_released(int i, ButtonCallback cb, void* ud) { (void)i; (void)cb; (void)ud; }
+static inline void      button_on_focus(int i, ButtonCallback cb, void* ud) { (void)i; (void)cb; (void)ud; }
+static inline void      button_set_text(int i, const char *t) { (void)i; (void)t; }
+static inline void      button_init(void) {}
+static inline void      button_clear(void) {}
+static inline void      button_scene_init(SceneId s) { (void)s; }
+static inline void      button_update(float dt) { (void)dt; }
+static inline void      button_render(void) {}
+static inline uint32_t  button_state_hash(uint32_t h) { return h; }
 
 #endif // UI_BUTTON_COUNT > 0
 
 #ifdef __cplusplus
-}}
+}
 #endif

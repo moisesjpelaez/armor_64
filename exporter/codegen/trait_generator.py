@@ -747,25 +747,21 @@ class TraitCodeGenerator:
         # ArmTraitRender2DFn: (void *entity, void *data) - no dt, for 2D overlay rendering
         decls.append(f"void {self.c_name}_on_add(void* obj, void* data);")
         decls.append(f"void {self.c_name}_on_ready(void* obj, void* data);")
-        decls.append(f"void {self.c_name}_on_fixed_update(void* obj, float _dt, void* data);")
-
-        # Add declarations for individual fixed update functions if trait has multiple dynamic fixed updates
-        dynamic_fixed_updates = self.meta.get("dynamic_fixed_updates", [])
-        for callback_name in dynamic_fixed_updates:
-            func_name = f"on_fixed_update_{callback_name}"
-            decls.append(f"void {self.c_name}_{func_name}(void* obj, float _dt, void* data);")
-
-        decls.append(f"void {self.c_name}_on_update(void* obj, float _dt, void* data);")
-
-        # Add declarations for individual update functions if trait has multiple dynamic updates
-        dynamic_updates = self.meta.get("dynamic_updates", [])
-        for callback_name in dynamic_updates:
-            func_name = f"on_update_{callback_name}"
-            decls.append(f"void {self.c_name}_{func_name}(void* obj, float _dt, void* data);")
-
-        decls.append(f"void {self.c_name}_on_late_update(void* obj, float _dt, void* data);")
-        decls.append(f"void {self.c_name}_on_remove(void* obj, void* data);")
-        decls.append(f"void {self.c_name}_on_render2d(void* obj, void* data);")
+        if self.handles("on_fixed_update"):
+            decls.append(f"void {self.c_name}_on_fixed_update(void* obj, float _dt, void* data);")
+            # The functions notifyOnFixedUpdate registers, when there are several
+            for callback_name in self.meta.get("dynamic_fixed_updates", []):
+                decls.append(f"void {self.c_name}_on_fixed_update_{callback_name}(void* obj, float _dt, void* data);")
+        if self.handles("on_update"):
+            decls.append(f"void {self.c_name}_on_update(void* obj, float _dt, void* data);")
+            for callback_name in self.meta.get("dynamic_updates", []):
+                decls.append(f"void {self.c_name}_on_update_{callback_name}(void* obj, float _dt, void* data);")
+        if self.handles("on_late_update"):
+            decls.append(f"void {self.c_name}_on_late_update(void* obj, float _dt, void* data);")
+        if self.handles("on_remove"):
+            decls.append(f"void {self.c_name}_on_remove(void* obj, void* data);")
+        if self.handles("on_render2d"):
+            decls.append(f"void {self.c_name}_on_render2d(void* obj, void* data);")
         return decls
 
     def contact_handler_signature(self, event_name: str) -> str:
@@ -852,10 +848,17 @@ class TraitCodeGenerator:
                    (n.get("type") == "c_template" and "_g2_color" in n.get("c_code", ""))
                    for n in walk_ir(nodes))
 
+    def handles(self, event: str) -> bool:
+        """Whether the trait or an ancestor handles a lifecycle event (it then has
+        the handler, and the runtime calls it; otherwise the scene gets NULL)."""
+        return event in chain_events(self.all_traits, self.name)
+
     def _parent_event_call(self, event: str, with_dt: bool) -> list:
         """Call the parent's handler first: callbacks a parent class registers
         (e.g. in notifyOnUpdate) run for its children too, as in Armory."""
         if not (self.parent_name and self.parent_name in self.all_traits):
+            return []
+        if event not in chain_events(self.all_traits, self.parent_name):
             return []
         parent_c_name = self.all_traits[self.parent_name].get("c_name", self.parent_name.lower())
         args = "obj, _dt, data" if with_dt else "obj, data"
@@ -937,126 +940,128 @@ class TraitCodeGenerator:
         impl_lines.append("")
 
         # on_fixed_update - dt before data (ArmTraitFixedUpdateFn)
-        # Check if we have multiple dynamic fixed update functions
-        dynamic_fixed_updates = self.meta.get("dynamic_fixed_updates", [])
+        if self.handles("on_fixed_update"):
+            # Check if we have multiple dynamic fixed update functions
+            dynamic_fixed_updates = self.meta.get("dynamic_fixed_updates", [])
 
-        if dynamic_fixed_updates and len(dynamic_fixed_updates) > 0:
-            # Multiple fixed update functions - generate dispatcher that calls each enabled sub-update
-            impl_lines.append(f"void {self.c_name}_on_fixed_update(void* obj, float _dt, void* data) {{")
-            impl_lines += self._parent_event_call("on_fixed_update", True)
-            impl_lines.append(f"    {self.c_name}Data* d = ({self.c_name}Data*)data;")
-            for callback_name in dynamic_fixed_updates:
-                flag_name = f"_fixed_update_{callback_name}_enabled"
-                func_name = f"on_fixed_update_{callback_name}"
-                impl_lines.append(f"    if (d->{flag_name}) {self.c_name}_{func_name}(obj, _dt, data);")
-            impl_lines.append("}")
-            impl_lines.append("")
+            if dynamic_fixed_updates and len(dynamic_fixed_updates) > 0:
+                # Multiple fixed update functions - generate dispatcher that calls each enabled sub-update
+                impl_lines.append(f"void {self.c_name}_on_fixed_update(void* obj, float _dt, void* data) {{")
+                impl_lines += self._parent_event_call("on_fixed_update", True)
+                impl_lines.append(f"    {self.c_name}Data* d = ({self.c_name}Data*)data;")
+                for callback_name in dynamic_fixed_updates:
+                    flag_name = f"_fixed_update_{callback_name}_enabled"
+                    func_name = f"on_fixed_update_{callback_name}"
+                    impl_lines.append(f"    if (d->{flag_name}) {self.c_name}_{func_name}(obj, _dt, data);")
+                impl_lines.append("}")
+                impl_lines.append("")
 
-            # Generate each individual fixed update function
-            for callback_name in dynamic_fixed_updates:
-                func_name = f"on_fixed_update_{callback_name}"
-                event_nodes = self.events.get(func_name, [])
+                # Generate each individual fixed update function
+                for callback_name in dynamic_fixed_updates:
+                    func_name = f"on_fixed_update_{callback_name}"
+                    event_nodes = self.events.get(func_name, [])
+                    body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
+                    impl_lines.append(f"void {self.c_name}_{func_name}(void* obj, float _dt, void* data) {{")
+                    impl_lines.append(body)
+                    impl_lines.append("}")
+                    impl_lines.append("")
+            else:
+                # Single/no fixed update - original behavior
+                event_nodes = self.events.get("on_fixed_update", [])
                 body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-                impl_lines.append(f"void {self.c_name}_{func_name}(void* obj, float _dt, void* data) {{")
+                impl_lines.append(f"void {self.c_name}_on_fixed_update(void* obj, float _dt, void* data) {{")
+                impl_lines += self._parent_event_call("on_fixed_update", True)
+                # Add early return guard if trait uses removeFixedUpdate()
+                if self.meta.get("has_remove_fixed_update", False):
+                    impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_fixed_update_enabled) return;")
                 impl_lines.append(body)
                 impl_lines.append("}")
                 impl_lines.append("")
-        else:
-            # Single/no fixed update - original behavior
-            event_nodes = self.events.get("on_fixed_update", [])
-            body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-            impl_lines.append(f"void {self.c_name}_on_fixed_update(void* obj, float _dt, void* data) {{")
-            impl_lines += self._parent_event_call("on_fixed_update", True)
-            # Add early return guard if trait uses removeFixedUpdate()
-            if self.meta.get("has_remove_fixed_update", False):
-                impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_fixed_update_enabled) return;")
-            impl_lines.append(body)
-            impl_lines.append("}")
-            impl_lines.append("")
 
         # on_update - dt before data (ArmTraitUpdateFn)
-        # Check if we have multiple dynamic update functions
-        dynamic_updates = self.meta.get("dynamic_updates", [])
+        if self.handles("on_update"):
+            # Check if we have multiple dynamic update functions
+            dynamic_updates = self.meta.get("dynamic_updates", [])
 
-        if dynamic_updates and len(dynamic_updates) > 0:
-            # Multiple update functions - generate dispatcher that calls each enabled sub-update
-            impl_lines.append(f"void {self.c_name}_on_update(void* obj, float _dt, void* data) {{")
-            impl_lines += self._parent_event_call("on_update", True)
-            impl_lines.append(f"    {self.c_name}Data* d = ({self.c_name}Data*)data;")
-            for callback_name in dynamic_updates:
-                flag_name = f"_update_{callback_name}_enabled"
-                func_name = f"on_update_{callback_name}"
-                impl_lines.append(f"    if (d->{flag_name}) {self.c_name}_{func_name}(obj, _dt, data);")
-            impl_lines.append("}")
-            impl_lines.append("")
+            if dynamic_updates and len(dynamic_updates) > 0:
+                # Multiple update functions - generate dispatcher that calls each enabled sub-update
+                impl_lines.append(f"void {self.c_name}_on_update(void* obj, float _dt, void* data) {{")
+                impl_lines += self._parent_event_call("on_update", True)
+                impl_lines.append(f"    {self.c_name}Data* d = ({self.c_name}Data*)data;")
+                for callback_name in dynamic_updates:
+                    flag_name = f"_update_{callback_name}_enabled"
+                    func_name = f"on_update_{callback_name}"
+                    impl_lines.append(f"    if (d->{flag_name}) {self.c_name}_{func_name}(obj, _dt, data);")
+                impl_lines.append("}")
+                impl_lines.append("")
 
-            # Generate each individual update function
-            for callback_name in dynamic_updates:
-                func_name = f"on_update_{callback_name}"
-                event_nodes = self.events.get(func_name, [])
+                # Generate each individual update function
+                for callback_name in dynamic_updates:
+                    func_name = f"on_update_{callback_name}"
+                    event_nodes = self.events.get(func_name, [])
+                    body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
+                    impl_lines.append(f"void {self.c_name}_{func_name}(void* obj, float _dt, void* data) {{")
+                    impl_lines.append(body)
+                    impl_lines.append("}")
+                    impl_lines.append("")
+            else:
+                # Single/no update - original behavior
+                event_nodes = self.events.get("on_update", [])
                 body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-                impl_lines.append(f"void {self.c_name}_{func_name}(void* obj, float _dt, void* data) {{")
+                impl_lines.append(f"void {self.c_name}_on_update(void* obj, float _dt, void* data) {{")
+                impl_lines += self._parent_event_call("on_update", True)
+                # Add early return guard if trait uses removeUpdate()
+                if self.meta.get("has_remove_update", False):
+                    impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_update_enabled) return;")
                 impl_lines.append(body)
                 impl_lines.append("}")
                 impl_lines.append("")
-        else:
-            # Single/no update - original behavior
-            event_nodes = self.events.get("on_update", [])
+
+        # on_late_update - dt before data (ArmTraitLateUpdateFn)
+        if self.handles("on_late_update"):
+            event_nodes = self.events.get("on_late_update", [])
             body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-            impl_lines.append(f"void {self.c_name}_on_update(void* obj, float _dt, void* data) {{")
-            impl_lines += self._parent_event_call("on_update", True)
-            # Add early return guard if trait uses removeUpdate()
-            if self.meta.get("has_remove_update", False):
-                impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_update_enabled) return;")
+            impl_lines.append(f"void {self.c_name}_on_late_update(void* obj, float _dt, void* data) {{")
+            impl_lines += self._parent_event_call("on_late_update", True)
+            # Add early return guard if trait uses removeLateUpdate()
+            if self.meta.get("has_remove_late_update", False):
+                impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_late_update_enabled) return;")
             impl_lines.append(body)
             impl_lines.append("}")
             impl_lines.append("")
 
-        # on_late_update - dt before data (ArmTraitLateUpdateFn)
-        event_nodes = self.events.get("on_late_update", [])
-        body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-        impl_lines.append(f"void {self.c_name}_on_late_update(void* obj, float _dt, void* data) {{")
-        impl_lines += self._parent_event_call("on_late_update", True)
-        # Add early return guard if trait uses removeLateUpdate()
-        if self.meta.get("has_remove_late_update", False):
-            impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_late_update_enabled) return;")
-        impl_lines.append(body)
-        impl_lines.append("}")
-        impl_lines.append("")
-
         # on_remove - no dt parameter
-        event_nodes = self.events.get("on_remove", [])
-        body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-        impl_lines.append(f"void {self.c_name}_on_remove(void* obj, void* data) {{")
-        impl_lines += self._parent_event_call("on_remove", False)
-        impl_lines.append(body)
-        impl_lines.append("}")
-        impl_lines.append("")
+        if self.handles("on_remove"):
+            event_nodes = self.events.get("on_remove", [])
+            body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
+            impl_lines.append(f"void {self.c_name}_on_remove(void* obj, void* data) {{")
+            impl_lines += self._parent_event_call("on_remove", False)
+            impl_lines.append(body)
+            impl_lines.append("}")
+            impl_lines.append("")
 
         # on_render2d - no dt parameter, for 2D overlay rendering
-        event_nodes = self.events.get("on_render2d", [])
-        has_render2d_content = event_nodes and len(event_nodes) > 0
-        body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-        impl_lines.append(f"void {self.c_name}_on_render2d(void* obj, void* data) {{")
-        # Add early return guard if trait uses removeRender2D()
-        if self.meta.get("has_remove_render2d", False):
-            impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_render2d_enabled) return;")
-        # Call parent's on_render2d FIRST (parent renders background)
-        # Pass full data pointer so virtual method calls work correctly
-        if self.parent_name and self.parent_name in self.all_traits:
-            parent_ir = self.all_traits[self.parent_name]
-            parent_c_name = parent_ir.get("c_name", self.parent_name.lower())
-            impl_lines.append(f"    {parent_c_name}_on_render2d(obj, data);")
-        # Only add render2d infrastructure if there's actual content
-        if has_render2d_content:
-            impl_lines.append("    color_t _g2_color = RGBA32(255, 255, 255, 255);")
-            impl_lines.append("    render2d_begin();")
-            impl_lines.append(body)
-            impl_lines.append("    render2d_end();")
-        else:
-            impl_lines.append(body)
-        impl_lines.append("}")
-        impl_lines.append("")
+        if self.handles("on_render2d"):
+            event_nodes = self.events.get("on_render2d", [])
+            has_render2d_content = event_nodes and len(event_nodes) > 0
+            body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
+            impl_lines.append(f"void {self.c_name}_on_render2d(void* obj, void* data) {{")
+            # Add early return guard if trait uses removeRender2D()
+            if self.meta.get("has_remove_render2d", False):
+                impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_render2d_enabled) return;")
+            # Call parent's on_render2d FIRST (parent renders background)
+            # Pass full data pointer so virtual method calls work correctly
+            impl_lines += self._parent_event_call("on_render2d", False)
+            # Only add render2d infrastructure if there's actual content
+            if has_render2d_content:
+                impl_lines.append("    color_t _g2_color = RGBA32(255, 255, 255, 255);")
+                impl_lines.append("    render2d_begin();")
+                impl_lines.append(body)
+                impl_lines.append("    render2d_end();")
+            else:
+                impl_lines.append(body)
+            impl_lines.append("}")
+            impl_lines.append("")
 
         # Contact events - PhysicsContactHandler signature: (obj, data, other)
         for event_name in self.events.keys():

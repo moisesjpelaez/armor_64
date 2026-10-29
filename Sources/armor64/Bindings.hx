@@ -72,7 +72,7 @@ class Bindings {
             "Math.round" => {c: "roundf({0})"},
             "Math.min" => {c: "fminf({0}, {1})"},
             "Math.max" => {c: "fmaxf({0}, {1})"},
-            "Math.exp" => {c: "fm_exp({0})"},  // ~3% error
+            "Math.exp" => {c: "expf({0})"},  // Exact, as Haxe's (fm_expf is up to 3% off, unbounded)
             "Math.log" => {c: "logf({0})"},
 
             // Std (Std.string is a converter: its format depends on the value's type)
@@ -91,8 +91,8 @@ class Bindings {
             "iron.object.Transform.move" => transform('it_move($TRANSFORM, ({0}).x, ({0}).z, -({0}).y, {1=1.0f});', true),
             "iron.object.Transform.setRotation" => transform('it_set_rot_euler($TRANSFORM, {0}, {2}, -({1}));', true),
             "iron.object.Transform.reset" => transform('it_reset($TRANSFORM);', true),
-            // The matrix is rebuilt from the dirty flag
-            "iron.object.Transform.buildMatrix" => transform("((ArmObject*){self})->transform.dirty = 1;", true),
+            // The matrix is rebuilt from the dirty flag, into every framebuffer's slot
+            "iron.object.Transform.buildMatrix" => transform("((ArmObject*){self})->transform.dirty = TRANSFORM_DIRTY_FRAMES;", true),
             // Directions: N64 (x, y, z) -> Blender (x, -z, y)
             "iron.object.Transform.look" => transform('({ T3DVec3 _d; it_look($TRANSFORM, &_d); (ArmVec4){_d.v[0], -_d.v[2], _d.v[1], 1.0f}; })', false),
             "iron.object.Transform.right" => transform('({ T3DVec3 _d; it_right($TRANSFORM, &_d); (ArmVec4){_d.v[0], -_d.v[2], _d.v[1], 1.0f}; })', false),

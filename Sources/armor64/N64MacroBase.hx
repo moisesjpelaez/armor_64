@@ -122,7 +122,12 @@ class N64MacroBase {
     // Facts for the engine limits (n64_limits.json, read by codegen/limits.py)
     // ========================================================================
 
-    // Longest literal Map key; null once a key isn't a literal
+    /** A string's size in the C code: UTF-8 bytes (an accented letter takes 2). */
+    public static function utf8Length(s:String):Int {
+        return haxe.io.Bytes.ofString(s).length;
+    }
+
+    // Longest literal Map key (UTF-8 bytes); null once a key isn't a literal
     static var mapKeyLength:Null<Int> = 0;
     // Literal keys set into maps, by map C type; a type is removed once a key
     // set into one of its maps isn't a literal
@@ -137,15 +142,15 @@ class N64MacroBase {
             if (set) dynamicMapTypes.set(mapType, true);
             return;
         }
-        if (mapKeyLength != null && literal.length > mapKeyLength) mapKeyLength = literal.length;
+        if (mapKeyLength != null && utf8Length(literal) > mapKeyLength) mapKeyLength = utf8Length(literal);
         if (set) {
             if (!mapKeys.exists(mapType)) mapKeys.set(mapType, new Map());
             mapKeys.get(mapType).set(literal, true);
         }
     }
 
-    // Longest string a concatenation builds / a label is set to at runtime;
-    // null once one can't be bounded
+    // Longest string (UTF-8 bytes) a concatenation builds / a label is set to at
+    // runtime; null once one can't be bounded
     static var concatLength:Null<Int> = 0;
     static var labelTextLength:Null<Int> = 0;
 
@@ -156,7 +161,7 @@ class N64MacroBase {
     public static function recordLabelText(value:IRNode):Void {
         var length:Null<Int> = value == null ? null
             : value.maxLength != null ? value.maxLength
-            : value.type == "string" ? Std.string(value.value).length : null;
+            : value.type == "string" ? utf8Length(Std.string(value.value)) : null;
         labelTextLength = length == null || labelTextLength == null ? null : Std.int(Math.max(labelTextLength, length));
     }
 

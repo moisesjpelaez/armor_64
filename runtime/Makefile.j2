@@ -8,6 +8,12 @@ include $(T3D_INST)/t3d.mk
 GAME_TITLE := {game_title}
 ROM_NAME := {game_title}
 
+# The features this game uses (engine.h's ENGINE_ENABLE_* have the same values)
+PHYSICS := {enable_physics}
+PHYSICS_DEBUG := {enable_physics_debug}
+UI := {enable_ui}
+AUDIO := {enable_audio}
+
 N64_CFLAGS += -std=gnu2x
 # A rule for each header in the .d files: a removed or renamed header doesn't stop the build
 N64_CFLAGS += -MP
@@ -19,35 +25,50 @@ src = \
     src/system/signal.c \
     src/system/time.c \
     src/system/tween.c \
-	src/data/models.c \
+    src/data/models.c \
     src/data/scenes.c \
-	src/data/traits.c \
-	src/iron/object/transform.c \
-	src/iron/object/object.c \
-	src/iron/object/animation.c \
-	src/iron/system/input.c \
-{scene_files}
+    src/data/traits.c \
+    src/iron/object/transform.c \
+    src/iron/object/object.c \
+    src/iron/object/animation.c \
+    src/iron/system/input.c
 
-# Physics sources (conditionally included)
-{physics_sources}
+# Scenes and autoloads
+src += {scene_files}
+src += {autoload_files}
 
-# Canvas/UI sources (conditionally included)
-{canvas_sources}
+ifeq ($(PHYSICS),1)
+src += \
+    src/oimo/physics.c \
+    src/events/physics_events.c \
+    src/oimo/collision/geometry/geometry.c
+ifeq ($(PHYSICS_DEBUG),1)
+src += src/oimo/debug/physics_debug.c
+endif
+endif
 
-# Autoload sources (conditionally included)
-{autoload_sources}
+ifeq ($(UI),1)
+src += \
+    src/ui/fonts.c \
+    src/ui/label.c \
+    src/ui/image.c \
+    src/ui/button.c \
+    src/ui/panel.c \
+    src/ui/canvas.c
+endif
 
-# Audio sources (conditionally included)
-{audio_sources}
+ifeq ($(AUDIO),1)
+src += src/audio/audio.c
+endif
 
 assets_png = $(wildcard assets/*.png)
 assets_gltf = $(wildcard assets/*.gltf)
 assets_glb = $(wildcard assets/*.glb)
 assets_conv = $(addprefix filesystem/,$(notdir $(assets_png:%.png=%.sprite))) \
-			  $(addprefix filesystem/,$(notdir $(assets_gltf:%.gltf=%.t3dm))) \
-			  $(addprefix filesystem/,$(notdir $(assets_glb:%.glb=%.t3dm))) \
-			  $(font_conv) \
-			  $(audio_conv)
+              $(addprefix filesystem/,$(notdir $(assets_gltf:%.gltf=%.t3dm))) \
+              $(addprefix filesystem/,$(notdir $(assets_glb:%.glb=%.t3dm))) \
+              $(font_conv) \
+              $(audio_conv)
 
 # Font assets - generated explicitly for each size variant
 {font_targets}
@@ -80,11 +101,20 @@ filesystem/%.t3dm: assets/%.gltf
 filesystem/%.t3dm: assets/%.glb
 	@mkdir -p $(dir $@)
 	@echo "    [T3D-MODEL] $@"
-	$(T3D_GLTF_TO_3D) --verbose "$<" $@
+	$(T3D_GLTF_TO_3D) "$<" $@
 	$(N64_BINDIR)/mkasset -c 2 -w 256 -o filesystem $@
 
 $(BUILD_DIR)/$(ROM_NAME).dfs: $(assets_conv)
 $(BUILD_DIR)/$(ROM_NAME).elf: $(src:%.c=$(BUILD_DIR)/%.o)
+
+# Every object depends on the compiler and the flags (make only compares file
+# dates): a toolchain update or a flags change rebuilds the game. The stamp is
+# rewritten only when they change. The source path is left out (it doesn't
+# change the code).
+BUILD_STAMP := $(BUILD_DIR)/toolchain.stamp
+BUILD_ID := $(shell $(N64_GCCPREFIX_TRIPLET)gcc --version | head -n 1) $(filter-out -ffile-prefix-map=%,$(N64_CFLAGS))
+$(shell mkdir -p $(BUILD_DIR) && echo '$(BUILD_ID)' | cmp -s - $(BUILD_STAMP) || echo '$(BUILD_ID)' > $(BUILD_STAMP))
+$(src:%.c=$(BUILD_DIR)/%.o): $(BUILD_STAMP)
 
 $(ROM_NAME).z64: N64_ROM_TITLE=$(GAME_TITLE)
 $(ROM_NAME).z64: $(BUILD_DIR)/$(ROM_NAME).dfs
@@ -92,11 +122,6 @@ $(ROM_NAME).z64: $(BUILD_DIR)/$(ROM_NAME).dfs
 clean:
 	rm -rf $(BUILD_DIR) *.z64
 	rm -rf filesystem
-
-build_lib:
-	rm -rf $(BUILD_DIR) *.z64
-	make -C $(T3D_INST)
-	make all
 
 # Every object's header dependencies (written next to it, also in subfolders)
 -include $(src:%.c=$(BUILD_DIR)/%.d)

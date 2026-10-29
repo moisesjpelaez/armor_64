@@ -1,16 +1,15 @@
+// Models: loading, recorded draw blocks, unloading. Model ids: models_defs.h (generated).
 #pragma once
 
 #include <t3d/t3dmodel.h>
 #include <rspq.h>
 
 #ifdef __cplusplus
-extern "C" {{
+extern "C" {
 #endif
 
-typedef enum {{
-{model_enum_entries}
-    MODEL_COUNT = {model_count}
-}} ModelId;
+// ModelId: MODEL_<name>, MODEL_COUNT
+#include "models_defs.h"
 
 void models_init(void);
 void models_shutdown(void);
@@ -19,12 +18,9 @@ T3DModel *models_get(ModelId id);
 T3DModel *models_get_raw(ModelId id);     // Load without DPL baking (for skinned models)
 rspq_block_t *models_get_dpl(ModelId id);
 
-void models_release(ModelId id);          // Release a reference to a model
 void models_unload(ModelId id);           // Force unload a model
-void models_unload_unused(void);          // Unload models with zero references
 void models_unload_except(const bool *keep);  // Unload the models keep[id] doesn't mark
-void models_unload_all(void);             // Unload all models to free memory
 
 #ifdef __cplusplus
-}}
+}
 #endif

@@ -1,7 +1,4 @@
-/* N64 Exporter - UI Label declarations
- * Auto-generated from Koui canvas data. Do not edit directly.
- * Template: label.h.j2
- */
+// UI labels: declarations. Keys, counts and sizes: label_defs.h (generated).
 #pragma once
 
 #include <stdint.h>
@@ -9,15 +6,15 @@
 #include "../data/scenes.h"
 
 #ifdef __cplusplus
-extern "C" {{
+extern "C" {
 #endif
 
 // Canvas render dimensions (N64 fixed resolution)
-#define CANVAS_WIDTH  {canvas_width}
-#define CANVAS_HEIGHT {canvas_height}
+#define CANVAS_WIDTH  320
+#define CANVAS_HEIGHT 240
 
 // Anchor enum (matches Koui Editor)
-typedef enum {{
+typedef enum {
     UI_ANCHOR_TOP_LEFT     = 0,
     UI_ANCHOR_TOP_CENTER   = 1,
     UI_ANCHOR_TOP_RIGHT    = 2,
@@ -27,17 +24,13 @@ typedef enum {{
     UI_ANCHOR_BOTTOM_LEFT  = 6,
     UI_ANCHOR_BOTTOM_CENTER = 7,
     UI_ANCHOR_BOTTOM_RIGHT = 8,
-}} UIAnchor;
+} UIAnchor;
 
-// Label key defines (generated from Koui Editor canvas JSON)
-{label_defines}
-
-#define UI_LABEL_COUNT      {label_count}
-#define UI_MAX_LABELS       {max_labels}
-#define UI_LABEL_TEXT_SIZE  {max_label_text_size}
+// Label keys (UI_LABEL_*), UI_LABEL_COUNT, UI_MAX_LABELS, UI_LABEL_TEXT_SIZE
+#include "label_defs.h"
 
 // Runtime label element (always defined for type compatibility)
-typedef struct {{
+typedef struct {
     int16_t pos_x, pos_y;
     int16_t baseline_offset;           // Vertical offset to text baseline
     char    text[UI_LABEL_TEXT_SIZE];  // Owned text buffer (no heap allocation)
@@ -50,7 +43,7 @@ typedef struct {{
     uint8_t shadow_style_id;
     uint8_t align_h;                   // 0=left, 1=center, 2=right
     int16_t align_width;               // Container width for alignment (0=none)
-}} UILabel;
+} UILabel;
 
 #if UI_LABEL_COUNT > 0
 
@@ -71,20 +64,20 @@ uint32_t label_state_hash(uint32_t h);  // Adds everything label_render draws
 
 #else
 
-static inline UILabel* ui_label_create(const char *t) {{ (void)t; return NULL; }}
-static inline void     ui_label_add(UILabel *l) {{ (void)l; }}
-static inline void     ui_label_remove(UILabel *l) {{ (void)l; }}
-static inline void     ui_label_set_position(UILabel *l, int16_t x, int16_t y) {{ (void)l; (void)x; (void)y; }}
-static inline void     ui_label_set_text(UILabel *l, const char *t) {{ (void)l; (void)t; }}
-static inline UILabel* canvas_get_label(int i) {{ (void)i; return NULL; }}
-static inline void     label_init(void) {{}}
-static inline void     label_clear(void) {{}}
-static inline void     label_scene_init(SceneId s) {{ (void)s; }}
-static inline void     label_render(void) {{}}
-static inline uint32_t label_state_hash(uint32_t h) {{ return h; }}
+static inline UILabel* ui_label_create(const char *t) { (void)t; return NULL; }
+static inline void     ui_label_add(UILabel *l) { (void)l; }
+static inline void     ui_label_remove(UILabel *l) { (void)l; }
+static inline void     ui_label_set_position(UILabel *l, int16_t x, int16_t y) { (void)l; (void)x; (void)y; }
+static inline void     ui_label_set_text(UILabel *l, const char *t) { (void)l; (void)t; }
+static inline UILabel* canvas_get_label(int i) { (void)i; return NULL; }
+static inline void     label_init(void) {}
+static inline void     label_clear(void) {}
+static inline void     label_scene_init(SceneId s) { (void)s; }
+static inline void     label_render(void) {}
+static inline uint32_t label_state_hash(uint32_t h) { return h; }
 
 #endif // UI_LABEL_COUNT > 0
 
 #ifdef __cplusplus
-}}
+}
 #endif

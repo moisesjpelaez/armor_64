@@ -634,3 +634,17 @@ int physics_get_contacts(OimoRigidBody* rb, PhysicsContactPair* contacts, int ma
 
     return count;
 }
+
+bool physics_create_from_def(ArmObject* obj, const PhysicsBodyDef* def) {
+    switch (def->shape) {
+        case PHYSICS_SHAPE_SPHERE:
+            return physics_create_sphere_full(obj, def->type, def->size[0], &def->params);
+        case PHYSICS_SHAPE_CAPSULE:
+            return physics_create_capsule_full(obj, def->type, def->size[0], def->size[1], &def->params);
+        case PHYSICS_SHAPE_MESH:
+            return physics_create_mesh_full(obj, def->mesh_vertices, def->mesh_indices,
+                                            def->mesh_vertex_count, def->mesh_index_count, &def->params);
+        default:
+            return physics_create_box_full(obj, def->type, def->size[0], def->size[1], def->size[2], &def->params);
+    }
+}

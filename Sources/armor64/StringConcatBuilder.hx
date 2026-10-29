@@ -52,7 +52,7 @@ class StringConcatBuilder {
         return node;
     }
 
-    // Most characters the formatted string can have, null if unknown (a
+    // Most UTF-8 bytes the formatted string can have, null if unknown (a
     // string argument that isn't a literal)
     static function maxLength(formatParts:Array<String>, args:Array<IRNode>):Null<Int> {
         var length = 0;
@@ -64,11 +64,11 @@ class StringConcatBuilder {
                 case "%d": length += 1;    // Bool: 0 or 1
                 case "%s":
                     var a = args[arg];
-                    var known = a != null ? a.maxLength != null ? a.maxLength : (a.type == "string" ? Std.string(a.value).length : null) : null;
+                    var known = a != null ? a.maxLength != null ? a.maxLength : (a.type == "string" ? N64MacroBase.utf8Length(Std.string(a.value)) : null) : null;
                     if (known == null) return null;
                     length += known;
                 default:
-                    length += part.length;
+                    length += N64MacroBase.utf8Length(part);
                     continue;
             }
             arg++;

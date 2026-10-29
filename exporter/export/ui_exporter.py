@@ -932,11 +932,8 @@ def copy_canvas_images(exporter):
 
 
 def write_label_h(exporter):
-    """Generate label.h from label.h.j2 template."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'label.h.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'label.h')
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl = f.read()
+    """Copy label.h and generate label_defs.h: the label keys, counts and sizes."""
+    n64_utils.copy_src('label.h', 'src/ui')
 
     label_defines_lines = []
     total_label_count = 0
@@ -961,26 +958,19 @@ def write_label_h(exporter):
         label_defines_lines.append('')
         total_label_count = max(total_label_count, len(labels))
 
-    output = tmpl.format(
-        canvas_width=320,
-        canvas_height=240,
-        label_defines='\n'.join(label_defines_lines) if label_defines_lines else '// No labels',
-        label_count=total_label_count,
-        max_labels=exporter.limits['UI_MAX_LABELS'],
-        max_label_text_size=exporter.limits['UI_LABEL_TEXT_SIZE'],
-    )
-    n64_utils.write_if_changed(out_path, output)
+    label_defines_lines += [f'#define UI_LABEL_COUNT      {total_label_count}',
+                            f'#define UI_MAX_LABELS       {exporter.limits["UI_MAX_LABELS"]}',
+                            f'#define UI_LABEL_TEXT_SIZE  {exporter.limits["UI_LABEL_TEXT_SIZE"]}']
+    n64_utils.write_generated('ui/label_defs.h', '\n'.join(label_defines_lines), 'ui_exporter.write_label_h', 'ui/label.h')
 
 
 def write_label_c(exporter):
-    """Generate label.c from label.c.j2 template."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'label.c.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'label.c')
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl = f.read()
+    """Copy label.c and generate label_data.h: each canvas's labels, and g_label_scenes
+    (the labels of each scene's canvas, by SceneId)."""
+    n64_utils.copy_src('label.c', 'src/ui')
 
     canvas_label_arrays = []
-    label_scene_init_cases = []
+    label_scenes = []
 
     for canvas_name, canvas in exporter.ui_canvas_data.items():
         labels = canvas.get('labels', [])
@@ -1013,23 +1003,15 @@ def write_label_c(exporter):
             continue
         safe_scene = arm.utils.safesrc(scene_name).upper()
         safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        label_scene_init_cases.append(f'        case SCENE_{safe_scene}:')
-        label_scene_init_cases.append(f'            load_labels(g_{safe_canvas}_label_defs, {safe_canvas.upper()}_LABEL_COUNT);')
-        label_scene_init_cases.append('            break;')
+        label_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_label_defs, {safe_canvas.upper()}_LABEL_COUNT }},')
 
-    output = tmpl.format(
-        canvas_label_arrays='\n'.join(canvas_label_arrays) if canvas_label_arrays else '// No labels defined',
-        label_scene_init_cases='\n'.join(label_scene_init_cases),
-    )
-    n64_utils.write_if_changed(out_path, output)
+    lines = canvas_label_arrays + ['static const LabelSceneDefs g_label_scenes[SCENE_COUNT] = {', *label_scenes, '};']
+    n64_utils.write_generated('ui/label_data.h', '\n'.join(lines), 'ui_exporter.write_label_c', 'ui/label.c')
 
 
 def write_image_h(exporter):
-    """Generate image.h from image.h.j2 template."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'image.h.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'image.h')
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl = f.read()
+    """Copy image.h and generate image_defs.h: the image keys, counts and sizes."""
+    n64_utils.copy_src('image.h', 'src/ui')
 
     image_defines_lines = []
     total_image_count = 0
@@ -1054,23 +1036,18 @@ def write_image_h(exporter):
         image_defines_lines.append('')
         total_image_count = max(total_image_count, len(images))
 
-    output = tmpl.format(
-        image_defines='\n'.join(image_defines_lines) if image_defines_lines else '// No images',
-        image_count=total_image_count,
-        max_images=exporter.limits['UI_MAX_IMAGES'],
-    )
-    n64_utils.write_if_changed(out_path, output)
+    image_defines_lines += [f'#define UI_IMAGE_COUNT  {total_image_count}',
+                            f'#define UI_MAX_IMAGES   {exporter.limits["UI_MAX_IMAGES"]}']
+    n64_utils.write_generated('ui/image_defs.h', '\n'.join(image_defines_lines), 'ui_exporter.write_image_h', 'ui/image.h')
 
 
 def write_image_c(exporter):
-    """Generate image.c from image.c.j2 template."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'image.c.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'image.c')
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl = f.read()
+    """Copy image.c and generate image_data.h: the sprite files (each loaded once),
+    each canvas's images, and g_image_scenes (by SceneId)."""
+    n64_utils.copy_src('image.c', 'src/ui')
 
     canvas_image_arrays = []
-    image_scene_init_cases = []
+    image_scenes = []
 
     # One entry per sprite file, so an image shown twice is loaded once
     def sprite_name(image):
@@ -1112,25 +1089,16 @@ def write_image_c(exporter):
             continue
         safe_scene = arm.utils.safesrc(scene_name).upper()
         safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        image_scene_init_cases.append(f'        case SCENE_{safe_scene}:')
-        image_scene_init_cases.append(f'            defs = g_{safe_canvas}_image_defs;')
-        image_scene_init_cases.append(f'            count = {safe_canvas.upper()}_IMAGE_COUNT;')
-        image_scene_init_cases.append('            break;')
+        image_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_image_defs, {safe_canvas.upper()}_IMAGE_COUNT }},')
 
-    output = tmpl.format(
-        sprite_paths='\n'.join(sprite_paths),
-        canvas_image_arrays='\n'.join(canvas_image_arrays) if canvas_image_arrays else '// No images defined',
-        image_scene_init_cases='\n'.join(image_scene_init_cases),
-    )
-    n64_utils.write_if_changed(out_path, output)
+    lines = sprite_paths + [''] + canvas_image_arrays
+    lines += ['static const ImageSceneDefs g_image_scenes[SCENE_COUNT] = {', *image_scenes, '};']
+    n64_utils.write_generated('ui/image_data.h', '\n'.join(lines), 'ui_exporter.write_image_c', 'ui/image.c')
 
 
 def write_button_h(exporter):
-    """Generate button.h from button.h.j2 template."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'button.h.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'button.h')
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl = f.read()
+    """Copy button.h and generate button_defs.h: the button keys, counts and sizes."""
+    n64_utils.copy_src('button.h', 'src/ui')
 
     button_defines_lines = []
     total_button_count = 0
@@ -1156,24 +1124,19 @@ def write_button_h(exporter):
         button_defines_lines.append('')
         total_button_count = max(total_button_count, len(buttons))
 
-    output = tmpl.format(
-        button_defines='\n'.join(button_defines_lines) if button_defines_lines else '// No buttons',
-        button_count=total_button_count,
-        max_buttons=exporter.limits['UI_MAX_BUTTONS'],
-        button_text_size=exporter.limits['UI_BUTTON_TEXT_SIZE'],
-    )
-    n64_utils.write_if_changed(out_path, output)
+    button_defines_lines += [f'#define UI_BUTTON_COUNT     {total_button_count}',
+                             f'#define UI_MAX_BUTTONS      {exporter.limits["UI_MAX_BUTTONS"]}',
+                             f'#define UI_BUTTON_TEXT_SIZE {exporter.limits["UI_BUTTON_TEXT_SIZE"]}']
+    n64_utils.write_generated('ui/button_defs.h', '\n'.join(button_defines_lines), 'ui_exporter.write_button_h', 'ui/button.h')
 
 
 def write_button_c(exporter):
-    """Generate button.c from button.c.j2 template."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'button.c.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'button.c')
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl = f.read()
+    """Copy button.c and generate button_data.h: each canvas's buttons, and g_button_scenes
+    (the buttons of each scene's canvas, by SceneId)."""
+    n64_utils.copy_src('button.c', 'src/ui')
 
     canvas_button_arrays = []
-    button_scene_init_cases = []
+    button_scenes = []
 
     for canvas_name, canvas in exporter.ui_canvas_data.items():
         buttons = canvas.get('buttons', [])
@@ -1226,23 +1189,15 @@ def write_button_c(exporter):
             continue
         safe_scene = arm.utils.safesrc(scene_name).upper()
         safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        button_scene_init_cases.append(f'        case SCENE_{safe_scene}:')
-        button_scene_init_cases.append(f'            load_buttons(g_{safe_canvas}_button_defs, {safe_canvas.upper()}_BUTTON_COUNT);')
-        button_scene_init_cases.append('            break;')
+        button_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_button_defs, {safe_canvas.upper()}_BUTTON_COUNT }},')
 
-    output = tmpl.format(
-        canvas_button_arrays='\n'.join(canvas_button_arrays) if canvas_button_arrays else '// No buttons defined',
-        button_scene_init_cases='\n'.join(button_scene_init_cases),
-    )
-    n64_utils.write_if_changed(out_path, output)
+    lines = canvas_button_arrays + ['static const ButtonSceneDefs g_button_scenes[SCENE_COUNT] = {', *button_scenes, '};']
+    n64_utils.write_generated('ui/button_data.h', '\n'.join(lines), 'ui_exporter.write_button_c', 'ui/button.c')
 
 
 def write_panel_h(exporter):
-    """Generate panel.h from panel.h.j2 template."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'panel.h.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'panel.h')
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl = f.read()
+    """Copy panel.h and generate panel_defs.h: the panel keys, counts and sizes."""
+    n64_utils.copy_src('panel.h', 'src/ui')
 
     panel_defines_lines = []
     total_panel_count = 0
@@ -1267,23 +1222,18 @@ def write_panel_h(exporter):
         panel_defines_lines.append('')
         total_panel_count = max(total_panel_count, len(panels))
 
-    output = tmpl.format(
-        panel_defines='\n'.join(panel_defines_lines) if panel_defines_lines else '// No panels',
-        panel_count=total_panel_count,
-        max_panels=exporter.limits['UI_MAX_PANELS'],
-    )
-    n64_utils.write_if_changed(out_path, output)
+    panel_defines_lines += [f'#define UI_PANEL_COUNT  {total_panel_count}',
+                            f'#define UI_MAX_PANELS   {exporter.limits["UI_MAX_PANELS"]}']
+    n64_utils.write_generated('ui/panel_defs.h', '\n'.join(panel_defines_lines), 'ui_exporter.write_panel_h', 'ui/panel.h')
 
 
 def write_panel_c(exporter):
-    """Generate panel.c from panel.c.j2 template."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'panel.c.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'panel.c')
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl = f.read()
+    """Copy panel.c and generate panel_data.h: each canvas's panels, and g_panel_scenes
+    (the panels of each scene's canvas, by SceneId)."""
+    n64_utils.copy_src('panel.c', 'src/ui')
 
     canvas_panel_arrays = []
-    panel_scene_init_cases = []
+    panel_scenes = []
 
     for canvas_name, canvas in exporter.ui_canvas_data.items():
         panels = canvas.get('panels', [])
@@ -1314,24 +1264,15 @@ def write_panel_c(exporter):
             continue
         safe_scene = arm.utils.safesrc(scene_name).upper()
         safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        panel_scene_init_cases.append(f'        case SCENE_{safe_scene}:')
-        panel_scene_init_cases.append(f'            load_panels(g_{safe_canvas}_panel_defs, {safe_canvas.upper()}_PANEL_COUNT);')
-        panel_scene_init_cases.append('            break;')
+        panel_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_panel_defs, {safe_canvas.upper()}_PANEL_COUNT }},')
 
-    output = tmpl.format(
-        canvas_panel_arrays='\n'.join(canvas_panel_arrays) if canvas_panel_arrays else '// No panels defined',
-        panel_scene_init_cases='\n'.join(panel_scene_init_cases),
-    )
-    n64_utils.write_if_changed(out_path, output)
+    lines = canvas_panel_arrays + ['static const PanelSceneDefs g_panel_scenes[SCENE_COUNT] = {', *panel_scenes, '};']
+    n64_utils.write_generated('ui/panel_data.h', '\n'.join(lines), 'ui_exporter.write_panel_c', 'ui/panel.c')
 
 
 def write_canvas_h(exporter):
-    """Generate canvas.h from template (group/element content only)."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'canvas.h.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'canvas.h')
-
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
+    """Copy canvas.h and generate canvas_defs.h: group and Koui scene keys, counts."""
+    n64_utils.copy_src('canvas.h', 'src/ui')
 
     # Build group defines
     group_defines_lines = []
@@ -1377,26 +1318,19 @@ def write_canvas_h(exporter):
             ui_scene_defines_lines.append('')
             max_ui_scene_count = max(max_ui_scene_count, len(ui_scenes))
 
-    output = tmpl_content.format(
-        group_defines='\n'.join(group_defines_lines) if group_defines_lines else '// No groups',
-        group_count=total_group_count,
-        element_count=total_element_count,
-        max_groups=exporter.limits['UI_MAX_GROUPS'],
-        max_group_children=exporter.limits['UI_MAX_GROUP_CHILDREN'],
-        ui_scene_defines='\n'.join(ui_scene_defines_lines) if ui_scene_defines_lines else '// No UI scenes',
-        ui_scene_count=max_ui_scene_count,
-    )
-
-    n64_utils.write_if_changed(out_path, output)
+    lines = group_defines_lines + ui_scene_defines_lines
+    lines += [f'#define UI_GROUP_COUNT {total_group_count}',
+              f'#define UI_ELEMENT_COUNT {total_element_count}',
+              f'#define UI_SCENE_COUNT {max_ui_scene_count}',
+              f'#define UI_MAX_GROUPS         {exporter.limits["UI_MAX_GROUPS"]}',
+              f'#define UI_MAX_GROUP_CHILDREN {exporter.limits["UI_MAX_GROUP_CHILDREN"]}']
+    n64_utils.write_generated('ui/canvas_defs.h', '\n'.join(lines), 'ui_exporter.write_canvas_h', 'ui/canvas.h')
 
 
 def write_canvas_c(exporter):
-    """Generate canvas.c from template (group/element arrays + font registration)."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'canvas.c.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'canvas.c')
-
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
+    """Copy canvas.c and generate canvas_data.h: each canvas's groups, elements and
+    Koui scenes, the tables of each scene's (by SceneId), and the text colors."""
+    n64_utils.copy_src('canvas.c', 'src/ui')
 
     # Build per-canvas group definition arrays
     canvas_group_arrays = []
@@ -1447,28 +1381,21 @@ def write_canvas_c(exporter):
         canvas_element_arrays.append('};')
         canvas_element_arrays.append('')
 
-    # Build group/element scene init switch cases
-    scene_switch_cases = []
+    # The groups, elements and Koui scenes of each scene's canvas, by SceneId
+    group_scenes, element_scenes, koui_scenes = [], [], []
     for scene_name, data in exporter.scene_data.items():
         canvas_name = data.get('canvas')
         if not canvas_name or canvas_name not in exporter.ui_canvas_data:
             continue
         canvas = exporter.ui_canvas_data[canvas_name]
-        group_count = len(canvas.get('groups', []))
-        element_count = len(canvas.get('elements', []))
-        ui_scene_count = len(canvas.get('ui_scenes', []))
-        if group_count == 0 and element_count == 0 and ui_scene_count == 0:
-            continue
         safe_scene = arm.utils.safesrc(scene_name).upper()
         safe_canvas = arm.utils.safesrc(canvas_name).lower()
-        scene_switch_cases.append(f'        case SCENE_{safe_scene}:')
-        if group_count > 0:
-            scene_switch_cases.append(f'            load_groups(g_{safe_canvas}_group_defs, {safe_canvas.upper()}_GROUP_COUNT);')
-        if element_count > 0:
-            scene_switch_cases.append(f'            load_elements(g_{safe_canvas}_element_defs, {safe_canvas.upper()}_ELEMENT_COUNT);')
-        if ui_scene_count > 0:
-            scene_switch_cases.append(f'            load_ui_scenes(g_{safe_canvas}_ui_scene_defs, {safe_canvas.upper()}_UI_SCENE_COUNT);')
-        scene_switch_cases.append('            break;')
+        if canvas.get('groups'):
+            group_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_group_defs, {safe_canvas.upper()}_GROUP_COUNT }},')
+        if canvas.get('elements'):
+            element_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_element_defs, {safe_canvas.upper()}_ELEMENT_COUNT }},')
+        if canvas.get('ui_scenes'):
+            koui_scenes.append(f'    [SCENE_{safe_scene}] = {{ g_{safe_canvas}_ui_scene_defs, {safe_canvas.upper()}_UI_SCENE_COUNT }},')
 
     # Build per-canvas UI scene range arrays
     canvas_ui_scene_arrays = []
@@ -1491,49 +1418,23 @@ def write_canvas_c(exporter):
             )
         canvas_ui_scene_arrays.append('};')
         canvas_ui_scene_arrays.append('')
-        scene_switch_cases.append('            break;')
 
-    # Build font style registration code
-    style_registration_lines = []
-    if exporter.exported_fonts:
-        for font_key, font_info in sorted(exporter.exported_fonts.items(), key=lambda x: x[1]['font_id']):
-            font_id = font_info['font_id']
-            if font_id == 0:
-                if exporter.color_style_map:
-                    style_registration_lines.append(f'    // Font 0 styles (default font)')
-                    style_registration_lines.append(f'    {{')
-                    style_registration_lines.append(f'        rdpq_font_t *font_0 = fonts_get(0);')
-                    style_registration_lines.append(f'        if (font_0) {{')
-                    for color, style_id in sorted(exporter.color_style_map.items(), key=lambda x: x[1]):
-                        r, g, b, a = color
-                        style_registration_lines.append(
-                            f'            rdpq_font_style(font_0, {style_id}, &(rdpq_fontstyle_t){{ .color = RGBA32({r}, {g}, {b}, {a}) }});'
-                        )
-                    style_registration_lines.append(f'        }}')
-                    style_registration_lines.append(f'    }}')
-                continue
-            style_registration_lines.append(f'    // Font {font_id}: {font_key}')
-            style_registration_lines.append(f'    {{')
-            style_registration_lines.append(f'        rdpq_font_t *font_{font_id} = fonts_get({font_id});')
-            if exporter.color_style_map:
-                style_registration_lines.append(f'        if (font_{font_id}) {{')
-                for color, style_id in sorted(exporter.color_style_map.items(), key=lambda x: x[1]):
-                    r, g, b, a = color
-                    style_registration_lines.append(
-                        f'            rdpq_font_style(font_{font_id}, {style_id}, &(rdpq_fontstyle_t){{ .color = RGBA32({r}, {g}, {b}, {a}) }});'
-                    )
-                style_registration_lines.append(f'        }}')
-            style_registration_lines.append(f'    }}')
+    # The text colors: font style ids, the same on every font size (canvas_init)
+    colors = sorted(exporter.color_style_map.items(), key=lambda x: x[1])
+    style_lines = [f'#define UI_FONT_STYLE_COUNT {len(colors)}',
+                   f'static const color_t g_font_style_colors[{max(len(colors), 1)}] = {{']
+    style_lines += [f'    {{ .r = {r}, .g = {g}, .b = {b}, .a = {a} }},' for (r, g, b, a), _ in colors]
+    style_lines.append('};')
 
-    output = tmpl_content.format(
-        canvas_group_arrays='\n'.join(canvas_group_arrays) if canvas_group_arrays else '// No groups defined',
-        canvas_element_arrays='\n'.join(canvas_element_arrays) if canvas_element_arrays else '// No elements defined',
-        canvas_ui_scene_arrays='\n'.join(canvas_ui_scene_arrays) if canvas_ui_scene_arrays else '// No UI scenes defined',
-        group_element_scene_init_cases='\n'.join(scene_switch_cases),
-        font_style_registration='\n'.join(style_registration_lines) if style_registration_lines else '    // No custom styles defined'
-    )
-
-    n64_utils.write_if_changed(out_path, output)
+    lines = canvas_group_arrays + canvas_element_arrays + canvas_ui_scene_arrays
+    if group_scenes:
+        lines += ['static const GroupSceneDefs g_group_scenes[SCENE_COUNT] = {', *group_scenes, '};', '']
+    if element_scenes:
+        lines += ['static const ElementSceneDefs g_element_scenes[SCENE_COUNT] = {', *element_scenes, '};', '']
+    if koui_scenes:
+        lines += ['static const KouiSceneDefs g_koui_scenes[SCENE_COUNT] = {', *koui_scenes, '};', '']
+    lines += style_lines
+    n64_utils.write_generated('ui/canvas_data.h', '\n'.join(lines), 'ui_exporter.write_canvas_c', 'ui/canvas.c')
 
 
 def write_fonts(exporter):
@@ -1603,48 +1504,27 @@ def write_fonts(exporter):
 
 
 def write_fonts_c(exporter):
-    """Generate fonts.c from template."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'fonts.c.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'fonts.c')
+    """Copy fonts.c and generate fonts_data.h: the font files, by FontId."""
+    n64_utils.copy_src('fonts.c', 'src/ui')
 
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
-
-    lines = []
+    lines = ['static const char *FONT_PATHS[FONT_COUNT] = {']
     sorted_fonts = sorted(exporter.exported_fonts.items(), key=lambda x: x[1]['font_id'])
-    for font_key, font_info in sorted_fonts:
-        lines.append(f'    "rom:/{font_key}.font64"')
-    font_paths = ',\n'.join(lines)
-
-    output = tmpl_content.format(
-        font_paths=font_paths,
-        font_count=len(exporter.exported_fonts)
-    )
-
-    n64_utils.write_if_changed(out_path, output)
+    lines += [f'    "rom:/{font_key}.font64",' for font_key, _ in sorted_fonts]
+    lines.append('};')
+    n64_utils.write_generated('ui/fonts_data.h', '\n'.join(lines), 'ui_exporter.write_fonts_c', 'ui/fonts.c')
 
 
 def write_fonts_h(exporter):
-    """Generate fonts.h from template."""
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'ui', 'fonts.h.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'ui', 'fonts.h')
+    """Copy fonts.h and generate fonts_defs.h: FontId."""
+    n64_utils.copy_src('fonts.h', 'src/ui')
 
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
-
-    lines = []
+    lines = ['typedef enum {']
     sorted_fonts = sorted(exporter.exported_fonts.items(), key=lambda x: x[1]['font_id'])
     for font_key, font_info in sorted_fonts:
         enum_name = font_key.upper().replace('-', '_').replace(' ', '_')
         lines.append(f'    FONT_{enum_name} = {font_info["font_id"]},')
-    font_enum_entries = '\n'.join(lines)
-
-    output = tmpl_content.format(
-        font_enum_entries=font_enum_entries,
-        font_count=len(exporter.exported_fonts)
-    )
-
-    n64_utils.write_if_changed(out_path, output)
+    lines += [f'    FONT_COUNT = {len(exporter.exported_fonts)}', '} FontId;']
+    n64_utils.write_generated('ui/fonts_defs.h', '\n'.join(lines), 'ui_exporter.write_fonts_h', 'ui/fonts.h')
 
 
 def _assign_font_ids_to_labels(exporter):

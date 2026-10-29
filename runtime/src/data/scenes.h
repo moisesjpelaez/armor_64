@@ -1,21 +1,20 @@
-/* N64 Exporter - Generated scene declarations
- * This file is auto-generated from Blender scenes. Do not edit.
- * Template: scenes.h.j2
- */
+// Scenes: ids, lifecycle dispatch, switching. Scene ids: scenes_defs.h (generated).
 #pragma once
 
 #include "../types.h"
 
 #ifdef __cplusplus
-extern "C" {{
+extern "C" {
 #endif
 
-typedef enum SceneId {{
-{scene_enum_entries}
-    SCENE_COUNT = {scene_count}
-}} SceneId;
+// SceneId (SCENE_<name>, SCENE_COUNT), each scene's definition (scene_def_<name>),
+// and the shared storage's sizes (SCENE_MAX_*: the largest scene's)
+#include "scenes_defs.h"
 
-{scene_declarations}
+// The current scene's objects, cameras and lights (trait data points into them)
+extern ArmObject g_scene_objects[SCENE_MAX_OBJECTS];
+extern ArmCamera g_scene_cameras[SCENE_MAX_CAMERAS];
+extern ArmLight g_scene_lights[SCENE_MAX_LIGHTS];
 
 void scene_init(SceneId id);
 const bool *scene_models(SceneId id);  // The models it uses, indexed by ModelId
@@ -38,20 +37,10 @@ void scene_clear_pending(void);
 
 ArmScene *scene_get(SceneId id);
 
-// Object pool management
-// Recycle a removed object's slot back to the pool for reuse
-void scene_recycle_object(SceneId id, ArmObject *obj);
-
-// Allocate an object slot from the pool (returns NULL if pool exhausted)
-ArmObject *scene_alloc_object(SceneId id);
-
-// Get count of active (non-removed) objects
-uint16_t scene_get_active_count(SceneId id);
-
 // Get count of objects in a named group for the current scene
 // Returns 0 if group not found
 uint16_t scene_get_group_count(const char *group_name);
 
 #ifdef __cplusplus
-}}
+}
 #endif

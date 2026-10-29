@@ -32,55 +32,14 @@ def write_makefile(exporter):
     with open(tmpl_path, 'r', encoding='utf-8') as f:
         tmpl_content = f.read()
 
-    scene_lines = []
+    scene_files = []
     for scene in bpy.data.scenes:
         if scene.library:
             continue
         if linked_export.is_temp_scene(scene):
             continue
-        scene_name = arm.utils.safesrc(scene.name).lower()
-        scene_lines.append(f'    src/scenes/{scene_name}.c')
-    scene_files = '\\\n'.join(scene_lines)
-
-    # Physics source files (only if physics is used)
-    if exporter.has_physics:
-        physics_debug_mode = n64_utils.get_physics_debug_mode()
-        if physics_debug_mode > 0:
-            physics_sources = '''src +=\\
-    src/events/physics_events.c \\
-    src/oimo/physics.c \\
-    src/oimo/debug/physics_debug.c \\
-    src/oimo/collision/geometry/geometry.c'''
-        else:
-            physics_sources = '''src +=\\
-    src/oimo/physics.c \\
-    src/events/physics_events.c \\
-    src/oimo/collision/geometry/geometry.c'''
-    else:
-        physics_sources = '# No physics'
-
-    # UI source files (only if UI elements are used)
-    if exporter.has_ui:
-        ui_sources = '''src +=\\
-    src/ui/fonts.c \\
-    src/ui/label.c \\
-    src/ui/image.c \\
-    src/ui/button.c \\
-    src/ui/panel.c \\
-    src/ui/canvas.c'''
-    else:
-        ui_sources = '# No UI'
-
-    # Autoload source files (only if autoloads exist)
-    if exporter.autoload_info.get('has_autoloads', False):
-        autoload_lines = ['src +=\\']
-        for c_name in exporter.autoload_info.get('autoloads', []):
-            autoload_lines.append(f'    src/autoloads/{c_name}.c \\')
-        # Remove trailing backslash from last line
-        autoload_lines[-1] = autoload_lines[-1].rstrip(' \\')
-        autoload_sources = '\n'.join(autoload_lines)
-    else:
-        autoload_sources = '# No autoloads'
+        scene_files.append(f'src/scenes/{arm.utils.safesrc(scene.name).lower()}.c')
+    autoload_files = [f'src/autoloads/{c_name}.c' for c_name in exporter.autoload_info.get('autoloads', [])]
 
     # Generate font targets and rules for each size variant
     font_targets, font_rules = ui_exporter.generate_font_makefile_entries(exporter)
@@ -91,13 +50,6 @@ def write_makefile(exporter):
     # Generate audio targets and rules
     audio_targets, audio_rules = audio_exporter.generate_audio_makefile_entries(exporter.exported_audio)
 
-    # Audio source files (only if audio is used)
-    if exporter.has_audio:
-        audio_sources = '''src +=\\
-    src/audio/audio.c'''
-    else:
-        audio_sources = '# No audio'
-
     tiny3d_path = n64_utils.get_tiny3d_path()
     if not os.path.isdir(tiny3d_path):
         log.warn(f'tiny3d library not found at: {tiny3d_path}. Clone it into the project Libraries directory.')
@@ -107,11 +59,12 @@ def write_makefile(exporter):
     output = tmpl_content.format(
         tiny3d_path=tiny3d_rel,
         game_title=arm.utils.safestr(wrd.arm_project_name),
-        scene_files=scene_files,
-        physics_sources=physics_sources,
-        canvas_sources=ui_sources,
-        autoload_sources=autoload_sources,
-        audio_sources=audio_sources,
+        enable_physics=1 if exporter.has_physics else 0,
+        enable_physics_debug=1 if n64_utils.get_physics_debug_mode() > 0 else 0,
+        enable_ui=1 if exporter.has_ui else 0,
+        enable_audio=1 if exporter.has_audio else 0,
+        scene_files=_make_list(scene_files),
+        autoload_files=_make_list(autoload_files),
         font_targets=font_targets,
         font_rules=font_rules,
         ui_sprite_rules=ui_sprite_rules,
@@ -120,6 +73,11 @@ def write_makefile(exporter):
     )
 
     n64_utils.write_if_changed(out_path, output)
+
+
+def _make_list(paths):
+    """Paths as a Makefile list, one per line."""
+    return ' \\\n    '.join(paths)
 
 
 def _tiny3d_relpath():

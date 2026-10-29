@@ -1,7 +1,4 @@
-/* N64 Exporter - UI Label implementation
- * Auto-generated from Koui canvas data. Do not edit directly.
- * Template: label.c.j2
- */
+// UI labels: the pool, scene loading and drawing. Canvas data: label_data.h (generated).
 #include "label.h"
 #include "ui_anchor.h"
 #include "fonts.h"
@@ -29,7 +26,7 @@ static uint8_t  g_default_font_rdpq_id = 0;
 // Compile-time definition struct (static data, pointer to string literal)
 // ============================================================================
 
-typedef struct {{
+typedef struct {
     const char *text;
     int16_t pos_x, pos_y;
     int16_t width, height;
@@ -43,7 +40,7 @@ typedef struct {{
     uint8_t shadow_style_id;
     uint8_t align_h;
     int16_t align_width;
-}} UILabelDef;
+} UILabelDef;
 
 // Anchor helpers provided by ui_anchor.h (shared across label/image/panel)
 
@@ -51,14 +48,20 @@ typedef struct {{
 // Per-canvas static label definition arrays
 // ============================================================================
 
-{canvas_label_arrays}
+// The label of each scene's canvas (g_label_scenes, generated)
+typedef struct {
+    const UILabelDef *defs;
+    uint16_t count;
+} LabelSceneDefs;
+
+#include "label_data.h"
 
 // ============================================================================
 // Internal load helper
 // ============================================================================
 
-static void load_labels(const UILabelDef *defs, int count) {{
-    for (int i = 0; i < count; i++) {{
+static void load_labels(const UILabelDef *defs, int count) {
+    for (int i = 0; i < count; i++) {
         const UILabelDef *def = &defs[i];
         UILabel *label = ui_label_create(def->text);
         if (!label) continue;
@@ -78,44 +81,42 @@ static void load_labels(const UILabelDef *defs, int count) {{
         ui_label_add(label);
         if (g_canvas_label_count < UI_LABEL_COUNT)
             g_canvas_labels[g_canvas_label_count++] = label;
-    }}
-}}
+    }
+}
 
 // ============================================================================
 // Scene init switch (one case per canvas that has labels)
 // ============================================================================
 
-void label_scene_init(SceneId scene_id) {{
-    switch (scene_id) {{
-{label_scene_init_cases}
-        default: break;
-    }}
-}}
+void label_scene_init(SceneId scene_id) {
+    const LabelSceneDefs *scene = &g_label_scenes[scene_id];
+    if (scene->count > 0) load_labels(scene->defs, scene->count);
+}
 
 // ============================================================================
 // Public API
 // ============================================================================
 
-void label_init(void) {{
+void label_init(void) {
     rdpq_font_t *font = fonts_get(0);
     if (font)
         g_default_font_rdpq_id = fonts_get_rdpq_id(0);
-}}
+}
 
-void label_clear(void) {{
+void label_clear(void) {
     g_label_pool_used     = 0;
     g_label_render_count  = 0;
     g_canvas_label_count  = 0;
     memset(g_label_pool,        0, sizeof(g_label_pool));
     memset(g_label_render_list, 0, sizeof(g_label_render_list));
     memset(g_canvas_labels,     0, sizeof(g_canvas_labels));
-}}
+}
 
-UILabel* ui_label_create(const char *text) {{
-    if (g_label_pool_used >= UI_MAX_LABELS) {{
+UILabel* ui_label_create(const char *text) {
+    if (g_label_pool_used >= UI_MAX_LABELS) {
         ARM_LIMIT_REACHED(UI_MAX_LABELS);
         return NULL;
-    }}
+    }
     UILabel *label = &g_label_pool[g_label_pool_used++];
     label->text[0] = '\0';
     ui_label_set_text(label, text);  // Reports text that doesn't fit
@@ -126,84 +127,84 @@ UILabel* ui_label_create(const char *text) {{
     label->style_id        = 0;
     label->visible         = true;
     return label;
-}}
+}
 
-void ui_label_add(UILabel *label) {{
+void ui_label_add(UILabel *label) {
     if (!label || g_label_render_count >= UI_MAX_LABELS) return;
     for (uint8_t i = 0; i < g_label_render_count; i++)
         if (g_label_render_list[i] == label) return;
     g_label_render_list[g_label_render_count++] = label;
-}}
+}
 
-void ui_label_remove(UILabel *label) {{
+void ui_label_remove(UILabel *label) {
     if (!label) return;
-    for (uint8_t i = 0; i < g_label_render_count; i++) {{
-        if (g_label_render_list[i] == label) {{
+    for (uint8_t i = 0; i < g_label_render_count; i++) {
+        if (g_label_render_list[i] == label) {
             g_label_render_list[i] = g_label_render_list[--g_label_render_count];
             break;
-        }}
-    }}
-}}
+        }
+    }
+}
 
-void ui_label_set_position(UILabel *label, int16_t x, int16_t y) {{
-    if (label) {{ label->pos_x = x; label->pos_y = y; }}
-}}
+void ui_label_set_position(UILabel *label, int16_t x, int16_t y) {
+    if (label) { label->pos_x = x; label->pos_y = y; }
+}
 
-void ui_label_set_text(UILabel *label, const char *text) {{
+void ui_label_set_text(UILabel *label, const char *text) {
     if (!label || !text) return;
     size_t len = strlen(text);
-    if (len >= UI_LABEL_TEXT_SIZE) {{
+    if (len >= UI_LABEL_TEXT_SIZE) {
         ARM_LIMIT_REACHED(UI_LABEL_TEXT_SIZE);
         len = UI_LABEL_TEXT_SIZE - 1;
-    }}
+    }
     memcpy(label->text, text, len);
     label->text[len] = '\0';
-}}
+}
 
-UILabel* canvas_get_label(int index) {{
+UILabel* canvas_get_label(int index) {
     if (index >= 0 && index < g_canvas_label_count)
         return g_canvas_labels[index];
     return NULL;
-}}
+}
 
-void label_render(void) {{
+void label_render(void) {
     if (g_label_render_count == 0 || g_default_font_rdpq_id == 0) return;
 
     rdpq_set_mode_standard();
     rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
 
-    for (uint8_t i = 0; i < g_label_render_count; i++) {{
+    for (uint8_t i = 0; i < g_label_render_count; i++) {
         UILabel *label = g_label_render_list[i];
         if (!label || !label->visible) continue;
 
-        rdpq_textparms_t parms = {{
+        rdpq_textparms_t parms = {
             .style_id = label->style_id,
             .align    = label->align_h,
             .width    = label->align_width,
-        }};
+        };
 
-        if (label->shadow) {{
-            rdpq_textparms_t sp = {{
+        if (label->shadow) {
+            rdpq_textparms_t sp = {
                 .style_id = label->shadow_style_id,
                 .align    = label->align_h,
                 .width    = label->align_width,
-            }};
+            };
             rdpq_text_print(&sp, label->font_id,
                 label->pos_x + label->shadow_dx,
                 label->pos_y + label->baseline_offset + label->shadow_dy,
                 label->text);
-        }}
+        }
 
         rdpq_text_print(&parms, label->font_id,
             label->pos_x, label->pos_y + label->baseline_offset, label->text);
-    }}
-}}
+    }
+}
 
-uint32_t label_state_hash(uint32_t h) {{
+uint32_t label_state_hash(uint32_t h) {
     h = ui_hash(h, &g_label_render_count, sizeof(g_label_render_count));
     for (uint8_t i = 0; i < g_label_render_count; i++)
         h = ui_hash(h, g_label_render_list[i], sizeof(UILabel));
     return h;
-}}
+}
 
 #endif // UI_LABEL_COUNT > 0

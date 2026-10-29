@@ -1,7 +1,4 @@
-/* N64 Exporter - UI Image implementation
- * Auto-generated from Koui canvas data. Do not edit directly.
- * Template: image.c.j2
- */
+// UI images: sprites, the pool, scene loading and drawing. Canvas data: image_data.h (generated).
 #include "image.h"
 #include "label.h"
 #include "ui_anchor.h"
@@ -27,7 +24,7 @@ static int      g_canvas_image_count = 0;
 // Compile-time definition struct
 // ============================================================================
 
-typedef struct {{
+typedef struct {
     uint8_t sprite_id;  // Index in UI_SPRITE_PATHS
     int16_t pos_x, pos_y;
     int16_t width, height;
@@ -36,7 +33,7 @@ typedef struct {{
     bool    visible;
     uint8_t align_h;
     int16_t align_width;
-}} UIImageDef;
+} UIImageDef;
 
 // Anchor helpers provided by ui_anchor.h (shared across label/image/panel)
 
@@ -44,26 +41,27 @@ typedef struct {{
 // Sprite files (each loaded once, shared by every image that shows it)
 // ============================================================================
 
-{sprite_paths}
+// The image of each scene's canvas (g_image_scenes, generated)
+typedef struct {
+    const UIImageDef *defs;
+    uint16_t count;
+} ImageSceneDefs;
+
+// UI_SPRITE_COUNT, UI_SPRITE_PATHS, the canvases' image definitions, g_image_scenes
+#include "image_data.h"
 
 static sprite_t *g_sprites[UI_SPRITE_COUNT];
-
-// ============================================================================
-// Per-canvas static image definition arrays
-// ============================================================================
-
-{canvas_image_arrays}
 
 // ============================================================================
 // Internal load helper
 // ============================================================================
 
-static void load_images(const UIImageDef *defs, int count) {{
-    for (int i = 0; i < count; i++) {{
+static void load_images(const UIImageDef *defs, int count) {
+    for (int i = 0; i < count; i++) {
         const UIImageDef *def = &defs[i];
-        if (!g_sprites[def->sprite_id]) {{
+        if (!g_sprites[def->sprite_id]) {
             g_sprites[def->sprite_id] = sprite_load(UI_SPRITE_PATHS[def->sprite_id]);
-        }}
+        }
         UIImage *image = ui_image_create(g_sprites[def->sprite_id]);
         if (!image) continue;
         image->pos_x      = ui_anchor_x(def->pos_x, def->width, def->anchor, CANVAS_WIDTH);
@@ -78,8 +76,8 @@ static void load_images(const UIImageDef *defs, int count) {{
         ui_image_add(image);
         if (g_canvas_image_count < UI_IMAGE_COUNT)
             g_canvas_images[g_canvas_image_count++] = image;
-    }}
-}}
+    }
+}
 
 // ============================================================================
 // Scene init switch
@@ -87,32 +85,28 @@ static void load_images(const UIImageDef *defs, int count) {{
 
 // Frees the sprites the scene's canvas doesn't show, then loads its images.
 // Called on a scene switch after rspq_wait(): no freed sprite is still being drawn
-void image_scene_init(SceneId scene_id) {{
-    const UIImageDef *defs = NULL;
-    int count = 0;
-    switch (scene_id) {{
-{image_scene_init_cases}
-        default: break;
-    }}
+void image_scene_init(SceneId scene_id) {
+    const UIImageDef *defs = g_image_scenes[scene_id].defs;
+    int count = g_image_scenes[scene_id].count;
 
-    bool keep[UI_SPRITE_COUNT] = {{ false }};
-    for (int i = 0; i < count; i++) {{
+    bool keep[UI_SPRITE_COUNT] = { false };
+    for (int i = 0; i < count; i++) {
         keep[defs[i].sprite_id] = true;
-    }}
-    for (int s = 0; s < UI_SPRITE_COUNT; s++) {{
-        if (g_sprites[s] && !keep[s]) {{
+    }
+    for (int s = 0; s < UI_SPRITE_COUNT; s++) {
+        if (g_sprites[s] && !keep[s]) {
             sprite_free(g_sprites[s]);
             g_sprites[s] = NULL;
-        }}
-    }}
+        }
+    }
     load_images(defs, count);
-}}
+}
 
 // ============================================================================
 // Public API
 // ============================================================================
 
-void image_clear(void) {{
+void image_clear(void) {
     // Sprites stay loaded: image_scene_init() keeps the next scene's
     g_image_pool_used     = 0;
     g_image_render_count  = 0;
@@ -120,13 +114,13 @@ void image_clear(void) {{
     memset(g_image_pool,        0, sizeof(g_image_pool));
     memset(g_image_render_list, 0, sizeof(g_image_render_list));
     memset(g_canvas_images,     0, sizeof(g_canvas_images));
-}}
+}
 
-UIImage* ui_image_create(sprite_t *sprite) {{
-    if (g_image_pool_used >= UI_MAX_IMAGES) {{
+UIImage* ui_image_create(sprite_t *sprite) {
+    if (g_image_pool_used >= UI_MAX_IMAGES) {
         ARM_LIMIT_REACHED(UI_MAX_IMAGES);
         return NULL;
-    }}
+    }
     UIImage *image     = &g_image_pool[g_image_pool_used++];
     image->sprite      = sprite;
     image->pos_x       = 0;
@@ -136,40 +130,40 @@ UIImage* ui_image_create(sprite_t *sprite) {{
     image->scale       = false;
     image->visible     = true;
     return image;
-}}
+}
 
-void ui_image_add(UIImage *image) {{
+void ui_image_add(UIImage *image) {
     if (!image || g_image_render_count >= UI_MAX_IMAGES) return;
     for (uint8_t i = 0; i < g_image_render_count; i++)
         if (g_image_render_list[i] == image) return;
     g_image_render_list[g_image_render_count++] = image;
-}}
+}
 
-void ui_image_remove(UIImage *image) {{
+void ui_image_remove(UIImage *image) {
     if (!image) return;
-    for (uint8_t i = 0; i < g_image_render_count; i++) {{
-        if (g_image_render_list[i] == image) {{
+    for (uint8_t i = 0; i < g_image_render_count; i++) {
+        if (g_image_render_list[i] == image) {
             g_image_render_list[i] = g_image_render_list[--g_image_render_count];
             break;
-        }}
-    }}
-}}
+        }
+    }
+}
 
-void ui_image_set_position(UIImage *image, int16_t x, int16_t y) {{
-    if (image) {{ image->pos_x = x; image->pos_y = y; }}
-}}
+void ui_image_set_position(UIImage *image, int16_t x, int16_t y) {
+    if (image) { image->pos_x = x; image->pos_y = y; }
+}
 
-void ui_image_set_size(UIImage *image, int16_t width, int16_t height) {{
-    if (image) {{ image->width = width; image->height = height; }}
-}}
+void ui_image_set_size(UIImage *image, int16_t width, int16_t height) {
+    if (image) { image->width = width; image->height = height; }
+}
 
-UIImage* canvas_get_image(int index) {{
+UIImage* canvas_get_image(int index) {
     if (index >= 0 && index < g_canvas_image_count)
         return g_canvas_images[index];
     return NULL;
-}}
+}
 
-void image_render(void) {{
+void image_render(void) {
     if (g_image_render_count == 0) return;
 
     rdpq_set_mode_standard();
@@ -177,7 +171,7 @@ void image_render(void) {{
     rdpq_mode_combiner(RDPQ_COMBINER_TEX);
     rdpq_mode_blender(RDPQ_BLENDER_MULTIPLY);
 
-    for (uint8_t i = 0; i < g_image_render_count; i++) {{
+    for (uint8_t i = 0; i < g_image_render_count; i++) {
         UIImage *image = g_image_render_list[i];
         if (!image || !image->visible || !image->sprite) continue;
 
@@ -187,22 +181,22 @@ void image_render(void) {{
         else if (image->align_h == 2 && image->align_width > 0)
             render_x = image->pos_x + image->align_width - image->width;
 
-        if (image->scale) {{
+        if (image->scale) {
             float sx = (float)image->width  / (float)image->sprite->width;
             float sy = (float)image->height / (float)image->sprite->height;
             rdpq_sprite_blit(image->sprite, render_x, image->pos_y,
-                &(rdpq_blitparms_t){{ .scale_x = sx, .scale_y = sy }});
-        }} else {{
+                &(rdpq_blitparms_t){ .scale_x = sx, .scale_y = sy });
+        } else {
             rdpq_sprite_blit(image->sprite, render_x, image->pos_y, NULL);
-        }}
-    }}
-}}
+        }
+    }
+}
 
-uint32_t image_state_hash(uint32_t h) {{
+uint32_t image_state_hash(uint32_t h) {
     h = ui_hash(h, &g_image_render_count, sizeof(g_image_render_count));
     for (uint8_t i = 0; i < g_image_render_count; i++)
         h = ui_hash(h, g_image_render_list[i], sizeof(UIImage));
     return h;
-}}
+}
 
 #endif // UI_IMAGE_COUNT > 0

@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 #include "limits.h"
 
 #ifdef __cplusplus
@@ -29,6 +30,12 @@ static inline char* _str_get_buffer(void) {
     char* buf = _str_fmt_buffers[_str_fmt_buffer_idx];
     _str_fmt_buffer_idx = (_str_fmt_buffer_idx + 1) % STR_FMT_BUFFER_COUNT;
     return buf;
+}
+
+// StringTools.endsWith
+static inline bool str_ends_with(const char* s, const char* end) {
+    size_t s_len = strlen(s), end_len = strlen(end);
+    return s_len >= end_len && memcmp(s + s_len - end_len, end, end_len) == 0;
 }
 
 #define _str_concat(fmt, ...) ({ \

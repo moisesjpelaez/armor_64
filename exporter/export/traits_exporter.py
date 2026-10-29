@@ -13,21 +13,10 @@ import armor64.codegen as codegen
 
 
 def write_types(exporter):
-    """Generate types.h from template with debug HUD settings."""
-    import bpy  # Import here to avoid circular imports at module level
+    """Copy types.h and generate debug_config.h."""
     import armor64.utils as n64_utils
 
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'types.h.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'types.h')
-
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
-
-    wrd = bpy.data.worlds.get('Arm')
-    debug_hud_define = '\n#define ARM_DEBUG_HUD' if wrd and wrd.arm_debug_console else ''
-    output = tmpl_content.format(debug_hud_define=debug_hud_define)
-
-    n64_utils.write_if_changed(out_path, output)
+    n64_utils.copy_src('types.h', 'src')
 
     # Only engine.c includes it, so switching between Play and Publish rebuilds
     # one file. The RDP validator catches RDP crashes that only happen on hardware
@@ -238,6 +227,7 @@ def write_engine(exporter):
     Args:
         exporter: N64Exporter instance with has_physics, has_ui, has_audio flags
     """
+    import bpy  # Import here to avoid circular imports at module level
     import armor64.utils as n64_utils
 
     n64_utils.copy_src('engine.c', 'src')
@@ -252,11 +242,16 @@ def write_engine(exporter):
     # Calculate physics debug mode from Blender settings
     physics_debug_mode = n64_utils.get_physics_debug_mode()
 
+    # The debug HUD (Armory's debug console setting): FPS, physics and draw counters
+    wrd = bpy.data.worlds.get('Arm')
+    debug_hud = wrd is not None and wrd.arm_debug_console
+
     output = tmpl_content.format(
         enable_physics=1 if exporter.has_physics else 0,
         enable_physics_debug=1 if physics_debug_mode > 0 else 0,
         enable_ui=1 if exporter.has_ui else 0,
-        enable_audio=1 if exporter.has_audio else 0
+        enable_audio=1 if exporter.has_audio else 0,
+        debug_hud_define='#define ARM_DEBUG_HUD' if debug_hud else ''
     )
 
     n64_utils.write_if_changed(out_path, output)

@@ -1,7 +1,4 @@
-/* N64 Exporter - Generated UI canvas declarations
- * This file is auto-generated from Koui canvas data. Do not edit.
- * Template: canvas.h.j2
- */
+// UI canvas: groups, elements and Koui scenes. Keys and counts: canvas_defs.h (generated).
 #pragma once
 
 // Sub-module headers provide all element types and their management APIs:
@@ -11,30 +8,19 @@
 #include "panel.h"   // UIPanel, simple filled rectangle
 
 #ifdef __cplusplus
-extern "C" {{
+extern "C" {
 #endif
 
-// Group key defines (Koui containers - enables parent-child visibility)
-{group_defines}
-
-#define UI_GROUP_COUNT {group_count}
-
-// Total element count (top-level images + groups; matches Haxe elements[] array)
-#define UI_ELEMENT_COUNT {element_count}
-
-// UI scene defines (Koui SceneManager scenes within a canvas)
-{ui_scene_defines}
-
-#define UI_SCENE_COUNT {ui_scene_count}
+// Group keys (UI_GROUP_*), Koui scene keys (UI_SCENE_*), UI_GROUP_COUNT,
+// UI_ELEMENT_COUNT (top-level images + groups), UI_SCENE_COUNT, UI_MAX_GROUPS,
+// UI_MAX_GROUP_CHILDREN
+#include "canvas_defs.h"
 
 #if UI_LABEL_COUNT > 0 || UI_IMAGE_COUNT > 0 || UI_GROUP_COUNT > 0 || UI_BUTTON_COUNT > 0 || UI_PANEL_COUNT > 0
 
 #if UI_GROUP_COUNT > 0
-#define UI_MAX_GROUPS         {max_groups}
-#define UI_MAX_GROUP_CHILDREN {max_group_children}
-
 // Group element — container with shared visibility for child images/labels/buttons
-typedef struct {{
+typedef struct {
     uint8_t child_image_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t child_label_indices[UI_MAX_GROUP_CHILDREN];
     uint8_t child_button_indices[UI_MAX_GROUP_CHILDREN];
@@ -46,20 +32,20 @@ typedef struct {{
     uint8_t num_child_panels;
     uint8_t num_child_groups;
     bool visible;
-}} UIGroup;
+} UIGroup;
 #endif // UI_GROUP_COUNT > 0
 
 // Element type for the unified elements[] array
-typedef enum {{
+typedef enum {
     UI_ELEM_IMAGE = 0,
     UI_ELEM_GROUP = 1,
-}} UIElementType;
+} UIElementType;
 
 // Unified element reference (maps Haxe elements[i] → image or group index)
-typedef struct {{
+typedef struct {
     UIElementType type;
     uint8_t index;
-}} UIElement;
+} UIElement;
 
 // Canvas lifecycle
 void canvas_init(void);                     // Call once at startup
@@ -72,7 +58,7 @@ void canvas_render(void);                   // Call after 3D render, before disp
 #if UI_SCENE_COUNT > 0
 void canvas_set_ui_scene(int scene_idx);    // Switch active Koui UI scene
 #else
-static inline void canvas_set_ui_scene(int s) {{ (void)s; }}
+static inline void canvas_set_ui_scene(int s) { (void)s; }
 #endif
 
 #if UI_GROUP_COUNT > 0
@@ -85,16 +71,16 @@ void canvas_element_set_visible(int index, bool visible);
 
 #else
 // Stubs when no UI elements exist
-static inline void canvas_init(void) {{}}
-static inline void canvas_scene_init(SceneId s) {{ (void)s; }}
-static inline void canvas_clear(void) {{}}
-static inline void canvas_update(float dt) {{ (void)dt; }}
-static inline void canvas_render(void) {{}}
-static inline void canvas_element_set_visible(int i, bool v) {{ (void)i; (void)v; }}
-static inline void canvas_set_ui_scene(int s) {{ (void)s; }}
+static inline void canvas_init(void) {}
+static inline void canvas_scene_init(SceneId s) { (void)s; }
+static inline void canvas_clear(void) {}
+static inline void canvas_update(float dt) { (void)dt; }
+static inline void canvas_render(void) {}
+static inline void canvas_element_set_visible(int i, bool v) { (void)i; (void)v; }
+static inline void canvas_set_ui_scene(int s) { (void)s; }
 
 #endif // UI_LABEL_COUNT > 0 || UI_IMAGE_COUNT > 0 || UI_GROUP_COUNT > 0 || UI_BUTTON_COUNT > 0 || UI_PANEL_COUNT > 0
 
 #ifdef __cplusplus
-}}
+}
 #endif

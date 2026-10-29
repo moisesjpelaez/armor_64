@@ -107,6 +107,24 @@ bool physics_create_mesh_full(ArmObject* obj,
                               int vertex_count, int index_count,
                               const PhysicsBodyParams* params);
 
+// A rigid body as the exporter writes it (ArmSceneDef.bodies)
+typedef enum { PHYSICS_SHAPE_BOX, PHYSICS_SHAPE_SPHERE, PHYSICS_SHAPE_CAPSULE, PHYSICS_SHAPE_MESH } PhysicsShape;
+
+typedef struct PhysicsBodyDef {
+    uint16_t object;              // Index in the scene's objects
+    int8_t type;                  // OIMO_RIGID_BODY_*
+    uint8_t shape;                // PhysicsShape
+    float size[3];                // Box: half extents; sphere: radius; capsule: radius, half height
+    const OimoVec3* mesh_vertices;  // Static mesh collider
+    const int16_t* mesh_indices;
+    uint16_t mesh_vertex_count;
+    uint16_t mesh_index_count;
+    PhysicsBodyParams params;
+} PhysicsBodyDef;
+
+// The body a scene definition describes, on its object
+bool physics_create_from_def(ArmObject* obj, const PhysicsBodyDef* def);
+
 // Convenience wrappers with default collision group=1, mask=1
 static inline bool physics_create_box(ArmObject* obj, int type, float hx, float hy, float hz,
                                       float mass, float friction, float restitution) {

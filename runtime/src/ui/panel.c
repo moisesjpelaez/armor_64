@@ -1,7 +1,4 @@
-/* N64 Exporter - UI Panel implementation
- * Auto-generated from Koui canvas data. Do not edit directly.
- * Template: panel.c.j2
- */
+// UI panels: the pool, scene loading and drawing. Canvas data: panel_data.h (generated).
 #include "panel.h"
 #include "label.h"
 #include "ui_anchor.h"
@@ -24,7 +21,7 @@ static int      g_canvas_panel_count = 0;
 // Compile-time definition struct
 // ============================================================================
 
-typedef struct {{
+typedef struct {
     int16_t pos_x, pos_y;
     int16_t width, height;
     uint8_t anchor;
@@ -32,7 +29,7 @@ typedef struct {{
     uint8_t border_r, border_g, border_b, border_a;
     int8_t  border_size;
     bool    visible;
-}} UIPanelDef;
+} UIPanelDef;
 
 // Anchor helpers provided by ui_anchor.h (shared across label/image/panel)
 
@@ -40,19 +37,25 @@ typedef struct {{
 // Per-canvas static panel definition arrays
 // ============================================================================
 
-{canvas_panel_arrays}
+// The panel of each scene's canvas (g_panel_scenes, generated)
+typedef struct {
+    const UIPanelDef *defs;
+    uint16_t count;
+} PanelSceneDefs;
+
+#include "panel_data.h"
 
 // ============================================================================
 // Internal load helper
 // ============================================================================
 
-static void load_panels(const UIPanelDef *defs, int count) {{
-    for (int i = 0; i < count; i++) {{
+static void load_panels(const UIPanelDef *defs, int count) {
+    for (int i = 0; i < count; i++) {
         const UIPanelDef *def = &defs[i];
-        if (g_panel_pool_used >= UI_MAX_PANELS) {{
+        if (g_panel_pool_used >= UI_MAX_PANELS) {
             ARM_LIMIT_REACHED(UI_MAX_PANELS);
             break;
-        }}
+        }
         UIPanel *panel = &g_panel_pool[g_panel_pool_used++];
         panel->pos_x       = ui_anchor_x(def->pos_x, def->width, def->anchor, CANVAS_WIDTH);
         panel->pos_y       = ui_anchor_y(def->pos_y, def->height, def->anchor, CANVAS_HEIGHT);
@@ -71,54 +74,52 @@ static void load_panels(const UIPanelDef *defs, int count) {{
         panel->initial_visible = def->visible;
         if (g_canvas_panel_count < UI_PANEL_COUNT)
             g_canvas_panels[g_canvas_panel_count++] = panel;
-    }}
-}}
+    }
+}
 
 // ============================================================================
 // Scene init switch
 // ============================================================================
 
-void panel_scene_init(SceneId scene_id) {{
-    switch (scene_id) {{
-{panel_scene_init_cases}
-        default: break;
-    }}
-}}
+void panel_scene_init(SceneId scene_id) {
+    const PanelSceneDefs *scene = &g_panel_scenes[scene_id];
+    if (scene->count > 0) load_panels(scene->defs, scene->count);
+}
 
 // ============================================================================
 // Public API
 // ============================================================================
 
-void panel_clear(void) {{
+void panel_clear(void) {
     g_panel_pool_used    = 0;
     g_canvas_panel_count = 0;
     memset(g_panel_pool,    0, sizeof(g_panel_pool));
     memset(g_canvas_panels, 0, sizeof(g_canvas_panels));
-}}
+}
 
-UIPanel* canvas_get_panel(int index) {{
+UIPanel* canvas_get_panel(int index) {
     if (index >= 0 && index < g_canvas_panel_count)
         return g_canvas_panels[index];
     return NULL;
-}}
+}
 
-void panel_render(void) {{
+void panel_render(void) {
     if (g_canvas_panel_count == 0) return;
 
     rdpq_set_mode_standard();
     rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
     bool blending = false;
 
-    for (int i = 0; i < g_canvas_panel_count; i++) {{
+    for (int i = 0; i < g_canvas_panel_count; i++) {
         UIPanel *panel = g_canvas_panels[i];
         if (!panel || !panel->visible) continue;
 
         // Blend only translucent panels: opaque fills don't read the framebuffer
         bool translucent = panel->bg_a < 255 || (panel->border_size > 0 && panel->border_a < 255);
-        if (translucent != blending) {{
+        if (translucent != blending) {
             rdpq_mode_blender(translucent ? RDPQ_BLENDER_MULTIPLY : 0);
             blending = translucent;
-        }}
+        }
 
         int16_t x0 = panel->pos_x, y0 = panel->pos_y;
         int16_t x1 = x0 + panel->width, y1 = y0 + panel->height;
@@ -128,22 +129,22 @@ void panel_render(void) {{
         rdpq_fill_rectangle(x0, y0, x1, y1);
 
         // Draw border as 4 edge rectangles
-        if (panel->border_size > 0) {{
+        if (panel->border_size > 0) {
             int16_t bs = panel->border_size;
             rdpq_set_prim_color(RGBA32(panel->border_r, panel->border_g, panel->border_b, panel->border_a));
             rdpq_fill_rectangle(x0,      y0,      x1,      y0 + bs);  // top
             rdpq_fill_rectangle(x0,      y1 - bs, x1,      y1);       // bottom
             rdpq_fill_rectangle(x0,      y0 + bs, x0 + bs, y1 - bs);  // left
             rdpq_fill_rectangle(x1 - bs, y0 + bs, x1,      y1 - bs);  // right
-        }}
-    }}
-}}
+        }
+    }
+}
 
-uint32_t panel_state_hash(uint32_t h) {{
+uint32_t panel_state_hash(uint32_t h) {
     h = ui_hash(h, &g_canvas_panel_count, sizeof(g_canvas_panel_count));
     for (int i = 0; i < g_canvas_panel_count; i++)
         h = ui_hash(h, g_canvas_panels[i], sizeof(UIPanel));
     return h;
-}}
+}
 
 #endif // UI_PANEL_COUNT > 0

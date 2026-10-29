@@ -1,6 +1,5 @@
-/* N64 Exporter - UI Button implementation
- * Auto-generated from Koui canvas data. Do not edit directly.
- * Template: button.c.j2
+/* UI buttons: the pool, scene loading, focus and input, drawing.
+ * Canvas data: button_data.h (generated).
  *
  * Replicates Koui Button + EventHandler behavior 1:1:
  *
@@ -52,7 +51,7 @@ static float g_stick_repeat_timer = 0.0f;
 // Compile-time definition struct
 // ============================================================================
 
-typedef struct {{
+typedef struct {
     int16_t pos_x, pos_y, width, height;
     // Colors: stored as RGBA components for static init without libdragon macros
     uint8_t bg_r, bg_g, bg_b, bg_a;
@@ -71,20 +70,26 @@ typedef struct {{
     uint8_t hover_text_style_id;
     int8_t  focus_up, focus_down, focus_left, focus_right;
     bool    visible;
-}} UIButtonDef;
+} UIButtonDef;
 
 // ============================================================================
 // Per-canvas static button definition arrays
 // ============================================================================
-{canvas_button_arrays}
+// The button of each scene's canvas (g_button_scenes, generated)
+typedef struct {
+    const UIButtonDef *defs;
+    uint16_t count;
+} ButtonSceneDefs;
+
+#include "button_data.h"
 
 // ============================================================================
 // Internal load helper
 // ============================================================================
 
-static void load_buttons(const UIButtonDef *defs, int count) {{
+static void load_buttons(const UIButtonDef *defs, int count) {
     if (g_button_count + count > UI_MAX_BUTTONS) ARM_LIMIT_REACHED(UI_MAX_BUTTONS);
-    for (int i = 0; i < count && g_button_count < UI_MAX_BUTTONS; i++) {{
+    for (int i = 0; i < count && g_button_count < UI_MAX_BUTTONS; i++) {
         const UIButtonDef *def = &defs[i];
         UIButton *btn = &g_buttons[g_button_count++];
 
@@ -131,32 +136,30 @@ static void load_buttons(const UIButtonDef *defs, int count) {{
         btn->on_released      = NULL;  btn->on_released_data = NULL;
         btn->on_focus         = NULL;  btn->on_focus_data    = NULL;
 
-        if (def->text) {{
+        if (def->text) {
             if (strlen(def->text) >= UI_BUTTON_TEXT_SIZE) ARM_LIMIT_REACHED(UI_BUTTON_TEXT_SIZE);
             strncpy(btn->text, def->text, UI_BUTTON_TEXT_SIZE - 1);
             btn->text[UI_BUTTON_TEXT_SIZE - 1] = '\0';
-        }} else {{
+        } else {
             btn->text[0] = '\0';
-        }}
-    }}
-}}
+        }
+    }
+}
 
 // ============================================================================
 // Scene init — reset focus state for new scene
 // ============================================================================
 
-void button_scene_init(SceneId scene_id) {{
-    switch (scene_id) {{
-{button_scene_init_cases}
-        default: break;
-    }}
+void button_scene_init(SceneId scene_id) {
+    const ButtonSceneDefs *scene = &g_button_scenes[scene_id];
+    if (scene->count > 0) load_buttons(scene->defs, scene->count);
 
     g_focused_index = -1;
     g_dpad_direction = -1;
     g_dpad_repeat_timer = 0.0f;
     g_stick_direction = -1;
     g_stick_repeat_timer = 0.0f;
-}}
+}
 
 // ============================================================================
 // Focus management — mirrors Koui EventHandler.setFocus / FocusEvent
@@ -165,17 +168,17 @@ void button_scene_init(SceneId scene_id) {{
 // Koui: EventHandler.setFocus fires FocusLoose on old, FocusGet on new.
 // Button._onFocus(FocusLoose) → isFocused=false, isPressed=false (non-toggle)
 // Button._onFocus(FocusGet)   → isFocused=true
-static void set_focus(int index) {{
+static void set_focus(int index) {
     if (index < 0 || index >= g_button_count) return;
     if (!g_buttons[index].visible) return;
     if (g_buttons[index].disabled) return;
     if (g_focused_index == index) return;  // Koui: if (elemFocused == element) return
 
     // FocusLoose on old element
-    if (g_focused_index >= 0 && g_focused_index < g_button_count) {{
+    if (g_focused_index >= 0 && g_focused_index < g_button_count) {
         g_buttons[g_focused_index].focused = false;
         g_buttons[g_focused_index].isPressed = false;  // Koui: _onFocus(FocusLoose) clears press
-    }}
+    }
 
     // FocusGet on new element
     g_focused_index           = index;
@@ -184,38 +187,38 @@ static void set_focus(int index) {{
     // Invoke on_focus callback (Koui: FocusGet)
     if (g_buttons[index].on_focus)
         g_buttons[index].on_focus(index, g_buttons[index].on_focus_data);
-}}
+}
 
 // Koui: EventHandler.focusFirstElement — grab first visible focusable element
-static void focus_first_element(void) {{
-    for (int i = 0; i < g_button_count; i++) {{
-        if (g_buttons[i].visible && !g_buttons[i].disabled) {{
+static void focus_first_element(void) {
+    for (int i = 0; i < g_button_count; i++) {
+        if (g_buttons[i].visible && !g_buttons[i].disabled) {
             set_focus(i);
             return;
-        }}
-    }}
-}}
+        }
+    }
+}
 
-static void navigate_direction(int dir) {{
+static void navigate_direction(int dir) {
     if (dir < 0) return;
 
-    if (g_focused_index < 0) {{
+    if (g_focused_index < 0) {
         focus_first_element();
         return;
-    }}
+    }
 
     UIButton *cur = &g_buttons[g_focused_index];
     if      (dir == 0 && cur->focus_up    >= 0) set_focus(cur->focus_up);
     else if (dir == 1 && cur->focus_down  >= 0) set_focus(cur->focus_down);
     else if (dir == 2 && cur->focus_left  >= 0) set_focus(cur->focus_left);
     else if (dir == 3 && cur->focus_right >= 0) set_focus(cur->focus_right);
-}}
+}
 
 // ============================================================================
 // Input update — replicates Koui EventHandler.onGamepadButton + onGamepadAxis
 // ============================================================================
 
-void button_update(float dt) {{
+void button_update(float dt) {
     if (g_button_count == 0) return;
 
     // Clear _activated flags from previous frame
@@ -225,22 +228,22 @@ void button_update(float dt) {{
     // === A button: press/release handling ===
     // Koui: _onGamepadButton(A, ButtonDown) → synthetic ClickStart → isPressed = true
     // Koui: _onGamepadButton(A, ButtonUp)   → synthetic ClickEnd   → isPressed = false
-    if (g_focused_index >= 0 && !g_buttons[g_focused_index].disabled) {{
+    if (g_focused_index >= 0 && !g_buttons[g_focused_index].disabled) {
         UIButton *focused = &g_buttons[g_focused_index];
-        if (input_started(N64_BTN_A)) {{
+        if (input_started(N64_BTN_A)) {
             focused->isPressed = true;
             // Invoke on_pressed callback (Koui: ClickStart)
             if (focused->on_pressed)
                 focused->on_pressed(g_focused_index, focused->on_pressed_data);
-        }}
-        if (input_released(N64_BTN_A) && focused->isPressed) {{
+        }
+        if (input_released(N64_BTN_A) && focused->isPressed) {
             focused->isPressed = false;
             focused->_activated = true;
             // Invoke on_released callback (Koui: ClickEnd)
             if (focused->on_released)
                 focused->on_released(g_focused_index, focused->on_released_data);
-        }}
-    }}
+        }
+    }
 
     // === DPad navigation with delayed hold repeat ===
     int dpad_pressed_dir = -1;
@@ -255,28 +258,28 @@ void button_update(float dt) {{
     if (input_down(N64_BTN_DLEFT))  dpad_down_dir = 2;
     if (input_down(N64_BTN_DRIGHT)) dpad_down_dir = 3;
 
-    if (dpad_pressed_dir >= 0) {{
+    if (dpad_pressed_dir >= 0) {
         navigate_direction(dpad_pressed_dir);
         g_dpad_direction = dpad_pressed_dir;
         g_dpad_repeat_timer = UI_NAV_REPEAT_DELAY;
-    }}
-    else if (g_dpad_direction >= 0) {{
-        if (dpad_down_dir != g_dpad_direction) {{
-            if (dpad_down_dir >= 0) {{
+    }
+    else if (g_dpad_direction >= 0) {
+        if (dpad_down_dir != g_dpad_direction) {
+            if (dpad_down_dir >= 0) {
                 navigate_direction(dpad_down_dir);
                 g_dpad_direction = dpad_down_dir;
                 g_dpad_repeat_timer = UI_NAV_REPEAT_DELAY;
-            }} else {{
+            } else {
                 g_dpad_direction = -1;
-            }}
-        }} else {{
+            }
+        } else {
             g_dpad_repeat_timer -= dt;
-            if (g_dpad_repeat_timer <= 0.0f) {{
+            if (g_dpad_repeat_timer <= 0.0f) {
                 navigate_direction(g_dpad_direction);
                 g_dpad_repeat_timer += UI_NAV_REPEAT_PERIOD;
-            }}
-        }}
-    }}
+            }
+        }
+    }
 
     // === Analog stick navigation with delayed hold repeat ===
     float sx = input_stick_x();
@@ -287,63 +290,63 @@ void button_update(float dt) {{
     else if (sx < -0.5f) axis_dir = 2;
     else if (sx > 0.5f) axis_dir = 3;
 
-    if (axis_dir != g_stick_direction) {{
-        if (axis_dir >= 0) {{
+    if (axis_dir != g_stick_direction) {
+        if (axis_dir >= 0) {
             navigate_direction(axis_dir);
             g_stick_direction = axis_dir;
             g_stick_repeat_timer = UI_NAV_REPEAT_DELAY;
-        }} else {{
+        } else {
             g_stick_direction = -1;
-        }}
-    }}
-    else if (g_stick_direction >= 0) {{
+        }
+    }
+    else if (g_stick_direction >= 0) {
         g_stick_repeat_timer -= dt;
-        if (g_stick_repeat_timer <= 0.0f) {{
+        if (g_stick_repeat_timer <= 0.0f) {
             navigate_direction(g_stick_direction);
             g_stick_repeat_timer += UI_NAV_REPEAT_PERIOD;
-        }}
-    }}
-}}
+        }
+    }
+}
 
 // ============================================================================
 // Rendering — mirrors Koui Button.draw state selection
 // ============================================================================
 
-void button_render(void) {{
+void button_render(void) {
     if (g_button_count == 0) return;
 
     // Pass 1: all backgrounds and borders (solid color fills)
     rdpq_set_mode_standard();
     rdpq_mode_combiner(RDPQ_COMBINER_FLAT);
     rdpq_mode_blender(RDPQ_BLENDER_MULTIPLY);
-    for (int i = 0; i < g_button_count; i++) {{
+    for (int i = 0; i < g_button_count; i++) {
         UIButton *btn = &g_buttons[i];
         if (!btn->visible) continue;
 
         uint8_t bg_r, bg_g, bg_b, bg_a;
         uint8_t bdr_r, bdr_g, bdr_b, bdr_a;
 
-        if (btn->disabled) {{
+        if (btn->disabled) {
             bg_r = btn->disabled_bg_r; bg_g = btn->disabled_bg_g;
             bg_b = btn->disabled_bg_b; bg_a = btn->disabled_bg_a;
             bdr_r = btn->disabled_border_r; bdr_g = btn->disabled_border_g;
             bdr_b = btn->disabled_border_b; bdr_a = btn->disabled_border_a;
-        }} else if (btn->isPressed) {{
+        } else if (btn->isPressed) {
             bg_r = btn->click_bg_r; bg_g = btn->click_bg_g;
             bg_b = btn->click_bg_b; bg_a = btn->click_bg_a;
             bdr_r = btn->click_border_r; bdr_g = btn->click_border_g;
             bdr_b = btn->click_border_b; bdr_a = btn->click_border_a;
-        }} else if (btn->focused) {{
+        } else if (btn->focused) {
             bg_r = btn->hover_bg_r; bg_g = btn->hover_bg_g;
             bg_b = btn->hover_bg_b; bg_a = btn->hover_bg_a;
             bdr_r = btn->hover_border_r; bdr_g = btn->hover_border_g;
             bdr_b = btn->hover_border_b; bdr_a = btn->hover_border_a;
-        }} else {{
+        } else {
             bg_r = btn->bg_r; bg_g = btn->bg_g;
             bg_b = btn->bg_b; bg_a = btn->bg_a;
             bdr_r = btn->border_r; bdr_g = btn->border_g;
             bdr_b = btn->border_b; bdr_a = btn->border_a;
-        }}
+        }
 
         int16_t x0 = btn->pos_x, y0 = btn->pos_y;
         int16_t x1 = x0 + btn->width, y1 = y0 + btn->height;
@@ -351,103 +354,103 @@ void button_render(void) {{
         rdpq_set_prim_color(RGBA32(bg_r, bg_g, bg_b, bg_a));
         rdpq_fill_rectangle(x0, y0, x1, y1);
 
-        if (btn->border_size > 0) {{
+        if (btn->border_size > 0) {
             int16_t bs = btn->border_size;
             rdpq_set_prim_color(RGBA32(bdr_r, bdr_g, bdr_b, bdr_a));
             rdpq_fill_rectangle(x0,      y0,      x1,      y0 + bs);
             rdpq_fill_rectangle(x0,      y1 - bs, x1,      y1);
             rdpq_fill_rectangle(x0,      y0 + bs, x0 + bs, y1 - bs);
             rdpq_fill_rectangle(x1 - bs, y0 + bs, x1,      y1 - bs);
-        }}
-    }}
+        }
+    }
 
     // Pass 2: all button text
     rdpq_set_mode_standard();
     rdpq_mode_combiner(RDPQ_COMBINER_TEX_FLAT);
-    for (int i = 0; i < g_button_count; i++) {{
+    for (int i = 0; i < g_button_count; i++) {
         UIButton *btn = &g_buttons[i];
         if (!btn->visible || !btn->text[0] || !btn->font_rdpq_id) continue;
 
         uint8_t text_style = (btn->isPressed || btn->focused)
             ? btn->hover_text_style_id : btn->text_style_id;
-        rdpq_textparms_t parms = {{
+        rdpq_textparms_t parms = {
             .style_id = text_style,
             .align    = ALIGN_CENTER,
             .width    = btn->width,
-        }};
+        };
         rdpq_text_print(&parms, btn->font_rdpq_id,
             btn->pos_x, btn->pos_y + btn->font_baseline_offset, btn->text);
-    }}
-}}
+    }
+}
 
 // ============================================================================
 // Public API
 // ============================================================================
 
-UIButton* canvas_get_button(int index) {{
+UIButton* canvas_get_button(int index) {
     if (index >= 0 && index < g_button_count)
         return &g_buttons[index];
     return NULL;
-}}
+}
 
 // Returns true once per A press-release cycle (the frame A is released).
-bool button_was_pressed(int index) {{
+bool button_was_pressed(int index) {
     if (index < 0 || index >= g_button_count) return false;
-    if (g_buttons[index]._activated) {{
+    if (g_buttons[index]._activated) {
         g_buttons[index]._activated = false;
         return true;
-    }}
+    }
     return false;
-}}
+}
 
-void button_set_focus(int index) {{ set_focus(index); }}
+void button_set_focus(int index) { set_focus(index); }
 
-void button_clear_focus(void) {{
-    if (g_focused_index >= 0 && g_focused_index < g_button_count) {{
+void button_clear_focus(void) {
+    if (g_focused_index >= 0 && g_focused_index < g_button_count) {
         g_buttons[g_focused_index].focused = false;
         g_buttons[g_focused_index].isPressed = false;
-    }}
+    }
     g_focused_index = -1;
-}}
+}
 
-void button_on_pressed(int index, ButtonCallback cb, void* user_data) {{
+void button_on_pressed(int index, ButtonCallback cb, void* user_data) {
     if (index < 0 || index >= g_button_count) return;
     g_buttons[index].on_pressed      = cb;
     g_buttons[index].on_pressed_data = user_data;
-}}
+}
 
-void button_on_released(int index, ButtonCallback cb, void* user_data) {{
+void button_on_released(int index, ButtonCallback cb, void* user_data) {
     if (index < 0 || index >= g_button_count) return;
     g_buttons[index].on_released      = cb;
     g_buttons[index].on_released_data = user_data;
-}}
+}
 
-void button_on_focus(int index, ButtonCallback cb, void* user_data) {{
+void button_on_focus(int index, ButtonCallback cb, void* user_data) {
     if (index < 0 || index >= g_button_count) return;
     g_buttons[index].on_focus      = cb;
     g_buttons[index].on_focus_data = user_data;
-}}
+}
 
-void button_set_text(int index, const char *text) {{
+void button_set_text(int index, const char *text) {
     if (index < 0 || index >= g_button_count) return;
-    if (text) {{
+    if (text) {
         if (strlen(text) >= UI_BUTTON_TEXT_SIZE) ARM_LIMIT_REACHED(UI_BUTTON_TEXT_SIZE);
         strncpy(g_buttons[index].text, text, UI_BUTTON_TEXT_SIZE - 1);
         g_buttons[index].text[UI_BUTTON_TEXT_SIZE - 1] = '\0';
-    }} else {{
+    } else {
         g_buttons[index].text[0] = '\0';
-    }}
-}}
+    }
+}
 
-void button_init(void) {{
+void button_init(void) {
     // BSS zero-initialized at startup; nothing to do
-}}
+}
 
-void button_clear(void) {{
-    if (g_focused_index >= 0 && g_focused_index < g_button_count) {{
+void button_clear(void) {
+    if (g_focused_index >= 0 && g_focused_index < g_button_count) {
         g_buttons[g_focused_index].focused = false;
         g_buttons[g_focused_index].isPressed = false;
-    }}
+    }
     g_focused_index = -1;
     g_button_count  = 0;
     g_dpad_direction = -1;
@@ -455,11 +458,11 @@ void button_clear(void) {{
     g_stick_direction = -1;
     g_stick_repeat_timer = 0.0f;
     memset(g_buttons, 0, sizeof(g_buttons));
-}}
+}
 
-uint32_t button_state_hash(uint32_t h) {{
+uint32_t button_state_hash(uint32_t h) {
     h = ui_hash(h, &g_button_count, sizeof(g_button_count));
     return ui_hash(h, g_buttons, sizeof(UIButton) * g_button_count);
-}}
+}
 
 #endif // UI_BUTTON_COUNT > 0
