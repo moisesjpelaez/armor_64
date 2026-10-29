@@ -37,7 +37,7 @@ _TYPES = ('Asset', 'Bool', 'Color', 'Float', 'Int', 'String')
 _GLOBALS_SELECTOR = '@globals!default'
 
 
-class ThemeError(Exception):
+class ThemeError(ValueError):
     pass
 
 

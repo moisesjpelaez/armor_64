@@ -19,7 +19,7 @@ import arm.utils
 import armor64.utils as n64_utils
 import arm.log as log
 from armor64.export import scene_exporter
-from armor64.export.koui_theme_parser import KouiThemeParser, ThemeError
+from armor64.export.koui_theme_parser import KouiThemeParser
 from armor64.codegen.c_text import c_string
 
 
@@ -52,6 +52,54 @@ def _mkfont_size(kha_size):
 # The screen the runtime opens (engine.c display_init); other N64 modes when a game needs them
 N64_SCREEN = (320, 240)
 
+# The characters the N64 fonts hold (mkfont --range): Latin-1
+FONT_RANGE = (0x20, 0xFF)
+
+# What the N64 UI supports of koui_editor's canvases: each element type and the
+# properties it reads. Anything else is left out with a warning; supporting more
+# when a game needs it means handling it here and in the runtime's ui/.
+SUPPORTED_ELEMENTS = {
+    'AnchorPane': (),
+    'RowLayout': (),
+    'ColLayout': (),
+    'GridLayout': ('rows', 'cols'),
+    'Panel': (),
+    'Label': ('text', 'alignmentHor'),
+    'Button': ('text',),
+    'ImagePanel': ('imageName', 'scale'),
+}
+
+
+def _warn_unsupported(canvas_name, scene):
+    """Warn about the elements of a Koui scene, and the properties set on them,
+    that the N64 leaves out (SUPPORTED_ELEMENTS; unset ones, false, 0 or "" as
+    Koui's defaults, need nothing), and about text characters its fonts lack."""
+    for elem in scene.get('elements', []):
+        where = f'UI canvas "{canvas_name}", {scene.get("key", "")}/{elem.get("key")}'
+        supported = SUPPORTED_ELEMENTS.get(elem.get('type'))
+        if supported is None:
+            log.warn(f'{where}: {elem.get("type")} is not supported on N64 yet, left out')
+            continue
+        ignored = sorted(name for name, value in (elem.get('properties') or {}).items()
+                         if name not in supported and value not in (None, False, 0, ''))
+        if ignored:
+            log.warn(f'{where}: {", ".join(ignored)} not supported on N64 yet, ignored')
+        text = (elem.get('properties') or {}).get('text') or ''
+        missing = sorted({c for c in text if c != '\n' and not FONT_RANGE[0] <= ord(c) <= FONT_RANGE[1]})
+        if missing:
+            log.warn(f'{where}: {" ".join(missing)} ({", ".join(f"U+{ord(c):04X}" for c in missing)}) '
+                     f'not shown on N64: its fonts hold Latin-1 only')
+
+
+def _read_canvas(canvas_name, path):
+    if not os.path.isfile(path):
+        raise ValueError(f'UI canvas "{canvas_name}" not found: {path}')
+    try:
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+    except (OSError, ValueError) as e:
+        raise ValueError(f'UI canvas "{canvas_name}" can\'t be read ({path}): {e}') from None
+
 
 def _game_resolution():
     """The game's resolution, as Armory sizes the window: the start scene's (with
@@ -78,8 +126,6 @@ def detect_ui_canvas(exporter):
         exporter: N64Exporter instance to update with UI state
     """
     bundled_dir = os.path.join(arm.utils.get_fp(), 'Bundled', 'koui_canvas')
-    if not os.path.exists(bundled_dir):
-        return
 
     # Collect canvas names referenced by scenes
     referenced_canvases = set()
@@ -96,114 +142,104 @@ def detect_ui_canvas(exporter):
 
     # Sorted: the generated UI files must not change between exports (make)
     for canvas_name in sorted(referenced_canvases):
-        json_path = os.path.join(bundled_dir, f'{canvas_name}.json')
-        if not os.path.exists(json_path):
-            log.warn(f'UI Canvas "{canvas_name}" not found at {json_path}')
-            continue
+        canvas_data = _read_canvas(canvas_name, os.path.join(bundled_dir, f'{canvas_name}.json'))
 
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                canvas_data = json.load(f)
+        canvas_width, canvas_height = _game_resolution()
+        saved = canvas_data.get('canvas', {})
+        if (saved.get('width'), saved.get('height')) != (canvas_width, canvas_height):
+            raise ValueError(f'UI canvas "{canvas_name}" was saved at {saved.get("width")}x{saved.get("height")}, '
+                             f'but the game is {canvas_width}x{canvas_height} (the start scene\'s resolution): '
+                             f'open it in koui_editor and save it again')
 
-            canvas_width, canvas_height = _game_resolution()
-            saved = canvas_data.get('canvas', {})
-            if (saved.get('width'), saved.get('height')) != (canvas_width, canvas_height):
-                raise ValueError(f'UI canvas "{canvas_name}" was saved at {saved.get("width")}x{saved.get("height")}, '
-                                 f'but the game is {canvas_width}x{canvas_height} (the start scene\'s resolution): '
-                                 f'open it in koui_editor and save it again')
+        labels = []
+        images = []
+        buttons = []
+        panels = []
+        groups = []       # Groups with their child indices
+        elements = []     # Unified elements array (maps Haxe index to image/group)
 
-            labels = []
-            images = []
-            buttons = []
-            panels = []
-            groups = []       # Groups with their child indices
-            elements = []     # Unified elements array (maps Haxe index to image/group)
+        ui_scenes = []  # Track per-Koui-scene element ranges
 
-            ui_scenes = []  # Track per-Koui-scene element ranges
+        for scene in canvas_data.get('scenes', []):
+            scene_key = scene.get('key', '')
+            scene_active = scene.get('active', True)
+            scene_elements = scene.get('elements', [])
+            _warn_unsupported(canvas_name, scene)
 
-            for scene in canvas_data.get('scenes', []):
-                scene_key = scene.get('key', '')
-                scene_active = scene.get('active', True)
-                scene_elements = scene.get('elements', [])
+            # Track range start indices before processing this scene
+            label_start = len(labels)
+            image_start = len(images)
+            button_start = len(buttons)
+            panel_start = len(panels)
 
-                # Track range start indices before processing this scene
-                label_start = len(labels)
-                image_start = len(images)
-                button_start = len(buttons)
-                panel_start = len(panels)
+            # Build element lookup by key and parent-child relationships
+            elem_by_key = {e['key']: e for e in scene_elements}
+            children_by_parent = {}
+            root_elements = []
 
-                # Build element lookup by key and parent-child relationships
-                elem_by_key = {e['key']: e for e in scene_elements}
-                children_by_parent = {}
-                root_elements = []
+            for elem in scene_elements:
+                parent_key = elem.get('parentKey')
+                if parent_key:
+                    if parent_key not in children_by_parent:
+                        children_by_parent[parent_key] = []
+                    children_by_parent[parent_key].append(elem)
+                else:
+                    root_elements.append(elem)
 
-                for elem in scene_elements:
-                    parent_key = elem.get('parentKey')
-                    if parent_key:
-                        if parent_key not in children_by_parent:
-                            children_by_parent[parent_key] = []
-                        children_by_parent[parent_key].append(elem)
-                    else:
-                        root_elements.append(elem)
+            # Process root elements recursively, flattening layouts
+            # but tracking groups and unified elements array.
+            # Use scene_key as the root parent_path so that element keys
+            # are scene-scoped (e.g. "Paused/buttons/menu_button" vs
+            # "Win/buttons/menu_button").
+            scene_cell = _Cell(0, 0, canvas_width, canvas_height, 0, 0,
+                               *_padding(exporter.theme.style('_anchorpane')))
+            for elem in root_elements:
+                _flatten_element(
+                    exporter, elem, elem_by_key, children_by_parent, scene_cell,
+                    labels, images, buttons, panels, groups, elements,
+                    parent_path=scene_key
+                )
 
-                # Process root elements recursively, flattening layouts
-                # but tracking groups and unified elements array.
-                # Use scene_key as the root parent_path so that element keys
-                # are scene-scoped (e.g. "Paused/buttons/menu_button" vs
-                # "Win/buttons/menu_button").
-                scene_cell = _Cell(0, 0, canvas_width, canvas_height, 0, 0,
-                                   *_padding(exporter.theme.style('_anchorpane')))
-                for elem in root_elements:
-                    _flatten_element(
-                        exporter, elem, elem_by_key, children_by_parent, scene_cell,
-                        labels, images, buttons, panels, groups, elements,
-                        parent_path=scene_key
-                    )
+            # Record this Koui scene's element ranges
+            ui_scenes.append({
+                'key': scene_key,
+                'active': scene_active,
+                'first_label': label_start,
+                'label_count': len(labels) - label_start,
+                'first_image': image_start,
+                'image_count': len(images) - image_start,
+                'first_button': button_start,
+                'button_count': len(buttons) - button_start,
+                'first_panel': panel_start,
+                'panel_count': len(panels) - panel_start,
+            })
 
-                # Record this Koui scene's element ranges
-                ui_scenes.append({
-                    'key': scene_key,
-                    'active': scene_active,
-                    'first_label': label_start,
-                    'label_count': len(labels) - label_start,
-                    'first_image': image_start,
-                    'image_count': len(images) - image_start,
-                    'first_button': button_start,
-                    'button_count': len(buttons) - button_start,
-                    'first_panel': panel_start,
-                    'panel_count': len(panels) - panel_start,
-                })
+        # Resolve button focus graph indices after all buttons collected
+        resolve_button_focus(buttons, ui_scenes)
 
-            # Resolve button focus graph indices after all buttons collected
-            resolve_button_focus(buttons, ui_scenes)
+        if labels or images or buttons or panels or groups:
+            exporter.ui_canvas_data[canvas_name] = {
+                'width': canvas_width,
+                'height': canvas_height,
+                'labels': labels,
+                'images': images,
+                'buttons': buttons,
+                'panels': panels,
+                'groups': groups,
+                'elements': elements,
+                'ui_scenes': ui_scenes,
+            }
+            exporter.has_ui = True
+            log.info(f'Found UI canvas: {canvas_name} with {len(labels)} label(s), {len(images)} image(s), {len(buttons)} button(s), {len(panels)} panel(s), {len(groups)} group(s), {len(elements)} element(s)')
 
-            if labels or images or buttons or panels or groups:
-                exporter.ui_canvas_data[canvas_name] = {
-                    'width': canvas_width,
-                    'height': canvas_height,
-                    'labels': labels,
-                    'images': images,
-                    'buttons': buttons,
-                    'panels': panels,
-                    'groups': groups,
-                    'elements': elements,
-                    'ui_scenes': ui_scenes,
-                }
-                exporter.has_ui = True
-                log.info(f'Found UI canvas: {canvas_name} with {len(labels)} label(s), {len(images)} image(s), {len(buttons)} button(s), {len(panels)} panel(s), {len(groups)} group(s), {len(elements)} element(s)')
+            # The runtime's element indices are 8-bit
+            for type_name, count in [('labels', len(labels)), ('images', len(images)),
+                                     ('buttons', len(buttons)), ('panels', len(panels)),
+                                     ('groups', len(groups))]:
+                if count > 255:
+                    raise ValueError(f'UI canvas "{canvas_name}" has {count} {type_name}: '
+                                     f'at most 255 are supported (8-bit indices)')
 
-                # Validate element counts fit in uint8_t indices used by C templates
-                for type_name, count in [('labels', len(labels)), ('images', len(images)),
-                                         ('buttons', len(buttons)), ('panels', len(panels)),
-                                         ('groups', len(groups))]:
-                    if count > 255:
-                        log.warn(f'UI canvas "{canvas_name}" has {count} {type_name}, '
-                                 f'exceeding uint8_t index limit (255)')
-
-        except (ThemeError, ValueError):
-            raise
-        except Exception as e:
-            log.warn(f'Failed to parse Koui canvas {json_path}: {e}')
 
 
 class _Cell(NamedTuple):
@@ -586,6 +622,8 @@ def _handle_image(exporter, elem, final_x, final_y, images, elements, is_root,
 
     # Build full path for key
     full_path = _build_full_path(parent_path, elem['key'])
+    if exporter.theme.style(elem['tID'])['opacity'] < 1:
+        log.warn(f'UI image {full_path}: its style\'s opacity is not supported on N64 yet (drawn opaque)')
 
     image_x, align_h, align_width = _calc_element_alignment(elem, cell, final_x)
 
@@ -767,7 +805,7 @@ def copy_canvas_images(exporter):
                 log.info(f'Copied canvas image: {safe_name}.png')
                 copied_count += 1
         else:
-            log.warn(f'Canvas image not found: {image_name}.png')
+            raise ValueError(f'UI image "{image_name}" not found: no {image_name}.png in Assets/')
 
     if copied_count > 0:
         log.info(f'Copied {copied_count} canvas image(s) to build/n64/assets/')
@@ -1111,7 +1149,7 @@ def generate_font_makefile_entries(exporter):
         rule = f'''{target}: assets/{font_key}.ttf
 	@mkdir -p $(dir $@)
 	@echo "    [FONT] $@ (kha size {kha_size} -> mkfont size {mkfont_size})"
-	$(N64_MKFONT) $(MKFONT_FLAGS) --size {mkfont_size} --range 0x0020-0x00FF -o filesystem "$<"'''
+	$(N64_MKFONT) $(MKFONT_FLAGS) --size {mkfont_size} --range 0x{FONT_RANGE[0]:04X}-0x{FONT_RANGE[1]:04X} -o filesystem "$<"'''
         rules.append(rule)
 
     font_targets = 'font_conv = ' + ' \\\n             '.join(targets)
