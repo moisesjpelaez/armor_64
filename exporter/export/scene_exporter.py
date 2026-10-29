@@ -23,6 +23,10 @@ from armor64.export import linked_export
 DRAWABLE_RANGE = 511.0
 # Directional lights tiny3d holds (t3d_light_set_count); more overrun the RSP's light memory
 MAX_LIGHTS = 7
+# A mesh collider's size: vertex indices are uint16_t (physics.h), and the BVH's
+# node and triangle indices int16_t with 2 nodes per triangle (bvh.h)
+MESH_COLLIDER_MAX_VERTICES = 65535
+MESH_COLLIDER_MAX_TRIANGLES = 16383
 
 
 def _warn_if_out_of_range(obj, pos):
@@ -641,12 +645,21 @@ def _extract_rigid_body(exporter, obj, half_extents, world_scale):
         rb_shape = "capsule"
         rb_radius = dim[0] * 0.5
         rb_half_height = dim[2] * 0.5 - rb_radius
+        if rb_half_height < 0:
+            # As oimo_module (RigidBody.hx): Krom gets the same broken capsule
+            log.warn(f'Object "{obj.name}": its capsule collider is wider than tall '
+                     f'(the height must be at least the width)')
     elif shape == 'MESH' and is_static:
         rb_shape = "mesh"
         rb_mesh_data = n64_utils.extract_collision_mesh(obj, world_scale)
         if rb_mesh_data is None:
             log.warn(f'Object "{obj.name}": failed to extract mesh collision data, using BOX')
             rb_shape = "box"
+        elif (rb_mesh_data["num_vertices"] > MESH_COLLIDER_MAX_VERTICES
+              or rb_mesh_data["num_triangles"] > MESH_COLLIDER_MAX_TRIANGLES):
+            raise ValueError(f'Object "{obj.name}": its mesh collider has {rb_mesh_data["num_vertices"]} vertices '
+                             f'and {rb_mesh_data["num_triangles"]} triangles; the N64 holds at most '
+                             f'{MESH_COLLIDER_MAX_VERTICES} and {MESH_COLLIDER_MAX_TRIANGLES}')
     else:
         rb_shape = "box"
         if shape not in ('BOX', 'SPHERE', 'CAPSULE'):

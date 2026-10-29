@@ -66,7 +66,7 @@
                 return true; \
             } \
         } \
-        ARM_LIMIT_REACHED(max_capacity); /* Map full */ \
+        ARM_LIMIT_REACHED_AS(#max_capacity, max_capacity); /* Map full */ \
         return false; \
     } \
     \

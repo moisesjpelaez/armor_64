@@ -6,11 +6,12 @@ the mixer channel count (Aura.init({channelSize: N})).
 
 from typing import Dict
 
+from arm import log
 from armor64.codegen.trait_generator import _load_ir_json
 
 # Aura's own mix channels, always defined (index 0 is the master)
 DEFAULT_MIX_CHANNELS = ["MASTER", "MUSIC", "FX"]
-# libdragon's mixer supports up to 32 channels
+# libdragon's mixer supports up to 32 channels (MIXER_MAX_CHANNELS)
 DEFAULT_MIXER_CHANNELS = 32
 
 
@@ -24,7 +25,13 @@ def audio_config_data(audio: Dict) -> Dict:
     for name in audio.get("mix_channels") or []:
         if name not in names:
             names.append(name)
+    # Aura's channelSize is the sounds each mix channel holds; the N64 uses it as
+    # the sounds playing at once, which libdragon caps (more fails at boot)
     channel_size = audio.get("channel_size") or DEFAULT_MIXER_CHANNELS
+    if channel_size > DEFAULT_MIXER_CHANNELS:
+        log.warn(f'Aura.init channelSize {channel_size}: the N64 plays at most '
+                 f'{DEFAULT_MIXER_CHANNELS} sounds at once, using {DEFAULT_MIXER_CHANNELS}')
+        channel_size = DEFAULT_MIXER_CHANNELS
     return {
         "audio_mixer_channels": channel_size,
         "audio_mix_channel_count": len(names),

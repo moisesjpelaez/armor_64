@@ -881,11 +881,13 @@ def write_label_c(exporter):
     """Generate label_data.h (for label.c): each canvas's labels, and g_label_scenes
     (the labels of each scene's canvas, by SceneId)."""
     def row(label):
-        return (f'{{ {c_string(label["text"])}, {label["pos_x"]}, {label["pos_y"]}, {label["width"]}, {label["height"]}, '
-                f'{label.get("baseline_offset", 12)}, {label["anchor"]}, {label.get("style_id", 0)}, '
-                f'{label.get("font_id", 0)}, {_c_bool(label["visible"])}, {_c_bool(label.get("shadow", False))}, '
-                f'{label.get("shadow_dx", 0)}, {label.get("shadow_dy", 0)}, {label.get("shadow_style_id", 0)}, '
-                f'{label.get("align_h", 0)}, {label.get("align_width", 0)} }}')
+        return (f'{{ .text = {c_string(label["text"])}, .pos_x = {label["pos_x"]}, .pos_y = {label["pos_y"]}, '
+                f'.width = {label["width"]}, .height = {label["height"]}, .baseline_offset = {label["baseline_offset"]}, '
+                f'.anchor = {label["anchor"]}, .style_id = {label["style_id"]}, .font_id = {label["font_id"]}, '
+                f'.visible = {_c_bool(label["visible"])}, .shadow = {_c_bool(label["shadow"])}, '
+                f'.shadow_dx = {label["shadow_dx"]}, .shadow_dy = {label["shadow_dy"]}, '
+                f'.shadow_style_id = {label["shadow_style_id"]}, .align_h = {label["align_h"]}, '
+                f'.align_width = {label["align_width"]} }}')
 
     lines = _canvas_tables(exporter, 'label', 'UILabelDef', row)
     lines += ['static const LabelSceneDefs g_label_scenes[SCENE_COUNT] = {', *_scene_rows(exporter, 'label'), '};']
@@ -917,9 +919,10 @@ def write_image_c(exporter):
     lines += ['};', '']
 
     def row(image):
-        return (f'{{ {sprite_ids[sprite_name(image)]}, {image["pos_x"]}, {image["pos_y"]}, {image["width"]}, {image["height"]}, '
-                f'{image["anchor"]}, {_c_bool(image.get("scale", False))}, {_c_bool(image["visible"])}, '
-                f'{image.get("align_h", 0)}, {image.get("align_width", 0)} }}')
+        return (f'{{ .sprite_id = {sprite_ids[sprite_name(image)]}, .pos_x = {image["pos_x"]}, .pos_y = {image["pos_y"]}, '
+                f'.width = {image["width"]}, .height = {image["height"]}, .anchor = {image["anchor"]}, '
+                f'.scale = {_c_bool(image["scale"])}, .visible = {_c_bool(image["visible"])}, '
+                f'.align_h = {image["align_h"]}, .align_width = {image["align_width"]} }}')
 
     lines += _canvas_tables(exporter, 'image', 'UIImageDef', row, sprite_name)
     lines += ['static const ImageSceneDefs g_image_scenes[SCENE_COUNT] = {', *_scene_rows(exporter, 'image'), '};']
@@ -935,23 +938,28 @@ def write_button_h(exporter):
     n64_utils.write_generated('ui/button_defs.h', '\n'.join(lines), 'ui_exporter.write_button_h', 'ui/button.h')
 
 
-# The button colors (RGBA) of each state, in UIButtonDef's order
-_BUTTON_COLORS = ('bg_default', 'border_default', 'bg_hover', 'border_hover',
-                  'bg_click', 'border_click', 'bg_disabled', 'border_disabled')
+# The button colors (RGBA) of each state: their UIButtonDef fields (<prefix>_r, _g, _b, _a)
+_BUTTON_COLORS = {'bg_default': 'bg', 'border_default': 'border', 'bg_hover': 'hover_bg',
+                  'border_hover': 'hover_border', 'bg_click': 'click_bg', 'border_click': 'click_border',
+                  'bg_disabled': 'disabled_bg', 'border_disabled': 'disabled_border'}
 
 
 def write_button_c(exporter):
     """Generate button_data.h (for button.c): each canvas's buttons, and g_button_scenes
     (the buttons of each scene's canvas, by SceneId)."""
     def row(btn):
-        colors = ', '.join(str(c) for field in _BUTTON_COLORS for c in btn[field])
-        return (f'{{ {btn["pos_x"]}, {btn["pos_y"]}, {btn["width"]}, {btn["height"]}, '
-                f'{colors}, {btn.get("border_size", 2)}, '
-                f'{c_string(btn.get("text", ""))}, {btn.get("font_id", 0)}, {btn.get("font_baseline_offset", 20)}, '
-                f'{btn["default_text_style_id"]}, {btn["hover_text_style_id"]}, '
-                f'{btn["click_text_style_id"]}, {btn["disabled_text_style_id"]}, '
-                f'{btn.get("focus_up", -1)}, {btn.get("focus_down", -1)}, {btn.get("focus_left", -1)}, '
-                f'{btn.get("focus_right", -1)}, {_c_bool(btn.get("visible", True))}, {_c_bool(btn["disabled"])} }}')
+        colors = ', '.join(f'.{prefix}_{channel} = {value}' for field, prefix in _BUTTON_COLORS.items()
+                           for channel, value in zip('rgba', btn[field]))
+        return (f'{{ .pos_x = {btn["pos_x"]}, .pos_y = {btn["pos_y"]}, .width = {btn["width"]}, .height = {btn["height"]}, '
+                f'{colors}, .border_size = {btn["border_size"]}, '
+                f'.text = {c_string(btn["text"])}, .font_id = {btn["font_id"]}, '
+                f'.font_baseline_offset = {btn["font_baseline_offset"]}, '
+                f'.text_style_id = {btn["default_text_style_id"]}, .hover_text_style_id = {btn["hover_text_style_id"]}, '
+                f'.click_text_style_id = {btn["click_text_style_id"]}, '
+                f'.disabled_text_style_id = {btn["disabled_text_style_id"]}, '
+                f'.focus_up = {btn["focus_up"]}, .focus_down = {btn["focus_down"]}, .focus_left = {btn["focus_left"]}, '
+                f'.focus_right = {btn["focus_right"]}, .visible = {_c_bool(btn["visible"])}, '
+                f'.disabled = {_c_bool(btn["disabled"])} }}')
 
     lines = _canvas_tables(exporter, 'button', 'UIButtonDef', row)
     lines += ['static const ButtonSceneDefs g_button_scenes[SCENE_COUNT] = {', *_scene_rows(exporter, 'button'), '};']
@@ -970,10 +978,11 @@ def write_panel_c(exporter):
     """Generate panel_data.h (for panel.c): each canvas's panels, and g_panel_scenes
     (the panels of each scene's canvas, by SceneId)."""
     def row(panel):
-        return (f'{{ {panel["pos_x"]}, {panel["pos_y"]}, {panel["width"]}, {panel["height"]}, {panel["anchor"]}, '
-                f'{panel["bg_r"]}, {panel["bg_g"]}, {panel["bg_b"]}, {panel["bg_a"]}, '
-                f'{panel["border_r"]}, {panel["border_g"]}, {panel["border_b"]}, {panel["border_a"]}, '
-                f'{panel["border_size"]}, {_c_bool(panel.get("visible", True))} }}')
+        colors = ', '.join(f'.{field} = {panel[field]}' for field in
+                           ('bg_r', 'bg_g', 'bg_b', 'bg_a', 'border_r', 'border_g', 'border_b', 'border_a'))
+        return (f'{{ .pos_x = {panel["pos_x"]}, .pos_y = {panel["pos_y"]}, .width = {panel["width"]}, '
+                f'.height = {panel["height"]}, .anchor = {panel["anchor"]}, {colors}, '
+                f'.border_size = {panel["border_size"]}, .visible = {_c_bool(panel["visible"])} }}')
 
     lines = _canvas_tables(exporter, 'panel', 'UIPanelDef', row)
     lines += ['static const PanelSceneDefs g_panel_scenes[SCENE_COUNT] = {', *_scene_rows(exporter, 'panel'), '};']
@@ -1012,19 +1021,19 @@ def write_canvas_c(exporter):
     def group_row(group):
         # Each child list padded to the arrays' size (UI_MAX_GROUP_CHILDREN, codegen/limits.py), then the counts
         kinds = ('image', 'label', 'button', 'panel', 'group')
-        children = [group.get(f'child_{kind}_indices', []) for kind in kinds]
-        padded = [list(c[:max_children]) + [0] * (max_children - min(len(c), max_children)) for c in children]
-        arrays = ', '.join(f'{{ {", ".join(str(i) for i in p)} }}' for p in padded)
-        counts = ', '.join(str(len(c)) for c in children)
-        return f'{{ {arrays}, {counts}, {_c_bool(group.get("visible", True))} }}'
+        children = {kind: group[f'child_{kind}_indices'] for kind in kinds}
+        arrays = ', '.join(f'.child_{kind}_indices = {{ {", ".join(str(i) for i in (c[:max_children] + [0] * max_children)[:max_children])} }}'
+                           for kind, c in children.items())
+        counts = ', '.join(f'.num_child_{kind}s = {len(c)}' for kind, c in children.items())
+        return f'{{ {arrays}, {counts}, .visible = {_c_bool(group["visible"])} }}'
 
     def element_row(elem):
-        return f'{{ {"UI_ELEM_GROUP" if elem.get("type") == "group" else "UI_ELEM_IMAGE"}, {elem["index"]} }}'
+        return f'{{ .type = {"UI_ELEM_GROUP" if elem["type"] == "group" else "UI_ELEM_IMAGE"}, .index = {elem["index"]} }}'
 
     def ui_scene_row(scene):
-        return (f'{{ {scene["first_label"]}, {scene["label_count"]}, {scene["first_image"]}, {scene["image_count"]}, '
-                f'{scene["first_button"]}, {scene["button_count"]}, {scene["first_panel"]}, {scene["panel_count"]}, '
-                f'{_c_bool(scene.get("active", True))} }}')
+        ranges = ', '.join(f'.first_{kind} = {scene[f"first_{kind}"]}, .{kind}_count = {scene[f"{kind}_count"]}'
+                           for kind in ('label', 'image', 'button', 'panel'))
+        return f'{{ {ranges}, .active = {_c_bool(scene["active"])} }}'
 
     lines = (_canvas_tables(exporter, 'group', 'UIGroupDef', group_row)
              + _canvas_tables(exporter, 'element', 'UIElementDef', element_row)

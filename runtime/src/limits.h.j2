@@ -15,10 +15,15 @@ static void arm_limit_reached(const char *name, int value) {{
     debugf("N64 limit reached: %s = %d (see limits.h)\n", name, value);
 }}
 
-#define ARM_LIMIT_REACHED(limit) do {{ \
+#define ARM_LIMIT_REACHED(limit) ARM_LIMIT_REACHED_AS(#limit, limit)
+
+// The same with the limit's name given: in a macro that receives the limit as a
+// parameter (ARM_ARRAY_DECLARE), #parameter names it, where #limit above would
+// give its value (the parameter is expanded first)
+#define ARM_LIMIT_REACHED_AS(name, limit) do {{ \
     static bool _arm_limit_reported = false; \
     if (!_arm_limit_reported) {{ \
         _arm_limit_reported = true; \
-        arm_limit_reached(#limit, (int)(limit)); \
+        arm_limit_reached(name, (int)(limit)); \
     }} \
 }} while (0)

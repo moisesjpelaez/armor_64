@@ -42,7 +42,7 @@
     } \
     \
     static inline bool array_name##_push(array_name *arr, elem_type item) { \
-        if (arr->count >= max_capacity) { ARM_LIMIT_REACHED(max_capacity); return false; } \
+        if (arr->count >= max_capacity) { ARM_LIMIT_REACHED_AS(#max_capacity, max_capacity); return false; } \
         arr->items[arr->count++] = item; \
         return true; \
     } \
@@ -64,7 +64,7 @@
     /* gap getting zeros (Haxe's default values) */ \
     static inline void array_name##_set(array_name *arr, int index, elem_type item) { \
         if (index < 0) return; \
-        if (index >= max_capacity) { ARM_LIMIT_REACHED(max_capacity); return; } \
+        if (index >= max_capacity) { ARM_LIMIT_REACHED_AS(#max_capacity, max_capacity); return; } \
         if (index > arr->count) { \
             memset(&arr->items[arr->count], 0, (size_t)(index - arr->count) * sizeof(elem_type)); \
         } \

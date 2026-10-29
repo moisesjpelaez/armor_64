@@ -71,7 +71,7 @@ static inline void oimo_compute_triangle_aabb(const OimoVec3* v0, const OimoVec3
 static inline bool oimo_static_mesh_geometry_init(
     OimoStaticMeshGeometry* geom,
     const OimoVec3* vertices,
-    const int16_t* indices,
+    const uint16_t* indices,
     int vertex_count,
     int index_count
 ) {

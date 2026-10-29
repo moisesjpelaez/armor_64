@@ -96,14 +96,14 @@ bool physics_create_capsule_ex(ArmObject* obj, int type, float radius, float hal
 // vertex_count: number of vertices
 // index_count: number of indices (must be multiple of 3)
 bool physics_create_mesh(ArmObject* obj,
-                         const OimoVec3* vertices, const int16_t* indices,
+                         const OimoVec3* vertices, const uint16_t* indices,
                          int vertex_count, int index_count,
                          float friction, float restitution,
                          int collision_group, int collision_mask);
 
 // Static mesh with full parameters
 bool physics_create_mesh_full(ArmObject* obj,
-                              const OimoVec3* vertices, const int16_t* indices,
+                              const OimoVec3* vertices, const uint16_t* indices,
                               int vertex_count, int index_count,
                               const PhysicsBodyParams* params);
 
@@ -116,7 +116,7 @@ typedef struct PhysicsBodyDef {
     uint8_t shape;                // PhysicsShape
     float size[3];                // Box: half extents; sphere: radius; capsule: radius, half height
     const OimoVec3* mesh_vertices;  // Static mesh collider
-    const int16_t* mesh_indices;
+    const uint16_t* mesh_indices;
     uint16_t mesh_vertex_count;
     uint16_t mesh_index_count;
     PhysicsBodyParams params;

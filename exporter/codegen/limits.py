@@ -56,7 +56,7 @@ DEFAULTS = {
     "OIMO_CONTACTS_PER_DYNAMIC_BODY": (16, "Contact budget per dynamic body (Python only: OIMO_MAX_CONTACTS is at most the bound)"),
     "OIMO_MAX_ISLAND_BODIES": (32, "Bodies in one simulation island"),
     "OIMO_MAX_ISLAND_SOLVERS": (64, "Contact solvers in one simulation island (at most the contacts)"),
-    "OIMO_MAX_RIGID_BODIES": (32, "Bodies visited while building one island"),
+    "OIMO_MAX_RIGID_BODIES": (32, "Bodies waiting to be visited while building one island (mesh colliders included)"),
     "OIMO_MESH_MAX_CONTACTS": (4, "Contacts kept per mesh collision (the shallowest is replaced)"),
     "OIMO_BVH_MAX_TRIANGLES": (4, "Triangles of the largest mesh collider (its BVH)"),
     "OIMO_BVH_MAX_DEPTH": (4, "Depth of the largest mesh collider's BVH"),
@@ -80,7 +80,7 @@ DEFAULTS = {
     "UI_LABEL_TEXT_SIZE": (32, "Bytes (UTF-8) of a label's text, with the terminator"),
     "UI_MAX_IMAGES": (1, "Images"),
     "UI_MAX_BUTTONS": (1, "Buttons"),
-    "UI_BUTTON_TEXT_SIZE": (32, "Characters of a button"),
+    "UI_BUTTON_TEXT_SIZE": (32, "Bytes (UTF-8) of a button's text, with the terminator"),
     "UI_MAX_PANELS": (1, "Panels"),
     "UI_MAX_GROUPS": (1, "Layout groups"),
     "UI_MAX_GROUP_CHILDREN": (8, "Children of one layout group"),
@@ -210,7 +210,7 @@ def compute(scenes: Optional[List[Dict]] = None, mesh_triangles: int = 0,
                 "OIMO_BVH_MAX_DEPTH": max(int(math.ceil(math.log2(max(triangles, 2)))) + 2, 4)},
                "largest mesh collider")
     if ui_canvases:
-        label_text = (facts or {}).get("label_text_length", None) if facts else None
+        label_text = (facts or {}).get("label_text_length")
         if label_text is not None:
             notes.setdefault("UI_LABEL_TEXT_SIZE", "canvas and runtime label text")
         update(_ui_limits(ui_canvases, label_text), "largest canvas")
@@ -267,7 +267,8 @@ def _scene_limits(scenes: List[Dict], notes: Dict[str, str]) -> Dict[str, int]:
         # Islands hold the movable bodies and the static ones they touch, mesh
         # colliders included (as upstream: statics join, but don't extend, an island)
         "OIMO_MAX_ISLAND_BODIES": bodies + need("mesh_colliders"),
-        "OIMO_MAX_RIGID_BODIES": bodies,
+        # The island build's stack: every body touched, statics included (as upstream)
+        "OIMO_MAX_RIGID_BODIES": bodies + need("mesh_colliders"),
         "MAX_CONTACT_BODIES": need("contact_bodies"),
         "MAX_CONTACT_SUBSCRIBERS": need("contact_subscribers"),
         "MAX_PENDING_REMOVALS": need("objects"),
@@ -446,8 +447,7 @@ def memory_lines(elf: str, toolchain: str, others: int = 10) -> List[str]:
     lines += ["", f"{'Other large symbols':22} {'Size':>10}"]
     rest = [(n, sz) for n, sz in symbols if n not in POOL_SYMBOLS][:others]
     for name, size in rest:
-        note = "  (a scene's objects: every scene's array is allocated)" if name == "objects" else ""
-        lines.append(f"{name:22} {kb(size):>10}{note}")
+        lines.append(f"{name:22} {kb(size):>10}")
     return lines
 
 

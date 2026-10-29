@@ -469,7 +469,7 @@ void physics_remove_body(ArmObject* obj) {
 
 // Static mesh collider (full version with all params)
 bool physics_create_mesh_full(ArmObject* obj,
-                              const OimoVec3* vertices, const int16_t* indices,
+                              const OimoVec3* vertices, const uint16_t* indices,
                               int vertex_count, int index_count,
                               const PhysicsBodyParams* params) {
     if (!g_initialized || !obj || !params) return false;
@@ -527,7 +527,7 @@ bool physics_create_mesh_full(ArmObject* obj,
 
 // Legacy mesh collider (wraps _full version)
 bool physics_create_mesh(ArmObject* obj,
-                         const OimoVec3* vertices, const int16_t* indices,
+                         const OimoVec3* vertices, const uint16_t* indices,
                          int vertex_count, int index_count,
                          float friction, float restitution,
                          int collision_group, int collision_mask) {
