@@ -45,8 +45,10 @@ typedef struct {
     char    text[UI_BUTTON_TEXT_SIZE];
     uint8_t font_rdpq_id;          // rdpq font ID (from fonts_get_rdpq_id)
     int8_t  font_baseline_offset;  // Y offset from pos_y for vertically-centered text
-    uint8_t text_style_id;         // rdpq style for normal text color
-    uint8_t hover_text_style_id;   // rdpq style for focused / hover text color
+    uint8_t text_style_id;         // rdpq style (text color) of each state
+    uint8_t hover_text_style_id;
+    uint8_t click_text_style_id;
+    uint8_t disabled_text_style_id;
 
     // Focus navigation: resolved button indices; -1 = no connection
     int8_t focus_up, focus_down, focus_left, focus_right;

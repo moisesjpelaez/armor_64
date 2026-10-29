@@ -11,10 +11,14 @@ gives build_runner their Makefile rules. Used by exporter.py.
 import os
 import json
 import glob
+import math
+import re
+from typing import NamedTuple
 
 import arm.utils
 import armor64.utils as n64_utils
 import arm.log as log
+from armor64.export import scene_exporter
 from armor64.export.koui_theme_parser import KouiThemeParser, ThemeError
 from armor64.codegen.c_text import c_string
 
@@ -45,6 +49,20 @@ def _mkfont_size(kha_size):
     return max(8, int(kha_size * MKFONT_SIZE_SCALE))
 
 
+# The screen the runtime opens (engine.c display_init); other N64 modes when a game needs them
+N64_SCREEN = (320, 240)
+
+
+def _game_resolution():
+    """The game's resolution, as Armory sizes the window: the start scene's (with
+    its percentage). Canvases are laid out at it (koui_editor saves them at it)."""
+    resolution = arm.utils.get_render_resolution(scene_exporter.start_scene())
+    if resolution != N64_SCREEN:
+        raise ValueError(f'The N64 screen is {N64_SCREEN[0]}x{N64_SCREEN[1]}, but the game\'s resolution '
+                         f'(the start scene\'s Output properties) is {resolution[0]}x{resolution[1]}')
+    return resolution
+
+
 def detect_ui_canvas(exporter):
     """Detect and parse Koui canvas JSON files referenced by scenes.
 
@@ -54,7 +72,7 @@ def detect_ui_canvas(exporter):
     Also parses Koui theme files to extract font size and text color per label.
 
     Layouts (RowLayout, ColLayout) are flattened at export time - their children
-    are extracted with pre-computed absolute positions for N64's fixed resolution.
+    are extracted with pre-computed absolute positions, laid out at the game's resolution.
 
     Args:
         exporter: N64Exporter instance to update with UI state
@@ -87,9 +105,12 @@ def detect_ui_canvas(exporter):
             with open(json_path, 'r', encoding='utf-8') as f:
                 canvas_data = json.load(f)
 
-            # N64 always uses 320x240 display resolution
-            canvas_width = 320
-            canvas_height = 240
+            canvas_width, canvas_height = _game_resolution()
+            saved = canvas_data.get('canvas', {})
+            if (saved.get('width'), saved.get('height')) != (canvas_width, canvas_height):
+                raise ValueError(f'UI canvas "{canvas_name}" was saved at {saved.get("width")}x{saved.get("height")}, '
+                                 f'but the game is {canvas_width}x{canvas_height} (the start scene\'s resolution): '
+                                 f'open it in koui_editor and save it again')
 
             labels = []
             images = []
@@ -130,11 +151,11 @@ def detect_ui_canvas(exporter):
                 # Use scene_key as the root parent_path so that element keys
                 # are scene-scoped (e.g. "Paused/buttons/menu_button" vs
                 # "Win/buttons/menu_button").
+                scene_cell = _Cell(0, 0, canvas_width, canvas_height, 0, 0,
+                                   *_padding(exporter.theme.style('_anchorpane')))
                 for elem in root_elements:
                     _flatten_element(
-                        exporter, elem, elem_by_key, children_by_parent,
-                        canvas_width, canvas_height,
-                        0, 0,  # parent_abs_x, parent_abs_y
+                        exporter, elem, elem_by_key, children_by_parent, scene_cell,
                         labels, images, buttons, panels, groups, elements,
                         parent_path=scene_key
                     )
@@ -179,45 +200,70 @@ def detect_ui_canvas(exporter):
                         log.warn(f'UI canvas "{canvas_name}" has {count} {type_name}, '
                                  f'exceeding uint8_t index limit (255)')
 
-        except ThemeError:
+        except (ThemeError, ValueError):
             raise
         except Exception as e:
             log.warn(f'Failed to parse Koui canvas {json_path}: {e}')
 
 
-def _calc_anchor_position(pos_x, pos_y, width, height, anchor, container_width, container_height):
-    """Calculate absolute position based on anchor within a container.
+class _Cell(NamedTuple):
+    """Where a layout places a child: the cell (relative to the layout), the
+    layout's absolute position, and the layout's theme padding."""
+    x: int
+    y: int
+    width: int
+    height: int
+    origin_x: int
+    origin_y: int
+    pad_left: int = 0
+    pad_right: int = 0
+    pad_top: int = 0
+    pad_bottom: int = 0
 
-    Args:
-        pos_x, pos_y: Element's relative position
-        width, height: Element's dimensions
-        anchor: Anchor enum value (0-8)
-        container_width, container_height: Parent container dimensions
 
-    Returns:
-        (abs_x, abs_y): Absolute position within container
-    """
-    # Calculate X based on anchor
-    if anchor in (ANCHOR_TOP_LEFT, ANCHOR_MIDDLE_LEFT, ANCHOR_BOTTOM_LEFT):
-        abs_x = pos_x
-    elif anchor in (ANCHOR_TOP_CENTER, ANCHOR_MIDDLE_CENTER, ANCHOR_BOTTOM_CENTER):
-        abs_x = (container_width // 2) - (width // 2) + pos_x
-    elif anchor in (ANCHOR_TOP_RIGHT, ANCHOR_MIDDLE_RIGHT, ANCHOR_BOTTOM_RIGHT):
-        abs_x = container_width - width + pos_x
-    else:
-        abs_x = pos_x
+def _padding(style):
+    padding = style['padding']
+    return padding['left'], padding['right'], padding['top'], padding['bottom']
 
-    # Calculate Y based on anchor
-    if anchor in (ANCHOR_TOP_LEFT, ANCHOR_TOP_CENTER, ANCHOR_TOP_RIGHT):
-        abs_y = pos_y
-    elif anchor in (ANCHOR_MIDDLE_LEFT, ANCHOR_MIDDLE_CENTER, ANCHOR_MIDDLE_RIGHT):
-        abs_y = (container_height // 2) - (height // 2) + pos_y
-    elif anchor in (ANCHOR_BOTTOM_LEFT, ANCHOR_BOTTOM_CENTER, ANCHOR_BOTTOM_RIGHT):
-        abs_y = container_height - height + pos_y
-    else:
-        abs_y = pos_y
 
-    return abs_x, abs_y
+def _stretch(size, minimum, maximum, parent_size, padding, offset):
+    """Koui's Layout.calcElementSize: a style with a min or max size fills its
+    cell, less the padding and its offset, within min/max. (Koui widens elements
+    anchored right/bottom by the offset instead: a bug, FIXME there.)"""
+    if minimum <= 0 and maximum <= 0:
+        return size
+    size = parent_size - padding - abs(offset)
+    if minimum > 0 and size < minimum:
+        size = minimum
+    if maximum > 0 and size > maximum:
+        size = maximum
+    return size
+
+
+def _align(side, offset, size, cell_pos, cell_size, pad_start, pad_end):
+    """One axis of Koui's AnchorPane.recalcElement (uiScale 1), used in every
+    layout: start: offset + padding; middle: centered, no padding; end: from
+    the end, the offset added and the padding subtracted. (Koui's GridLayout
+    subtracts the offset and adds the padding at the end side: a bug.)"""
+    if side == 0:
+        return cell_pos + offset + pad_start
+    if side == 1:
+        return math.trunc(cell_pos + cell_size / 2 - size / 2 + offset)
+    return cell_pos + cell_size - size + offset - pad_end
+
+
+def _place(exporter, elem, cell):
+    """An element's absolute position and size in its cell, as Koui places it."""
+    style = exporter.theme.style(elem['tID'])
+    size = style['size']
+    width = _stretch(elem['width'], size['minWidth'], size['maxWidth'],
+                     cell.width, cell.pad_left + cell.pad_right, elem['posX'])
+    height = _stretch(elem['height'], size['minHeight'], size['maxHeight'],
+                      cell.height, cell.pad_top + cell.pad_bottom, elem['posY'])
+    anchor = elem.get('anchor', ANCHOR_TOP_LEFT)
+    x = _align(anchor % 3, elem['posX'], width, cell.x, cell.width, cell.pad_left, cell.pad_right)
+    y = _align(anchor // 3, elem['posY'], height, cell.y, cell.height, cell.pad_top, cell.pad_bottom)
+    return cell.origin_x + x, cell.origin_y + y, width, height
 
 
 # =============================================================================
@@ -245,37 +291,20 @@ def _apply_opacity(color_tuple, opacity):
     return (r, g, b, int(a * max(0.0, min(1.0, opacity))))
 
 
-def _calc_element_alignment(anchor, elem_width, container_width, final_x, json_align_h=0):
-    """Compute alignment info for any element based on its anchor.
-
-    For center/right anchored elements, undoes the pre-computed centering offset
-    and returns alignment parameters so the N64 runtime can center based on
-    actual dimensions (important for text whose glyph widths differ from Krom).
-
-    Args:
-        anchor: Element anchor enum value (0-8)
-        elem_width: Element width from JSON
-        container_width: Parent container width
-        final_x: Pre-computed absolute X position
-        json_align_h: Explicit alignmentHor from JSON properties (0=left default)
-
-    Returns:
-        (adjusted_x, align_h, align_width)
-    """
-    if anchor in (ANCHOR_TOP_CENTER, ANCHOR_MIDDLE_CENTER, ANCHOR_BOTTOM_CENTER):
-        # Undo the centering offset applied by _calc_anchor_position:
-        #   abs_x = (container_width // 2) - (elem_width // 2) + posX
-        # Reverse to get the container left edge position.
-        adjusted_x = final_x - (container_width // 2 - elem_width // 2)
-        return adjusted_x, 1, container_width  # ALIGN_CENTER
-    elif anchor in (ANCHOR_TOP_RIGHT, ANCHOR_MIDDLE_RIGHT, ANCHOR_BOTTOM_RIGHT):
-        adjusted_x = final_x - (container_width - elem_width)
-        return adjusted_x, 2, container_width  # ALIGN_RIGHT
-    elif json_align_h != 0:
+def _calc_element_alignment(elem, cell, final_x, json_align_h=0):
+    """The box (x, alignment, width) the runtime aligns an element's text or image
+    in. Centered and right-anchored ones are aligned in their cell at runtime, from
+    the N64 font's metrics (glyph widths differ from Krom's)."""
+    side = elem.get('anchor', ANCHOR_TOP_LEFT) % 3
+    cell_x = cell.origin_x + cell.x + elem['posX']
+    if side == 1:
+        return cell_x, 1, cell.width  # ALIGN_CENTER
+    if side == 2:
+        return cell_x - cell.pad_right, 2, cell.width  # ALIGN_RIGHT
+    if json_align_h != 0:
         # Explicit text alignment without center/right anchor
-        return final_x, json_align_h, elem_width
-    else:
-        return final_x, 0, 0
+        return final_x, json_align_h, elem['width']
+    return final_x, 0, 0
 
 
 def _snapshot_child_counts(labels, images, buttons, panels, groups=None):
@@ -352,12 +381,12 @@ def _create_group(exporter, elem, children, final_x, final_y,
         elements.append({'type': 'group', 'index': len(groups)})
     groups.append(group_data)
 
+    padding = _padding(exporter.theme.style(elem['tID']))
     for child, (cell_x, cell_y, cell_width, cell_height) in zip(children, _layout_cells(elem, len(children))):
         snap = _snapshot_child_counts(labels, images, buttons, panels, groups)
         _flatten_element(
             exporter, child, elem_by_key, children_by_parent,
-            cell_width, cell_height,
-            final_x + cell_x, final_y + cell_y,
+            _Cell(cell_x, cell_y, cell_width, cell_height, final_x, final_y, *padding),
             labels, images, buttons, panels, groups, elements,
             is_root=False,
             parent_path=full_path
@@ -365,25 +394,26 @@ def _create_group(exporter, elem, children, final_x, final_y,
         _append_child_indices(group_data, labels, images, buttons, panels, groups, snap)
 
 
-def _handle_label(exporter, elem, final_x, final_y, labels, container_width, parent_path: str = ""):
+def _handle_label(exporter, elem, final_x, final_y, labels, cell, parent_path: str = ""):
     """Handle Label element - extract text, font, and color info."""
     props = elem.get('properties', {})
     tid = elem.get('tID', '_label')
     anchor = elem.get('anchor', ANCHOR_TOP_LEFT)
 
+    # Koui draws labels in their default state (a disabled one too), with its opacity
     style = exporter.theme.style(tid)
-    font_size = style['font']['size']
-    text_color = style['color']['text']
+    font = (style['font']['family'], style['font']['size'])
+    text_color = _apply_opacity(style['color']['text'], style['opacity'])
 
     # textShadow is an optional group; the shadow is drawn when visible and offset
     text_shadow = style.get('textShadow', {})
-    shadow_color = text_shadow.get('color', (0, 0, 0, 0))
+    shadow_color = _apply_opacity(text_shadow.get('color', (0, 0, 0, 0)), style['opacity'])
     shadow_dx = text_shadow.get('offsetX', 0)
     shadow_dy = text_shadow.get('offsetY', 0)
     shadow = shadow_color[3] > 0 and (shadow_dx != 0 or shadow_dy != 0)
     shadow_style_id = _get_or_create_color_style(exporter, shadow_color) if shadow else 0
 
-    exporter.font_sizes.add(font_size)
+    exporter.fonts_used.add(font)
     style_id = _get_or_create_color_style(exporter, text_color)
 
     # Build full path for key
@@ -394,9 +424,7 @@ def _handle_label(exporter, elem, final_x, final_y, labels, container_width, par
     # so libdragon centers text based on actual N64 font metrics (which may differ
     # from the Krom font metrics used to compute JSON positions).
     json_align_h = props.get('alignmentHor', 0)
-    label_x, align_h, align_width = _calc_element_alignment(
-        anchor, elem['width'], container_width, final_x, json_align_h
-    )
+    label_x, align_h, align_width = _calc_element_alignment(elem, cell, final_x, json_align_h)
 
     label_data = {
         'key': full_path,  # Use full path as key
@@ -410,7 +438,7 @@ def _handle_label(exporter, elem, final_x, final_y, labels, container_width, par
         'align_h': align_h,
         'align_width': align_width,
         'tID': tid,
-        'font_size': font_size,
+        'font': font,
         'text_color': text_color,
         'style_id': style_id,
         'shadow': shadow,
@@ -421,27 +449,28 @@ def _handle_label(exporter, elem, final_x, final_y, labels, container_width, par
     labels.append(label_data)
 
 
-def _handle_button(exporter, elem, final_x, final_y, buttons, container_width, parent_path: str = ""):
+def _handle_button(exporter, elem, final_x, final_y, buttons, parent_path: str = ""):
     """Handle Button element — extract position, colors, and focus graph."""
     props = elem.get('properties', {})
     tid = elem.get('tID', '_button')
     anchor = elem.get('anchor', ANCHOR_TOP_LEFT)
 
     style = exporter.theme.style(tid)
-    font_size = style['font']['size']
-    text_color = style['color']['text']
+    font = (style['font']['family'], style['font']['size'])
     border_size = style['border']['size']
 
-    # Each state's colors, with its opacity pre-multiplied into the alpha
+    # Each state's colors (the text is a Label with the button's tID, drawn in the
+    # button's state), with the state's opacity pre-multiplied into the alpha
     colors = {}
     for state in ('default', 'hover', 'click', 'disabled'):
         state_style = exporter.theme.style(tid, state)
         opacity = state_style['opacity']
         colors[f'bg_{state}'] = _apply_opacity(_bg_color(state_style), opacity)
         colors[f'border_{state}'] = _apply_opacity(state_style['border']['color'], opacity)
+        colors[f'{state}_text_style_id'] = _get_or_create_color_style(
+            exporter, _apply_opacity(state_style['color']['text'], opacity))
 
-    exporter.font_sizes.add(font_size)
-    text_style_id = _get_or_create_color_style(exporter, text_color)
+    exporter.fonts_used.add(font)
 
     # Build full path for key
     full_path = _build_full_path(parent_path, elem['key'])
@@ -458,9 +487,8 @@ def _handle_button(exporter, elem, final_x, final_y, buttons, container_width, p
         'width': elem['width'],
         'height': elem['height'],
         'visible': elem.get('visible', True),
-        'font_size': font_size,
-        'text_style_id': text_style_id,
-        'hover_text_style_id': text_style_id,  # same color; no change on hover in default theme
+        'disabled': elem.get('disabled', False),
+        'font': font,
         **colors,
         'border_size': border_size,
         # Focus graph: resolved to indices by resolve_button_focus(), -1 = no link
@@ -481,9 +509,10 @@ def _handle_panel(exporter, elem, final_x, final_y, panels, parent_path: str = "
     tid = elem.get('tID', '_panel')
     anchor = elem.get('anchor', ANCHOR_TOP_LEFT)
 
+    # Koui draws panels in their default state (a disabled one too), with its opacity
     style = exporter.theme.style(tid)
-    bg = _bg_color(style)
-    border = style['border']['color']
+    bg = _apply_opacity(_bg_color(style), style['opacity'])
+    border = _apply_opacity(style['border']['color'], style['opacity'])
     border_size = style['border']['size']
 
     full_path = _build_full_path(parent_path, elem['key'])
@@ -545,7 +574,7 @@ def resolve_button_focus(buttons, ui_scenes):
 
 
 def _handle_image(exporter, elem, final_x, final_y, images, elements, is_root,
-                  container_width, parent_path: str = ""):
+                  cell, parent_path: str = ""):
     """Handle ImagePanel element - track image for copying."""
     props = elem.get('properties', {})
     image_name = props.get('imageName', '')
@@ -558,10 +587,7 @@ def _handle_image(exporter, elem, final_x, final_y, images, elements, is_root,
     # Build full path for key
     full_path = _build_full_path(parent_path, elem['key'])
 
-    anchor = elem.get('anchor', ANCHOR_TOP_LEFT)
-    image_x, align_h, align_width = _calc_element_alignment(
-        anchor, elem['width'], container_width, final_x
-    )
+    image_x, align_h, align_width = _calc_element_alignment(elem, cell, final_x)
 
     image_index = len(images)
     image_data = {
@@ -587,9 +613,7 @@ def _handle_image(exporter, elem, final_x, final_y, images, elements, is_root,
 # Main Flatten Function
 # =============================================================================
 
-def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
-                     container_width, container_height,
-                     parent_abs_x, parent_abs_y,
+def _flatten_element(exporter, elem, elem_by_key, children_by_parent, cell,
                      labels, images, buttons, panels, groups, elements,
                      is_root=True,
                      parent_path: str = ""):
@@ -605,17 +629,10 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
     """
     elem_type = elem.get('type')
     elem_key = elem.get('key')
-    anchor = elem.get('anchor', ANCHOR_TOP_LEFT)
 
-    # Calculate final absolute position
-    elem_abs_x, elem_abs_y = _calc_anchor_position(
-        elem['posX'], elem['posY'],
-        elem['width'], elem['height'],
-        anchor,
-        container_width, container_height
-    )
-    final_x = parent_abs_x + elem_abs_x
-    final_y = parent_abs_y + elem_abs_y
+    # Placed in its cell; a stretched element continues with its new size
+    final_x, final_y, width, height = _place(exporter, elem, cell)
+    elem = {**elem, 'width': width, 'height': height}
 
     children = children_by_parent.get(elem_key, [])
     has_children = len(children) > 0
@@ -630,16 +647,16 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
         return
 
     if elem_type == 'Label':
-        _handle_label(exporter, elem, final_x, final_y, labels, container_width, parent_path=parent_path)
+        _handle_label(exporter, elem, final_x, final_y, labels, cell, parent_path=parent_path)
         return
 
     if elem_type == 'ImagePanel':
         _handle_image(exporter, elem, final_x, final_y, images, elements, is_root,
-                      container_width, parent_path=parent_path)
+                      cell, parent_path=parent_path)
         return
 
     if elem_type == 'Button':
-        _handle_button(exporter, elem, final_x, final_y, buttons, container_width, parent_path=parent_path)
+        _handle_button(exporter, elem, final_x, final_y, buttons, parent_path=parent_path)
         return
 
     if elem_type == 'Panel':
@@ -660,8 +677,7 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
         for child in children:
             _flatten_element(
                 exporter, child, elem_by_key, children_by_parent,
-                elem['width'], elem['height'],
-                final_x, final_y,
+                _Cell(0, 0, width, height, final_x, final_y),
                 labels, images, buttons, panels, groups, elements,
                 is_root=False,
                 parent_path=current_path
@@ -881,26 +897,23 @@ def write_button_h(exporter):
     n64_utils.write_generated('ui/button_defs.h', '\n'.join(lines), 'ui_exporter.write_button_h', 'ui/button.h')
 
 
-# The button colors (RGBA) of each state, in UIButtonDef's order, when the themes don't set them
-_BUTTON_COLORS = (
-    ('bg_default', (38, 40, 51, 255)), ('border_default', (31, 32, 40, 255)),
-    ('bg_hover', (43, 43, 51, 255)), ('border_hover', (239, 100, 19, 255)),
-    ('bg_click', (52, 55, 70, 255)), ('border_click', (255, 255, 255, 255)),
-    ('bg_disabled', (38, 40, 51, 153)), ('border_disabled', (31, 32, 40, 153)),
-)
+# The button colors (RGBA) of each state, in UIButtonDef's order
+_BUTTON_COLORS = ('bg_default', 'border_default', 'bg_hover', 'border_hover',
+                  'bg_click', 'border_click', 'bg_disabled', 'border_disabled')
 
 
 def write_button_c(exporter):
     """Generate button_data.h (for button.c): each canvas's buttons, and g_button_scenes
     (the buttons of each scene's canvas, by SceneId)."""
     def row(btn):
-        colors = ', '.join(str(c) for field, default in _BUTTON_COLORS for c in btn.get(field, default))
+        colors = ', '.join(str(c) for field in _BUTTON_COLORS for c in btn[field])
         return (f'{{ {btn["pos_x"]}, {btn["pos_y"]}, {btn["width"]}, {btn["height"]}, '
                 f'{colors}, {btn.get("border_size", 2)}, '
                 f'{c_string(btn.get("text", ""))}, {btn.get("font_id", 0)}, {btn.get("font_baseline_offset", 20)}, '
-                f'{btn.get("text_style_id", 0)}, {btn.get("hover_text_style_id", 0)}, '
+                f'{btn["default_text_style_id"]}, {btn["hover_text_style_id"]}, '
+                f'{btn["click_text_style_id"]}, {btn["disabled_text_style_id"]}, '
                 f'{btn.get("focus_up", -1)}, {btn.get("focus_down", -1)}, {btn.get("focus_left", -1)}, '
-                f'{btn.get("focus_right", -1)}, {_c_bool(btn.get("visible", True))} }}')
+                f'{btn.get("focus_right", -1)}, {_c_bool(btn.get("visible", True))}, {_c_bool(btn["disabled"])} }}')
 
     lines = _canvas_tables(exporter, 'button', 'UIButtonDef', row)
     lines += ['static const ButtonSceneDefs g_button_scenes[SCENE_COUNT] = {', *_scene_rows(exporter, 'button'), '};']
@@ -996,65 +1009,43 @@ def write_canvas_c(exporter):
     n64_utils.write_generated('ui/canvas_data.h', '\n'.join(lines), 'ui_exporter.write_canvas_c', 'ui/canvas.c')
 
 
-def write_fonts(exporter):
-    """Copy font files and generate fonts.c/fonts.h if UI is used.
+def _kha_name(path):
+    """A file's Kha asset name, which themes use for font.family
+    (Kha's khamake main.js fixName): Quicksand-Regular.ttf -> Quicksand_Regular."""
+    name = re.sub(r'[-@ ./\\]', '_', os.path.splitext(os.path.basename(path))[0])
+    return '_' + name if name[:1].isdigit() else name
 
-    Creates separate .font64 files for each unique font size needed from the theme.
-    """
+
+def _font_files():
+    """The .ttf files a Kha build gets, by asset name: the project's Assets/, then Koui's."""
+    fp = arm.utils.get_fp()
+    files = {}
+    for folder in (os.path.join(fp, 'Assets'), os.path.join(fp, 'Subprojects', 'Koui', 'Assets')):
+        for path in sorted(glob.glob(os.path.join(folder, '**', '*.ttf'), recursive=True)):
+            files.setdefault(_kha_name(path), path)
+    return files
+
+
+def write_fonts(exporter):
+    """One N64 font for each font family and size the canvas texts use (their
+    styles' font.family and font.size): copies the .ttf files for the Makefile
+    to convert, and writes fonts_data.h / fonts_defs.h."""
     if not exporter.has_ui:
         return
 
     n64_assets = os.path.join(arm.utils.build_dir(), 'n64', 'assets')
     os.makedirs(n64_assets, exist_ok=True)
+    files = _font_files()
 
-    # Ensure we have at least the default size
-    if not exporter.font_sizes:
-        exporter.font_sizes.add(15)
-
-    # Search order for fonts
-    font_search_paths = [
-        os.path.join(arm.utils.get_fp(), 'Assets'),
-        os.path.join(arm.utils.get_fp(), 'Subprojects', 'Koui', 'Assets'),
-    ]
-
-    base_font_name = None
-    base_font_path = None
-
-    for search_path in font_search_paths:
-        if os.path.exists(search_path):
-            fonts = glob.glob(os.path.join(search_path, '**', '*.ttf'), recursive=True)
-            for font_path in fonts:
-                font_basename = os.path.splitext(os.path.basename(font_path))[0]
-                if base_font_name is None:
-                    base_font_name = font_basename
-                    base_font_path = font_path
-                    break
-        if base_font_name:
-            break
-
-    if not base_font_name or not base_font_path:
-        log.warn('No TTF fonts found for UI. Labels may not render correctly.')
-        base_font_name = 'default'
-        base_font_path = None
-
-    # Create font entries for each unique size
-    font_id = 0
-    for size in sorted(exporter.font_sizes):
-        font_key = f'{base_font_name}_{size}'
-
-        if base_font_path:
-            dst = os.path.join(n64_assets, f'{font_key}.ttf')
-            if n64_utils.copy_if_changed(base_font_path, dst):
-                log.info(f'Copied font: {font_key}.ttf (size {size})')
-
-        exporter.exported_fonts[font_key] = {
-            'name': base_font_name,
-            'size': size,
-            'font_id': font_id
-        }
-        exporter.font_id_map[size] = font_id
-        font_id += 1
-        log.info(f'Font registered: {font_key} (size {size}, id {font_id - 1})')
+    for font_id, (family, size) in enumerate(sorted(exporter.fonts_used)):
+        if family not in files:
+            raise ValueError(f'UI font "{family}" not found: no {family}.ttf (or a name Kha turns into it, '
+                             f'like {family.replace("_", "-")}.ttf) in Assets/ or Koui\'s Assets/')
+        font_key = f'{family}_{size}'
+        if n64_utils.copy_if_changed(files[family], os.path.join(n64_assets, f'{font_key}.ttf')):
+            log.info(f'Copied font: {font_key}.ttf')
+        exporter.exported_fonts[font_key] = {'name': family, 'size': size, 'font_id': font_id}
+        exporter.font_id_map[(family, size)] = font_id
 
     write_fonts_c(exporter)
     write_fonts_h(exporter)
@@ -1082,27 +1073,20 @@ def write_fonts_h(exporter):
 
 
 def _assign_font_ids_to_labels(exporter):
-    """Assign font_id and baseline_offset to each label and button based on theme font size."""
+    """Each label's and button's font id and text baseline, from its font."""
     for canvas_name, canvas in exporter.ui_canvas_data.items():
         for label in canvas.get('labels', []):
-            kha_size = label.get('font_size', 15)
-            font_id = exporter.font_id_map.get(kha_size, 0)
-            label['font_id'] = font_id
-            mkfont_size = _mkfont_size(kha_size)
-            rendered_height = mkfont_size * MKFONT_LINE_HEIGHT
+            label['font_id'] = exporter.font_id_map[label['font']]
+            rendered_height = _mkfont_size(label['font'][1]) * MKFONT_LINE_HEIGHT
             label['baseline_offset'] = int(rendered_height * MKFONT_BASELINE)
-            log.debug(f"Label '{label.get('key', 'unnamed')}': kha {kha_size} -> mkfont {mkfont_size}, font_id {font_id}")
 
         for button in canvas.get('buttons', []):
-            kha_size = button.get('font_size', 15)
-            font_id = exporter.font_id_map.get(kha_size, 0)
-            button['font_id'] = font_id
-            rendered_height = _mkfont_size(kha_size) * MKFONT_LINE_HEIGHT
+            button['font_id'] = exporter.font_id_map[button['font']]
+            rendered_height = _mkfont_size(button['font'][1]) * MKFONT_LINE_HEIGHT
             baseline_in_font = int(rendered_height * MKFONT_BASELINE)
             btn_height = button.get('height', 40)
             top_of_text = (btn_height - rendered_height) / 2
             button['font_baseline_offset'] = max(0, round(top_of_text + baseline_in_font))
-            log.debug(f"Button '{button.get('key', 'unnamed')}': kha {kha_size} -> font_id {font_id}, baseline {button['font_baseline_offset']}")
 
 
 def generate_font_makefile_entries(exporter):

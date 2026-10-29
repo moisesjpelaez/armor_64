@@ -37,7 +37,7 @@ class N64Exporter:
         self.scene_data = {}
         self.exported_meshes = {}
         self.exported_fonts = {}
-        self.font_sizes = set()
+        self.fonts_used = set()          # (family, size) of the canvas texts (ui_exporter)
         self.trait_info = {}
         self.exported_audio = {}
         self.autoload_info = {}

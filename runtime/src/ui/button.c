@@ -16,10 +16,11 @@
  *   Focus change (Button._onFocus):
  *   - FocusLoose → isPressed = false (non-toggle buttons)
  *
- *   Rendering (Button.draw):
- *   - isPressed → "click" colors
- *   - focused   → "hover" colors
- *   - else      → default colors
+ *   Rendering (Button.draw), background, border and text (its Label):
+ *   - isPressed → "click" style
+ *   - focused   → "hover" style
+ *   - disabled  → "disabled" style
+ *   - else      → default style
  */
 #include "button.h"
 #include "fonts.h"
@@ -66,10 +67,10 @@ typedef struct {
     const char *text;
     uint8_t font_id;           // Logical ID → fonts_get_rdpq_id()
     int8_t  font_baseline_offset;
-    uint8_t text_style_id;
-    uint8_t hover_text_style_id;
+    uint8_t text_style_id, hover_text_style_id, click_text_style_id, disabled_text_style_id;
     int8_t  focus_up, focus_down, focus_left, focus_right;
     bool    visible;
+    bool    disabled;
 } UIButtonDef;
 
 // ============================================================================
@@ -121,6 +122,8 @@ static void load_buttons(const UIButtonDef *defs, int count) {
         btn->font_baseline_offset = def->font_baseline_offset;
         btn->text_style_id        = def->text_style_id;
         btn->hover_text_style_id  = def->hover_text_style_id;
+        btn->click_text_style_id  = def->click_text_style_id;
+        btn->disabled_text_style_id = def->disabled_text_style_id;
         btn->focus_up             = def->focus_up;
         btn->focus_down           = def->focus_down;
         btn->focus_left           = def->focus_left;
@@ -128,7 +131,7 @@ static void load_buttons(const UIButtonDef *defs, int count) {
         btn->visible              = def->visible;
         btn->initial_visible      = def->visible;
         btn->focused              = false;
-        btn->disabled             = false;
+        btn->disabled             = def->disabled;
         btn->isPressed            = false;
         btn->_activated           = false;
 
@@ -326,12 +329,7 @@ void button_render(void) {
         uint8_t bg_r, bg_g, bg_b, bg_a;
         uint8_t bdr_r, bdr_g, bdr_b, bdr_a;
 
-        if (btn->disabled) {
-            bg_r = btn->disabled_bg_r; bg_g = btn->disabled_bg_g;
-            bg_b = btn->disabled_bg_b; bg_a = btn->disabled_bg_a;
-            bdr_r = btn->disabled_border_r; bdr_g = btn->disabled_border_g;
-            bdr_b = btn->disabled_border_b; bdr_a = btn->disabled_border_a;
-        } else if (btn->isPressed) {
+        if (btn->isPressed) {
             bg_r = btn->click_bg_r; bg_g = btn->click_bg_g;
             bg_b = btn->click_bg_b; bg_a = btn->click_bg_a;
             bdr_r = btn->click_border_r; bdr_g = btn->click_border_g;
@@ -341,6 +339,11 @@ void button_render(void) {
             bg_b = btn->hover_bg_b; bg_a = btn->hover_bg_a;
             bdr_r = btn->hover_border_r; bdr_g = btn->hover_border_g;
             bdr_b = btn->hover_border_b; bdr_a = btn->hover_border_a;
+        } else if (btn->disabled) {
+            bg_r = btn->disabled_bg_r; bg_g = btn->disabled_bg_g;
+            bg_b = btn->disabled_bg_b; bg_a = btn->disabled_bg_a;
+            bdr_r = btn->disabled_border_r; bdr_g = btn->disabled_border_g;
+            bdr_b = btn->disabled_border_b; bdr_a = btn->disabled_border_a;
         } else {
             bg_r = btn->bg_r; bg_g = btn->bg_g;
             bg_b = btn->bg_b; bg_a = btn->bg_a;
@@ -371,8 +374,10 @@ void button_render(void) {
         UIButton *btn = &g_buttons[i];
         if (!btn->visible || !btn->text[0] || !btn->font_rdpq_id) continue;
 
-        uint8_t text_style = (btn->isPressed || btn->focused)
-            ? btn->hover_text_style_id : btn->text_style_id;
+        uint8_t text_style = btn->isPressed ? btn->click_text_style_id
+                           : btn->focused   ? btn->hover_text_style_id
+                           : btn->disabled  ? btn->disabled_text_style_id
+                           : btn->text_style_id;
         rdpq_textparms_t parms = {
             .style_id = text_style,
             .align    = ALIGN_CENTER,
