@@ -14,6 +14,7 @@ import arm.utils
 import armor64.utils as n64_utils
 import arm.log as log
 from armor64.export.koui_theme_parser import KouiThemeParser
+from armor64.codegen.c_text import c_string
 
 
 # =============================================================================
@@ -920,8 +921,7 @@ def copy_canvas_images(exporter):
             safe_name = image_name.lower().replace(' ', '_')
             dst_path = os.path.join(n64_assets, f'{safe_name}.png')
 
-            if not os.path.exists(dst_path):
-                n64_utils.copy_if_changed(png_path, dst_path)
+            if n64_utils.copy_if_changed(png_path, dst_path):
                 log.info(f'Copied canvas image: {safe_name}.png')
                 copied_count += 1
         else:
@@ -982,11 +982,10 @@ def write_label_c(exporter):
         canvas_label_arrays.append(f'#define {count_def} {len(labels)}')
         canvas_label_arrays.append(f'static const UILabelDef g_{safe_canvas}_label_defs[{count_def}] = {{')
         for label in labels:
-            text_esc = label['text'].replace('\\', '\\\\').replace('"', '\\"')
             visible = 'true' if label['visible'] else 'false'
             shadow = 'true' if label.get('shadow', False) else 'false'
             canvas_label_arrays.append(
-                f'    {{ "{text_esc}", {label["pos_x"]}, {label["pos_y"]}, {label["width"]}, {label["height"]}, '
+                f'    {{ {c_string(label["text"])}, {label["pos_x"]}, {label["pos_y"]}, {label["width"]}, {label["height"]}, '
                 f'{label.get("baseline_offset", 12)}, {label["anchor"]}, {label.get("style_id", 0)}, '
                 f'{label.get("font_id", 0)}, {visible}, {shadow}, {label.get("shadow_dx", 0)}, '
                 f'{label.get("shadow_dy", 0)}, {label.get("shadow_style_id", 0)}, '
@@ -1157,7 +1156,6 @@ def write_button_c(exporter):
             dbg = btn.get('bg_disabled', (38, 40, 51, 153))
             dbd = btn.get('border_disabled', (31, 32, 40, 153))
 
-            text_esc = btn.get('text', '').replace('\\', '\\\\').replace('"', '\\"')
             visible = 'true' if btn.get('visible', True) else 'false'
             focus_up    = btn.get('focus_up', -1)
             focus_down  = btn.get('focus_down', -1)
@@ -1174,7 +1172,7 @@ def write_button_c(exporter):
                 f'{dbg[0]}, {dbg[1]}, {dbg[2]}, {dbg[3]}, '
                 f'{dbd[0]}, {dbd[1]}, {dbd[2]}, {dbd[3]}, '
                 f'{btn.get("border_size", 2)}, '
-                f'"{text_esc}", {btn.get("font_id", 0)}, {btn.get("font_baseline_offset", 20)}, '
+                f'{c_string(btn.get("text", ""))}, {btn.get("font_id", 0)}, {btn.get("font_baseline_offset", 20)}, '
                 f'{btn.get("text_style_id", 0)}, {btn.get("hover_text_style_id", 0)}, '
                 f'{focus_up}, {focus_down}, {focus_left}, {focus_right}, {visible} }},'
             )
@@ -1485,8 +1483,7 @@ def write_fonts(exporter):
 
         if base_font_path:
             dst = os.path.join(n64_assets, f'{font_key}.ttf')
-            if not os.path.exists(dst):
-                n64_utils.copy_if_changed(base_font_path, dst)
+            if n64_utils.copy_if_changed(base_font_path, dst):
                 log.info(f'Copied font: {font_key}.ttf (size {size})')
 
         exporter.exported_fonts[font_key] = {

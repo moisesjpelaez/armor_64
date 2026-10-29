@@ -84,8 +84,8 @@ class StringConcatBuilder {
 
         switch (e.expr) {
             case EConst(CString(s)):
-                // Literal string - add directly to format
-                formatParts.push(s);
+                // Literal string - add to the format (a literal % is %% there)
+                formatParts.push(s.split("%").join("%%"));
 
             case EBinop(OpAdd, left, right):
                 // Nested concatenation - recurse if either side is string

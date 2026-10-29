@@ -27,7 +27,7 @@ import arm.utils
 import arm.log as log
 import arm.linked_utils as linked_utils
 import armor64.utils as n64_utils
-from armor64.export import linked_export
+from armor64.export import linked_export, scene_exporter
 
 
 # ---------------------------------------------------------------------------
@@ -195,30 +195,6 @@ def _get_animation_names(armature_obj):
     return names
 
 
-def _collect_all_objects(scene):
-    """Collect all objects including those inside instance collections.
-
-    Each instance collection empty is processed separately to capture
-    all instances. For mesh export, duplicates are filtered later by mesh data.
-
-    Returns:
-        List of (object, instance_matrix) tuples. instance_matrix is None
-        for direct scene objects, or the parent empty's world matrix for
-        objects inside instanced collections.
-    """
-    objects = []
-
-    for obj in scene.collection.all_objects:
-        if obj.instance_type == 'COLLECTION' and obj.instance_collection:
-            coll = obj.instance_collection
-            for cobj in coll.all_objects:
-                objects.append((cobj, obj.matrix_world))
-        else:
-            objects.append((obj, None))
-
-    return objects
-
-
 def _export_mesh_to_gltf(obj, output_path, armature=None) -> list:
     """Export a mesh to GLTF_SEPARATE format; returns the files written.
 
@@ -229,76 +205,67 @@ def _export_mesh_to_gltf(obj, output_path, armature=None) -> list:
     view_layer = bpy.context.view_layer
     export_objects = {obj} | ({armature} if armature else set())
 
-    # --- Prepare actions (clean own + stash foreign) ---
+    # Everything changed here is undone in `finally`, also when the export fails
     restore_actions = None
-    if armature:
-        restore_actions = _prepare_export_actions(armature)
-
-    # --- Ensure UV layer named "UVMap" for Fast64 ---
-    uv_orig_name = _ensure_uvmap_layer(obj.data)
-
-    # --- Hide every other object so GLTF exporter only sees ours ---
-    # use_selection=True still follows parent/child chains and can pull in
-    # unintended objects from the same scene. Hiding everything else avoids
-    # any cross-contamination between models sharing the same temp scene.
+    uv_orig_name = None
     hidden_objects = []
-    for o in view_layer.objects:
-        if o not in export_objects and not o.hide_viewport:
-            o.hide_viewport = True
-            hidden_objects.append(o)
-
-    # Save and reset transforms to origin
-    orig = (obj.location.copy(), obj.rotation_euler.copy(), obj.scale.copy())
-    arm_orig = None
+    transforms = {}  # object -> (location, rotation, scale)
     arm_parent_orig = None
-    if armature:
-        arm_orig = (armature.location.copy(), armature.rotation_euler.copy(),
-                    armature.scale.copy())
+    try:
+        # --- Prepare actions (clean own + stash foreign) ---
+        if armature:
+            restore_actions = _prepare_export_actions(armature)
+
+        # --- Ensure UV layer named "UVMap" for Fast64 ---
+        uv_orig_name = _ensure_uvmap_layer(obj.data)
+
+        # --- Hide every other object so GLTF exporter only sees ours ---
+        # use_selection=True still follows parent/child chains and can pull in
+        # unintended objects from the same scene. Hiding everything else avoids
+        # any cross-contamination between models sharing the same temp scene.
+        for o in view_layer.objects:
+            if o not in export_objects and not o.hide_viewport:
+                o.hide_viewport = True
+                hidden_objects.append(o)
+
         # Temporarily unparent armature so the GLTF exporter doesn't
         # traverse up to parent objects (e.g. collider mesh) which causes
         # duplicated skeleton nodes and crashes gltf_to_t3d.
-        if armature.parent:
+        if armature and armature.parent:
             arm_parent_orig = (armature.parent, armature.matrix_parent_inverse.copy())
             armature.parent = None
-    for o in export_objects:
-        o.location = (0, 0, 0)
-        o.rotation_euler = (0, 0, 0)
-        o.scale = (1, 1, 1)
 
-    bpy.ops.object.select_all(action='DESELECT')
-    view_layer.update()
+        # Exported at the origin
+        for o in export_objects:
+            transforms[o] = (o.location.copy(), o.rotation_euler.copy(), o.scale.copy())
+            o.location = (0, 0, 0)
+            o.rotation_euler = (0, 0, 0)
+            o.scale = (1, 1, 1)
 
-    obj.select_set(True)
-    if armature:
-        armature.select_set(True)
-        view_layer.objects.active = armature
+        bpy.ops.object.select_all(action='DESELECT')
+        view_layer.update()
 
-    files = _gltf_export(output_path, is_skinned)
+        obj.select_set(True)
+        if armature:
+            armature.select_set(True)
+            view_layer.objects.active = armature
 
-    # Restore transforms and parent
-    obj.location, obj.rotation_euler, obj.scale = orig
-    if armature and arm_orig:
-        armature.location, armature.rotation_euler, armature.scale = arm_orig
-    if arm_parent_orig:
-        armature.parent, armature.matrix_parent_inverse = arm_parent_orig
-
-    # Restore hidden objects
-    for o in hidden_objects:
-        o.hide_viewport = False
-
-    view_layer.update()
-
-    # Restore UV layer name
-    if uv_orig_name is not None and obj.data and obj.data.uv_layers:
-        for layer in obj.data.uv_layers:
-            if layer.name == "UVMap":
-                layer.name = uv_orig_name
-                break
-
-    # Restore stashed/cleaned actions
-    if restore_actions:
-        restore_actions()
-    return files
+        return _gltf_export(output_path, is_skinned)
+    finally:
+        for o, (location, rotation, scale) in transforms.items():
+            o.location, o.rotation_euler, o.scale = location, rotation, scale
+        if arm_parent_orig:
+            armature.parent, armature.matrix_parent_inverse = arm_parent_orig
+        for o in hidden_objects:
+            o.hide_viewport = False
+        view_layer.update()
+        if uv_orig_name is not None and obj.data and obj.data.uv_layers:
+            for layer in obj.data.uv_layers:
+                if layer.name == "UVMap":
+                    layer.name = uv_orig_name
+                    break
+        if restore_actions:
+            restore_actions()
 
 
 def _gltf_export(output_path, is_skinned):
@@ -658,7 +625,7 @@ def _mesh_jobs(exporter):
             window.scene = scene
             window.view_layer = scene.view_layers[0]
 
-    names = set()
+    names = {}  # Model name -> the Blender mesh it comes from
     meshes = set()
     try:
         temp_scene = linked_export.get_temp_scene() if exporter.linked_objects else None
@@ -671,7 +638,7 @@ def _mesh_jobs(exporter):
             mesh_name = arm.utils.safesrc(original_mesh_name)
             if mesh_name in names:
                 continue
-            names.add(mesh_name)
+            names[mesh_name] = original_mesh_name
             # Stored by original mesh for scene_exporter lookup
             original_mesh = linked_export.get_original_mesh(original_mesh_name)
             if original_mesh is None:
@@ -684,12 +651,19 @@ def _mesh_jobs(exporter):
         for scene in bpy.data.scenes:
             if scene.library or linked_export.is_temp_scene(scene):
                 continue
-            for obj, _ in _collect_all_objects(scene):
+            for obj, _, _ in scene_exporter.collect_scene_objects(scene):
                 if obj.type != 'MESH' or obj.library or obj.data in meshes:
                     continue
                 meshes.add(obj.data)
+                mesh_name = arm.utils.safesrc(linked_utils.asset_name(obj.data))
+                if mesh_name in names:
+                    # Both would write the same model file: one would replace the other
+                    raise ValueError(f'N64: the meshes "{names[mesh_name]}" and "{obj.data.name}" both become '
+                                     f'the model "{mesh_name}" (names in C keep only letters, digits and _): '
+                                     'rename one of them')
+                names[mesh_name] = obj.data.name
                 use_scene(scene)
-                yield obj, arm.utils.safesrc(linked_utils.asset_name(obj.data)), obj.data, _find_armature(obj), False
+                yield obj, mesh_name, obj.data, _find_armature(obj), False
     finally:
         window.scene = main_scene
         window.view_layer = main_view_layer

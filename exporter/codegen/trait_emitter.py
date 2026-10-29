@@ -19,6 +19,8 @@ import logging
 import re
 from typing import Dict, List, Optional, Set
 
+from armor64.codegen.c_text import c_string
+
 log = logging.getLogger(__name__)
 
 # A binding template's placeholder: {0}, {self}, {1=1.0f} (Bindings.hx)
@@ -198,8 +200,8 @@ class TraitEmitter:
         return f"{val_str}f"
 
     def emit_string(self, node: Dict) -> str:
-        val = node.get("value", "")
-        return f'"{val}"' if val else "NULL"
+        # "" stays "" (Haxe's null is a null node)
+        return c_string(node.get("value", ""))
 
     def emit_sprintf(self, node: Dict) -> str:
         """Pre-built sprintf from macro: { type: "sprintf", value: "format", args: [...] }
@@ -209,14 +211,14 @@ class TraitEmitter:
         args = node.get("args", [])
 
         if not args:
-            # No args, just a literal string
-            return f'"{format_str}"'
+            # No args, just a literal string (the macro wrote a literal % as %%)
+            return c_string(format_str.replace('%%', '%'))
 
         # Emit each argument
         arg_codes = [self.emit(arg) for arg in args]
         args_str = ", ".join(arg_codes)
 
-        return f'_str_concat("{format_str}", {args_str})'
+        return f'_str_concat({c_string(format_str)}, {args_str})'
 
     def emit_bool(self, node: Dict) -> str:
         return "true" if node.get("value", False) else "false"

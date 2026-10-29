@@ -28,6 +28,7 @@ class _LinkedExportState:
         self.temp_object_names = []
         self.temp_material_names = []
         self.temp_mesh_names = []
+        self.temp_armature_names = []
         self.original_mesh_refs = {}  # {mesh_name: original_mesh}
 
 
@@ -87,7 +88,8 @@ def prepare_linked_for_export():
                     local_data = obj.data.copy()
                     local_data.name = mesh_name
                     local.data = local_data
-                    _state.temp_mesh_names.append(mesh_name)
+                    # The name it got: Blender renames it if a mesh of yours has that name
+                    _state.temp_mesh_names.append(local_data.name)
                 for slot in local.material_slots:
                     if slot.material and slot.material.library:
                         local_mat = slot.material.copy()
@@ -98,6 +100,7 @@ def prepare_linked_for_export():
                 local.name = f"_armory_temp_arm_{linked_utils.asset_name(obj.data)}"
                 if obj.data.library:
                     local.data = obj.data.copy()
+                    _state.temp_armature_names.append(local.data.name)
             else:
                 local.name = f"_armory_temp_{obj.name}"
 
@@ -172,6 +175,8 @@ def cleanup_linked_export():
         _safe_remove(bpy.data.materials, name)
     for name in _state.temp_mesh_names:
         _safe_remove(bpy.data.meshes, name)
+    for name in _state.temp_armature_names:
+        _safe_remove(bpy.data.armatures, name)
 
     # Remove scene
     if _state.temp_scene_name:

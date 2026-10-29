@@ -57,8 +57,7 @@ def scan_and_copy_audio(exporter):
         rel_path = os.path.relpath(src_path, assets_dir).lower()
         is_music = 'music' in rel_path
 
-        if not os.path.exists(dst_path):
-            n64_utils.copy_if_changed(src_path, dst_path)
+        if n64_utils.copy_if_changed(src_path, dst_path):
             log.info(f'Copied audio: {safe_name} (music={is_music})')
 
         # Store audio info (without extension, as audioconv64 changes it)

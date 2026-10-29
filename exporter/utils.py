@@ -270,6 +270,7 @@ def build_trait_initializer(trait_info: dict, trait_class: str, current_scene: s
 
 def extract_default_value(node, member_ctype: str) -> str:
     """Convert an IR node to a C literal string."""
+    from armor64.codegen.c_text import c_string  # Here: the codegen package imports this module
     if node is None:
         return get_type_default(member_ctype)
 
@@ -284,7 +285,7 @@ def extract_default_value(node, member_ctype: str) -> str:
         elif node_type == "string":
             if member_ctype == "SceneId":
                 return f"SCENE_{arm.utils.safesrc(str(value)).upper()}"
-            return f'"{value}"'
+            return c_string(value)
         elif node_type == "bool":
             return "true" if value else "false"
         elif node_type == "null":
@@ -317,6 +318,7 @@ def get_type_default(ctype: str) -> str:
 
 def to_c_literal(value, ctype: str) -> str:
     """Convert a Python value to a C literal string."""
+    from armor64.codegen.c_text import c_string  # Here: the codegen package imports this module
     if ctype == "float":
         return c_float(value)
     elif ctype in ("int32_t", "int"):
@@ -324,7 +326,8 @@ def to_c_literal(value, ctype: str) -> str:
     elif ctype == "bool":
         return "true" if value else "false"
     elif ctype == "const char*":
-        return f'"{value}"' if value else "NULL"
+        # An empty property is "", as Iron sets it (not null)
+        return c_string(value) if value is not None else "NULL"
     elif ctype == "SceneId":
         return f"SCENE_{arm.utils.safesrc(str(value)).upper()}"
     elif "Vec3" in ctype and isinstance(value, (list, tuple)) and len(value) >= 3:

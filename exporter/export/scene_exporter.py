@@ -9,12 +9,14 @@ import os
 import math
 
 import bpy
+from mathutils import Matrix
 
 import arm.utils
 import arm.log as log
 import arm.linked_utils as linked_utils
 import armor64.codegen as codegen
 import armor64.utils as n64_utils
+from armor64.codegen.c_text import c_string
 from armor64.export import linked_export
 
 # tiny3d's fixed-point matrices hold ±511 Blender units (runtime utils.h, FIXED_POINT_MAX / 64)
@@ -30,30 +32,34 @@ def _warn_if_out_of_range(obj, pos):
                  f"±{DRAWABLE_RANGE:.0f} Blender units from the origin: it can't be drawn there on N64")
 
 
-def _collect_all_objects(scene):
-    """Collect all objects including those inside instance collections.
-
-    Each instance collection empty is processed separately to capture
-    all instances at their respective transforms.
+def collect_scene_objects(scene):
+    """Every object of a scene, including those of instanced collections (also
+    collections instanced inside them), each instance at its own transform.
 
     Returns:
         List of (blender_obj, instance_matrix, instancer_parent) tuples.
-        - instance_matrix: Empty's matrix_world for instance collection members,
-          None for direct scene objects.
-        - instancer_parent: The instancer Empty's parent object (e.g. Cube) for
-          instance collection members, None for direct scene objects.
+        - instance_matrix: the member's world matrix as Blender places the
+          instance (the instancer's transform, minus the collection's instance
+          offset), None for direct scene objects.
+        - instancer_parent: The scene instancer Empty's parent object (e.g. Cube)
+          for instance collection members, None for direct scene objects.
           Used to propagate parent/child hierarchy to the N64 scene.
     """
     objects = []
 
+    def add_instance(instancer, instancer_matrix, instancer_parent):
+        collection = instancer.instance_collection
+        base = instancer_matrix @ Matrix.Translation(-collection.instance_offset)
+        for cobj in collection.all_objects:
+            matrix = base @ cobj.matrix_world
+            if cobj.instance_type == 'COLLECTION' and cobj.instance_collection is not None:
+                add_instance(cobj, matrix, instancer_parent)
+            else:
+                objects.append((cobj, matrix, instancer_parent))
+
     for obj in scene.collection.all_objects:
         if obj.instance_type == 'COLLECTION' and obj.instance_collection is not None:
-            # This is an instanced collection - process objects inside it
-            # Each instance empty gets its own copy of the collection objects
-            coll = obj.instance_collection
-            instancer_parent = obj.parent  # e.g. Cube
-            for cobj in coll.all_objects:
-                objects.append((cobj, obj.matrix_world @ cobj.matrix_world, instancer_parent))
+            add_instance(obj, obj.matrix_world, obj.parent)  # Parent: e.g. Cube
         else:
             objects.append((obj, None, None))
 
@@ -188,7 +194,7 @@ def build_scene_data(exporter, scene):
         "groups": groups
     }
 
-    for obj, instance_matrix, _ in _collect_all_objects(scene):
+    for obj, instance_matrix, _ in collect_scene_objects(scene):
         if obj.type == 'LIGHT':
             _process_light(exporter, scene_name, obj, instance_matrix)
 
@@ -197,7 +203,7 @@ def build_scene_data(exporter, scene):
     # dpl=NULL and model_mat=NULL.  This enables full nested parenting:
     #   empty→mesh, mesh→empty, empty→empty, camera→any.
     scene_objects = [
-        (obj, inst_mat, iparent) for obj, inst_mat, iparent in _collect_all_objects(scene)
+        (obj, inst_mat, iparent) for obj, inst_mat, iparent in collect_scene_objects(scene)
         if obj.type == 'MESH' or obj.type == 'EMPTY'
     ]
     sorted_scene_objects = _topological_sort_objects(scene_objects)
@@ -234,7 +240,7 @@ def build_scene_data(exporter, scene):
             _process_empty_object(exporter, scene_name, obj, object_name_to_index)
 
     # Now process cameras (after objects are indexed, so camera parent resolution works)
-    for obj, instance_matrix, _ in _collect_all_objects(scene):
+    for obj, instance_matrix, _ in collect_scene_objects(scene):
         if obj.type == 'CAMERA':
             _process_camera(exporter, scene_name, obj, instance_matrix, object_name_to_index)
 
@@ -268,6 +274,10 @@ def _process_camera(exporter, scene_name, obj, instance_matrix=None, object_name
     # for landscape).  We always need the vertical FOV for tiny3d.
     cam_data_bl = obj.data
     sensor_fit = cam_data_bl.sensor_fit
+    # The game's resolution: the start scene's, for every scene (Armory sizes the
+    # window from it)
+    render = start_scene().render
+    res_x, res_y = render.resolution_x, render.resolution_y
     sensor_w = cam_data_bl.sensor_width
     sensor_h = cam_data_bl.sensor_height
     lens = cam_data_bl.lens
@@ -278,18 +288,12 @@ def _process_camera(exporter, scene_name, obj, instance_matrix=None, object_name
     elif sensor_fit == 'HORIZONTAL':
         # Blender fits FOV to horizontal sensor dimension — convert to vertical
         # via aspect ratio (render_resolution_y / render_resolution_x)
-        import bpy as _bpy
-        res_x = _bpy.context.scene.render.resolution_x
-        res_y = _bpy.context.scene.render.resolution_y
         hfov = 2 * math.atan((sensor_w * 0.5) / lens)
         cam_fov = math.degrees(2 * math.atan(math.tan(hfov * 0.5) * res_y / res_x))
     else:
         # AUTO: Blender picks the larger render dimension as the fit axis.
         # For landscape (width >= height), it fits horizontally, so convert to vertical.
         # For portrait (height > width), it already is vertical.
-        import bpy as _bpy
-        res_x = _bpy.context.scene.render.resolution_x
-        res_y = _bpy.context.scene.render.resolution_y
         if res_x >= res_y:
             # Landscape: sensor_width maps to horizontal — derive vertical FOV
             hfov = 2 * math.atan((sensor_w * 0.5) / lens)
@@ -756,7 +760,7 @@ def write_scenes_c(exporter):
         scene_name = arm.utils.safesrc(scene.name).lower()
         scene_id = f'SCENE_{scene_name.upper()}'
         inits.append(f'    [{scene_id}] = &scene_def_{scene_name},')
-        names.append(f'    [{scene_id}] = "{scene.name}",')
+        names.append(f'    [{scene_id}] = {c_string(scene.name)},')
 
         scene_data = exporter.scene_data.get(scene_name, {})
         models = sorted({o["mesh"] for o in scene_data.get("objects", []) if o.get("mesh")})
@@ -764,7 +768,7 @@ def write_scenes_c(exporter):
         scene_groups = scene_data.get('groups', {})
         if scene_groups:
             group_tables.append(f'static const SceneGroupEntry g_scene_{scene_name}_groups[] = {{')
-            group_tables += [f'    {{"{info["original_name"]}", {info["count"]}}},' for info in scene_groups.values()]
+            group_tables += [f'    {{{c_string(info["original_name"])}, {info["count"]}}},' for info in scene_groups.values()]
             group_tables += ['};', '']
             groups.append(f'    [{scene_id}] = {{ g_scene_{scene_name}_groups, {len(scene_groups)} }},')
 
@@ -805,6 +809,13 @@ def write_scenes_h(exporter):
     n64_utils.write_generated('data/scenes_defs.h', '\n'.join(lines), 'scene_exporter.write_scenes_h', 'data/scenes.h')
 
 
+def start_scene():
+    """The scene the game starts in (Armory's exporter list), which also sets
+    the game's resolution."""
+    wrd = bpy.data.worlds['Arm']
+    return wrd.arm_exporterlist[wrd.arm_exporterlist_index].arm_project_scene
+
+
 def write_main(exporter):
     """Copy main.c and generate main_config.h: the start scene, Armory's physics
     fixed step, the physics debug drawing mode and whether there are autoloads.
@@ -815,9 +826,8 @@ def write_main(exporter):
     wrd = bpy.data.worlds['Arm']
     n64_utils.copy_src('main.c', 'src')
 
-    start_scene = wrd.arm_exporterlist[wrd.arm_exporterlist_index].arm_project_scene.name
     has_autoloads = exporter.autoload_info.get('has_autoloads', False)
-    body = (f'#define INITIAL_SCENE SCENE_{arm.utils.safesrc(start_scene).upper()}\n'
+    body = (f'#define INITIAL_SCENE SCENE_{arm.utils.safesrc(start_scene().name).upper()}\n'
             # Armory's physics fixed step (default 0.02 s = 50 Hz)
             f'#define FIXED_TIMESTEP ({getattr(wrd, "arm_physics_fixed_step", 0.02)}f)\n'
             f'#define PHYSICS_DEBUG_MODE {n64_utils.get_physics_debug_mode()}\n'
