@@ -40,6 +40,19 @@ def exported_scenes():
             and getattr(scene, 'arm_export', True)]
 
 
+def find_armature(obj):
+    """The armature that skins a mesh (its Armature modifier's, else an
+    armature parent), or None: the mesh is exported skinned with it."""
+    if obj.type != 'MESH':
+        return None
+    for mod in obj.modifiers:
+        if mod.type == 'ARMATURE' and mod.object:
+            return mod.object
+    if obj.parent and obj.parent.type == 'ARMATURE':
+        return obj.parent
+    return None
+
+
 def is_exported(obj):
     """Armory's object Export checkbox: an object out of the export takes its
     children with it (Armory exports children from their parent)."""
@@ -574,7 +587,7 @@ def _process_mesh_object(exporter, scene_name, obj, instance_matrix=None, object
         # pass), so any traits attached to the armature in Blender would be
         # lost.  Since animation_init runs on the skinned mesh, the trait
         # needs to live here so `object.animation` is non-NULL.
-        armature = obj.find_armature()
+        armature = find_armature(obj)
         if armature is not None:
             armature_traits = _extract_traits(armature)
             if armature_traits:
@@ -697,20 +710,10 @@ def _extract_rigid_body(exporter, obj, half_extents, world_scale):
         rigid_body_data["half_height"] = rb_half_height
     elif rb_shape == "mesh":
         rigid_body_data["mesh_data"] = rb_mesh_data
-        exporter.mesh_collider_count += 1  # Track mesh collider count
-        # Track max triangle count across all mesh colliders for BVH sizing
-        if rb_mesh_data and rb_mesh_data.get("num_triangles", 0) > exporter.max_mesh_triangles:
-            exporter.max_mesh_triangles = rb_mesh_data["num_triangles"]
+        # The largest mesh collider sizes the BVH (limits.py)
+        exporter.max_mesh_triangles = max(exporter.max_mesh_triangles, rb_mesh_data["num_triangles"])
     else:
         rigid_body_data["half_extents"] = rb_half_extents
-
-    # Track dynamic body count (non-mesh shapes)
-    if rb_shape != "mesh":
-        exporter.physics_body_count += 1
-
-    # Track contact body count (triggers or objects that may have contact events)
-    if rigid_body_data.get("is_trigger", False):
-        exporter.contact_body_count += 1
 
     exporter.has_physics = True
     return rigid_body_data
@@ -795,14 +798,12 @@ def write_scene_c(exporter, scene):
 
 
 def write_scenes_c(exporter):
-    """Copy scenes.c and generate scenes_data.h: by SceneId, each scene's definition,
+    """Generate scenes_data.h (for scenes.c): by SceneId, each scene's definition,
     name, groups (collections: name -> object count) and the models it uses.
 
     Args:
         exporter: N64Exporter instance
     """
-    n64_utils.copy_src('scenes.c', 'src/data')
-
     inits, names, group_tables, groups, model_rows = [], [], [], [], []
     for scene in exported_scenes():
         scene_name = arm.utils.safesrc(scene.name).lower()
@@ -830,14 +831,12 @@ def write_scenes_c(exporter):
 
 
 def write_scenes_h(exporter):
-    """Copy scenes.h and generate scenes_defs.h: SceneId, each scene's definition,
+    """Generate scenes_defs.h (for scenes.h): SceneId, each scene's definition,
     and the sizes of the storage the scenes share.
 
     Args:
         exporter: N64Exporter instance
     """
-    n64_utils.copy_src('scenes.h', 'src/data')
-
     scenes = exported_scenes()
     lines = ['typedef enum SceneId {']
     lines += [f'    SCENE_{arm.utils.safesrc(scene.name).upper()} = {i},' for i, scene in enumerate(scenes)]
@@ -868,15 +867,13 @@ def start_scene():
 
 
 def write_main(exporter):
-    """Copy main.c and generate main_config.h: the start scene, Armory's physics
+    """Generate main_config.h (for main.c): the start scene, Armory's physics
     fixed step, the physics debug drawing mode and whether there are autoloads.
 
     Args:
         exporter: N64Exporter instance with autoload_info
     """
     wrd = bpy.data.worlds['Arm']
-    n64_utils.copy_src('main.c', 'src')
-
     has_autoloads = exporter.autoload_info.get('has_autoloads', False)
     body = (f'#define INITIAL_SCENE SCENE_{arm.utils.safesrc(start_scene().name).upper()}\n'
             # Armory's physics fixed step (default 0.02 s = 50 Hz)
@@ -904,9 +901,7 @@ def _model_names(exporter) -> list:
 
 
 def write_models_c(exporter):
-    """Copy models.c and generate models_data.h: the model files, by ModelId."""
-    n64_utils.copy_src('models.c', 'src/data')
-
+    """Generate models_data.h (for models.c): the model files, by ModelId."""
     lines = ['static const char *MODEL_PATHS[MODEL_COUNT] = {']
     lines += [f'    "rom:/{model_name}.t3dm",' for model_name in _model_names(exporter)]
     lines.append('};')
@@ -914,9 +909,7 @@ def write_models_c(exporter):
 
 
 def write_models_h(exporter):
-    """Copy models.h and generate models_defs.h: ModelId."""
-    n64_utils.copy_src('models.h', 'src/data')
-
+    """Generate models_defs.h (for models.h): ModelId."""
     lines = ['typedef enum {']
     lines += [f'    MODEL_{model_name.upper()} = {i},' for i, model_name in enumerate(_model_names(exporter))]
     lines += [f'    MODEL_COUNT = {len(exporter.exported_meshes)}', '} ModelId;']

@@ -1,18 +1,14 @@
 """
-N64 Exporter - Orchestrates the N64 export pipeline.
+N64 Exporter - the export of an Armory project to N64: runs the export modules
+in order, then cleans up the .blend. Used by build_pipeline.py (Play/Publish).
 
-This is the main entry point for exporting Armory projects to N64.
-It coordinates the various export modules to generate C code, assets,
-and build the final ROM.
-
-Export Modules:
-- mesh_exporter: GLTF mesh export
-- scene_exporter: Scene data extraction and C generation
-- traits_exporter: Trait and autoload C code generation
-- ui_exporter: Canvas, fonts, and UI code generation
-- physics_exporter: Physics engine file generation
-- audio_exporter: Audio asset processing
-- build_runner: Makefile generation and build execution
+Export modules (export/):
+- mesh_exporter: the meshes as glTF (tiny3d converts them)
+- scene_exporter: the scenes' data and C
+- traits_exporter: the C of the Haxe code (traits, autoloads) and engine headers
+- ui_exporter: canvases, fonts and the UI's C
+- audio_exporter: the sounds
+- build_runner: the Makefile, make and the emulator
 """
 
 import os
@@ -28,7 +24,6 @@ from armor64.export import mesh_exporter
 from armor64.export import scene_exporter
 from armor64.export import traits_exporter
 from armor64.export import ui_exporter
-from armor64.export import physics_exporter
 from armor64.export import audio_exporter
 from armor64.export import build_runner
 from armor64.export import linked_export
@@ -59,14 +54,7 @@ class N64Exporter:
         self.has_ui = False
         self.has_audio = False
 
-        # Physics body counts (auto-calculated during scene export)
-        self.physics_body_count = 0      # Dynamic bodies (box, sphere, capsule)
-        self.mesh_collider_count = 0     # Static mesh colliders
-        self.contact_body_count = 0      # Bodies with contact events (triggers)
-        self.max_physics_bodies = 0      # Max across all scenes
-        self.max_mesh_colliders = 0      # Max across all scenes
-        self.max_contact_bodies = 0      # Max across all scenes
-        self.max_mesh_triangles = 0      # Max triangles in any single mesh collider
+        self.max_mesh_triangles = 0      # Most triangles of a mesh collider (limits.py)
 
         # UI state
         self.ui_canvas_data = {}
@@ -76,7 +64,6 @@ class N64Exporter:
 
         # External blend state (for arm_external_blends_path support)
         self.external_scene_names = []   # Appended scene names (for cleanup)
-        self.external_blend_paths = []   # Source .blend file paths
         self.collection_original_names = {}  # {renamed: original} for Blender dedup renames
         self.libraries_before = None     # Library names before appending them (None: nothing appended)
 
@@ -84,6 +71,7 @@ class N64Exporter:
         self.for_emulator = False  # Play: the ROM runs in Ares (debug_config.h)
         self.materials_converted = False
         self.mesh_plan = {}  # glTF file -> {key, entry} (mesh_exporter.plan_meshes)
+        self.data_before = None  # The .blend's data before the export (cleanup removes what it adds)
 
     # -------------------------------------------------------------------------
     # Main Export Pipeline
@@ -100,23 +88,23 @@ class N64Exporter:
         it while Haxe compiles). Leaves the scene prepared for export_code(), or
         cleaned up if it fails."""
         log.info('Starting N64 export...')
-
-        # Load external blend scenes (append with suffix naming)
-        self._load_external_blends()
-
-        # Phase 0: Prepare linked objects (create temp local copies for Fast64)
-        self.linked_objects = linked_export.prepare_linked_for_export()
-        if self.linked_objects:
-            log.info(f'Prepared {len(self.linked_objects)} linked object(s) for export')
+        self.data_before = n64_utils.data_snapshot()
 
         try:
-            # Phase 1: Directories, and the F3D materials if a mesh changed
+            # External blends' scenes (appended, named as Armory)
+            self._load_external_blends()
+
+            # Local copies of linked objects (Fast64 converts their materials)
+            self.linked_objects = linked_export.prepare_linked_for_export()
+            if self.linked_objects:
+                log.info(f'Prepared {len(self.linked_objects)} linked object(s) for export')
+
+            # The F3D materials, if a mesh changed
             self._make_directories()
             if mesh_exporter.plan_meshes(self):
                 self.materials_converted = True
                 self._convert_materials_to_f3d()
 
-            # Phase 2: Export meshes to GLTF/T3D
             mesh_exporter.export_meshes(self)
         except Exception:
             self.cleanup()
@@ -132,106 +120,78 @@ class N64Exporter:
             log.warn("No traits found in n64_traits.json. Make sure arm_target_n64 is defined during build.")
 
         try:
-            # Phase 3: Build scene data (sets has_physics flag)
+            # What the game uses: scenes (physics), canvases (UI), the Haxe code
+            # (UI, physics, audio), sounds in Assets (audio)
             for scene in scene_exporter.exported_scenes():
-                # Reset per-scene counters before building scene data
-                self.physics_body_count = 0
-                self.mesh_collider_count = 0
-                self.contact_body_count = 0
                 scene_exporter.build_scene_data(self, scene)
-                # Track max counts across all scenes
-                self.max_physics_bodies = max(self.max_physics_bodies, self.physics_body_count)
-                self.max_mesh_colliders = max(self.max_mesh_colliders, self.mesh_collider_count)
-                self.max_contact_bodies = max(self.max_contact_bodies, self.contact_body_count)
-
-            # Phase 4: Detect UI canvas (sets has_ui flag)
             ui_exporter.detect_ui_canvas(self)
-
-            # Engine limits for this project (codegen/limits.py)
-            from armor64.codegen import limits
-            from armor64.codegen.trait_generator import load_signals_json, _load_ir_json
-            from armor64.codegen.autoload_generator import load_autoloads_json
-            traits = self.trait_info.get("traits", {})
-
-            def trait_key(class_name):
-                return n64_utils.trait_key(self.trait_info, class_name)
-            self.limit_notes = {}
-            self.limits = limits.compute(
-                scenes=[limits.scene_counts(scene, trait_key, traits) for scene in self.scene_data.values()],
-                mesh_triangles=self.max_mesh_triangles,
-                ui_canvases=self.ui_canvas_data,
-                traits=traits,
-                autoloads=load_autoloads_json().get("autoloads", {}),
-                signals=load_signals_json().get("signals", {}),
-                facts=_load_ir_json("n64_limits.json", "map_keys"),
-                notes=self.limit_notes,
-            )
-
-            # Phase 5: Generate trait code (may set has_ui/has_physics from traits)
+            self._compute_limits()
             features = traits_exporter.write_traits(self)
-            if features.get('has_ui'):
-                self.has_ui = True
-            if features.get('has_physics'):
-                self.has_physics = True
+            self.has_ui |= bool(features.get('has_ui'))
+            self.has_physics |= bool(features.get('has_physics'))
+            self.has_audio |= bool(traits_exporter.write_autoloads(self).get('has_audio'))
+            audio_exporter.scan_and_copy_audio(self)
 
-            # Phase 6: Generate autoload code (may set has_audio)
-            autoload_features = traits_exporter.write_autoloads(self)
-            if autoload_features.get('has_audio'):
-                self.has_audio = True
-
-            # Phase 7: Generate engine and system files
+            # The runtime and the files that depend on the features
+            n64_utils.copy_runtime(self.has_physics, self.has_ui, self.has_audio)
             traits_exporter.write_types(self)
             traits_exporter.write_limits(self)
             traits_exporter.write_engine(self)
-            physics_exporter.write_physics(self)
-
-            # Phase 8: Generate audio files (must be before makefile)
-            audio_exporter.scan_and_copy_audio(self)
             if self.has_audio:
                 audio_exporter.write_audio_config(self)
 
-            # Phase 9: Generate UI files (must be before makefile)
+            # Fonts before the Makefile (their rules) and the canvas (their ids)
             ui_exporter.write_fonts(self)
-
-            # Phase 10: Generate Makefile (uses exported_fonts, exported_audio)
             build_runner.write_makefile(self)
-
-            # Phase 11: Generate canvas after fonts
             ui_exporter.write_canvas(self)
 
-            # Phase 12: Generate scene files
             scene_exporter.write_main(self)
             scene_exporter.write_models(self)
-            self._write_renderer()
             scene_exporter.write_scenes(self)
-
-            # Phase 13: Generate Iron runtime files
-            self._write_iron()
-            self._write_signal()
-            self._write_time()
-            self._write_tween()
-            self._write_containers()
-
         finally:
             self.cleanup()
 
         log.info('N64 export completed.')
 
+    def _compute_limits(self):
+        """The engine limits for this project (codegen/limits.py): self.limits."""
+        from armor64.codegen import limits
+        from armor64.codegen.trait_generator import load_signals_json, _load_ir_json
+        from armor64.codegen.autoload_generator import load_autoloads_json
+        traits = self.trait_info.get("traits", {})
+
+        def trait_key(class_name):
+            return n64_utils.trait_key(self.trait_info, class_name)
+        self.limit_notes = {}
+        self.limits = limits.compute(
+            scenes=[limits.scene_counts(scene, trait_key, traits) for scene in self.scene_data.values()],
+            mesh_triangles=self.max_mesh_triangles,
+            ui_canvases=self.ui_canvas_data,
+            traits=traits,
+            autoloads=load_autoloads_json().get("autoloads", {}),
+            signals=load_signals_json().get("signals", {}),
+            facts=_load_ir_json("n64_limits.json", "map_keys"),
+            notes=self.limit_notes,
+        )
+
     def cleanup(self):
-        """Undo export_assets()'s changes to the .blend (also after a failed build)."""
-        # Phase 14: Cleanup materials
+        """Undo export_assets()'s changes to the .blend (also after a failed build):
+        the materials back to BSDF, the linked objects' copies and the external
+        blends' scenes removed, then the data the export added and nothing uses
+        anymore (the .blend's own unused data stays)."""
         if self.materials_converted:
             self._reset_materials_to_bsdf()
-
-        # Phase 15: Cleanup linked object temp data
+            self.materials_converted = False
         if self.linked_objects:
             linked_export.cleanup_linked_export()
+            self.linked_objects = []
             log.info('Cleaned up linked object temp data')
-
-        # Cleanup external blend scenes
         if self.libraries_before is not None:
             self._clear_external_blends()
             log.info('Cleaned up external blend data')
+        if self.data_before is not None:
+            n64_utils.remove_new_unused_data(self.data_before)
+            self.data_before = None
 
     def publish(self):
         """Export and build the project."""
@@ -325,8 +285,6 @@ class N64Exporter:
                     with bpy.data.libraries.load(blend_path, link=False) as (data_from, data_to):
                         data_to.scenes = list(data_from.scenes)
 
-                    self.external_blend_paths.append(blend_path)
-
                     # Detect Blender dedup renames (e.g. "Gems" → "Gems.001")
                     for coll in bpy.data.collections:
                         if coll.name not in existing_collections:
@@ -370,17 +328,7 @@ class N64Exporter:
                 except Exception as e:
                     log.error(f'Failed to remove library {lib.name}: {e}')
 
-        try:
-            bpy.ops.outliner.orphans_purge(
-                do_local_ids=True,
-                do_linked_ids=True,
-                do_recursive=True
-            )
-        except Exception:
-            pass
-
         self.external_scene_names = []
-        self.external_blend_paths = []
         self.libraries_before = None
 
     # -------------------------------------------------------------------------
@@ -388,30 +336,25 @@ class N64Exporter:
     # -------------------------------------------------------------------------
 
     def _convert_materials_to_f3d(self):
-        """Convert materials to F3D format (requires Fast64 addon)."""
-        try:
-            if not hasattr(bpy.ops.scene, 'f3d_convert_to_bsdf'):
-                log.warn('Fast64 addon not found - skipping F3D material conversion')
-                return False
+        """Convert the materials to F3D (Fast64), which the models' export reads:
+        without it the models would come out without their materials."""
+        if not hasattr(bpy.ops.scene, 'f3d_convert_to_bsdf'):
+            raise RuntimeError('N64: the Fast64 add-on is needed to convert the materials (enable it)')
 
-            # By name: each F3D material takes its source material's name
-            cull_modes = {m.name: getattr(m, 'arm_cull_mode', 'clockwise')
-                          for m in bpy.data.materials if not getattr(m, 'is_f3d', False)}
-            bpy.ops.scene.f3d_convert_to_bsdf(
-                direction='F3D',
-                converter_type='All',
-                backup=False,
-                put_alpha_into_color=False,
-                use_recommended=True,
-                lights_for_colors=False,
-                default_to_fog=False,
-                set_rendermode_without_fog=False
-            )
-            self._apply_armory_culling(cull_modes)
-            return True
-        except Exception as e:
-            log.warn(f'F3D material conversion failed: {e}')
-            return False
+        # By name: each F3D material takes its source material's name
+        cull_modes = {m.name: getattr(m, 'arm_cull_mode', 'clockwise')
+                      for m in bpy.data.materials if not getattr(m, 'is_f3d', False)}
+        bpy.ops.scene.f3d_convert_to_bsdf(
+            direction='F3D',
+            converter_type='All',
+            backup=False,
+            put_alpha_into_color=False,
+            use_recommended=True,
+            lights_for_colors=False,
+            default_to_fog=False,
+            set_rendermode_without_fog=False
+        )
+        self._apply_armory_culling(cull_modes)
 
     @staticmethod
     def _apply_armory_culling(cull_modes: dict):
@@ -430,11 +373,9 @@ class N64Exporter:
                 material.f3d_mat.rdp_settings.g_cull_back = mode == 'clockwise'
 
     def _reset_materials_to_bsdf(self):
-        """Reset materials back to BSDF format (requires Fast64 addon)."""
+        """The materials back to BSDF (Fast64). A failure is reported, not raised:
+        the cleanup goes on."""
         try:
-            if not hasattr(bpy.ops.scene, 'f3d_convert_to_bsdf'):
-                return False
-
             bpy.ops.scene.f3d_convert_to_bsdf(
                 direction='BSDF',
                 converter_type='All',
@@ -445,54 +386,5 @@ class N64Exporter:
                 default_to_fog=False,
                 set_rendermode_without_fog=False
             )
-            bpy.ops.outliner.orphans_purge(
-                do_local_ids=True,
-                do_linked_ids=True,
-                do_recursive=True
-            )
-            return True
         except Exception as e:
-            log.warn(f'BSDF material reset failed: {e}')
-            return False
-
-    # -------------------------------------------------------------------------
-    # Static File Copying (Renderer, Iron, System)
-    # -------------------------------------------------------------------------
-
-    def _write_renderer(self):
-        """Copy renderer files."""
-        n64_utils.copy_src('renderer.c', 'src')
-        n64_utils.copy_src('renderer.h', 'src')
-        n64_utils.copy_src('utils.h', 'src')
-        n64_utils.copy_src('render2d.h', 'src')
-
-    def _write_iron(self):
-        """Copy Iron runtime files."""
-        n64_utils.copy_src('iron/object/transform.h', 'src')
-        n64_utils.copy_src('iron/object/transform.c', 'src')
-        n64_utils.copy_src('iron/object/object.h', 'src')
-        n64_utils.copy_src('iron/object/object.c', 'src')
-        n64_utils.copy_src('iron/object/animation.h', 'src')
-        n64_utils.copy_src('iron/object/animation.c', 'src')
-        n64_utils.copy_src('iron/system/input.c', 'src')
-        n64_utils.copy_src('iron/system/input.h', 'src')
-
-    def _write_signal(self):
-        """Copy signal system files."""
-        n64_utils.copy_src('signal.c', 'src/system')
-        n64_utils.copy_src('signal.h', 'src/system')
-
-    def _write_time(self):
-        """Copy time system files."""
-        n64_utils.copy_src('time.c', 'src/system')
-        n64_utils.copy_src('time.h', 'src/system')
-
-    def _write_tween(self):
-        """Copy tween system files."""
-        n64_utils.copy_src('tween.c', 'src/system')
-        n64_utils.copy_src('tween.h', 'src/system')
-
-    def _write_containers(self):
-        """Copy container utility headers (arrays, maps)."""
-        n64_utils.copy_src('arm_array.h', 'src/system')
-        n64_utils.copy_src('arm_map.h', 'src/system')
+            log.error(f'N64: converting the materials back to BSDF failed ({e}): check them before saving')

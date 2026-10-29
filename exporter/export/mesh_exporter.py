@@ -34,18 +34,6 @@ from armor64.export import linked_export, scene_exporter
 # Skinned mesh helpers
 # ---------------------------------------------------------------------------
 
-def _find_armature(obj):
-    """Find armature for a mesh via modifier or parent."""
-    if obj.type != 'MESH':
-        return None
-    for mod in obj.modifiers:
-        if mod.type == 'ARMATURE' and mod.object:
-            return mod.object
-    if obj.parent and obj.parent.type == 'ARMATURE':
-        return obj.parent
-    return None
-
-
 def _ensure_uvmap_layer(mesh_data):
     """Ensure mesh has a UV layer named 'UVMap' for Fast64 compatibility.
 
@@ -646,7 +634,7 @@ def _mesh_jobs(exporter):
             else:
                 meshes.add(original_mesh)
             use_scene(temp_scene)
-            yield local_obj, mesh_name, original_mesh, _find_armature(local_obj), True
+            yield local_obj, mesh_name, original_mesh, scene_exporter.find_armature(local_obj), True
 
         for scene in scene_exporter.exported_scenes():
             for obj, _, _ in scene_exporter.collect_scene_objects(scene):
@@ -661,7 +649,7 @@ def _mesh_jobs(exporter):
                                      'rename one of them')
                 names[mesh_name] = obj.data.name
                 use_scene(scene)
-                yield obj, mesh_name, obj.data, _find_armature(obj), False
+                yield obj, mesh_name, obj.data, scene_exporter.find_armature(obj), False
     finally:
         window.scene = main_scene
         window.view_layer = main_view_layer

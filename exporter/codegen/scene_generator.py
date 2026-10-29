@@ -119,9 +119,8 @@ def scene_trait_count(scene: dict) -> int:
 class _Traits:
     """A scene's traits (one table, in entity order) and their data."""
 
-    def __init__(self, trait_info: dict, scene_name: str):
+    def __init__(self, trait_info: dict):
         self.trait_info = trait_info
-        self.scene_name = scene_name
         self.rows = []       # ArmTrait initializers
         self.data = []       # static data variables
         self.data_init = []  # their initial values (init_trait_data)
@@ -144,7 +143,7 @@ class _Traits:
                 var = f'g_trait_data_{len(self.rows)}'
                 struct_name = f'{c_name}Data'
                 initializer = n64_utils.build_trait_initializer(
-                    self.trait_info, trait_class, self.scene_name, trait.get("props", {}),
+                    self.trait_info, trait_class, trait.get("props", {}),
                     trait.get("type_overrides", {}), entity_ptr)
                 self.data.append(f'static {struct_name} {var};')
                 self.data_init.append(f'    {var} = ({struct_name}){{{initializer}}};')
@@ -250,7 +249,7 @@ def _physics(objects: List[Dict]) -> tuple:
 
 def generate_scene_file(scene: dict, scene_name: str, original_name: str, trait_info: dict) -> str:
     """The C file of a scene: its definition (scene_def_<name>, an ArmSceneDef)."""
-    traits = _Traits(trait_info, scene_name)
+    traits = _Traits(trait_info)
     cameras = [_camera_row(i, c, traits, trait_info) for i, c in enumerate(scene['cameras'])]
     lights = [_light_row(i, l, traits, trait_info) for i, l in enumerate(scene['lights'])]
     objects = [_object_row(i, o, traits, trait_info) for i, o in enumerate(scene['objects'])]

@@ -6,8 +6,6 @@ including WAV/MP3 scanning, audioconv64 integration, and mix channel configurati
 """
 
 import os
-import shutil
-import json
 
 import arm.utils
 import arm.log as log
@@ -52,8 +50,9 @@ def scan_and_copy_audio(exporter):
         safe_name = filename.lower().replace(' ', '_')
         dst_path = os.path.join(n64_assets, safe_name)
 
-        # Determine if this is likely music (in music/ folder or long duration)
-        # For now, simple heuristic: files in 'music' subfolder are music
+        # Sounds in a "music" folder are converted with loop data (audioconv64
+        # --wav-loop: the loop start aligned, the decoder's state and first samples
+        # there), so they loop seamlessly when the game plays them looped
         rel_path = os.path.relpath(src_path, assets_dir).lower()
         is_music = 'music' in rel_path
 
@@ -69,23 +68,14 @@ def scan_and_copy_audio(exporter):
             'loop': is_music  # Music loops by default
         }
 
-    # Copy audio module source files
-    n64_utils.copy_dir('audio', 'src')
-
 
 def write_audio_config(exporter):
     """Generate audio_config.h: mix channels and mixer channel count from the
     macros' n64_audio.json (see codegen/audio_codegen.py)."""
     from armor64.codegen import audio_codegen
 
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'src', 'audio', 'audio_config.h.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'src', 'audio', 'audio_config.h')
-
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
-
-    data = audio_codegen.audio_config_data(audio_codegen.load_audio_json())
-    n64_utils.write_if_changed(out_path, tmpl_content.format(**data))
+    n64_utils.render_template('src/audio/audio_config.h.j2', 'src/audio/audio_config.h',
+                              **audio_codegen.audio_config_data(audio_codegen.load_audio_json()))
 
 
 def generate_audio_makefile_entries(exported_audio):

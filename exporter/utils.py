@@ -1,4 +1,8 @@
-"""N64 Utilities"""
+"""
+N64 exporter utilities: Blender to N64 coordinates, Blender data reads, trait
+data initializers, C literals, the build folder's files (written only when they
+change), and armor_64's settings and paths. Used by every export module.
+"""
 
 import filecmp
 import os
@@ -55,21 +59,28 @@ def get_physics_debug_mode() -> int:
     ]
     return sum(bit for prop, bit in flags if getattr(wrd, prop, False))
 
-def copy_src(name, path=''):
-    tmpl_path = os.path.join(get_n64_runtime_path(), path, name)
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', path, name)
-    copy_if_changed(tmpl_path, out_path)
-
-def copy_dir(name, path=''):
-    """A runtime folder into the build, file by file, only those that changed
-    (.j2 templates are rendered by the exporters)."""
-    tmpl_path = os.path.join(get_n64_runtime_path(), path, name)
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', path, name)
-    for folder, _, files in os.walk(tmpl_path):
+def copy_runtime(physics: bool, ui: bool, audio: bool):
+    """The runtime's fixed files into build/n64/src, only those that changed: the
+    core always, a feature's folders when the game uses it. Templates (.j2) are
+    rendered, and the generated headers written, by the exporters."""
+    features = {'oimo': physics, 'events': physics, 'ui': ui, 'audio': audio}
+    src = os.path.join(get_n64_runtime_path(), 'src')
+    out = build_path('src')
+    for folder, _, files in os.walk(src):
+        rel = os.path.relpath(folder, src)
+        if not features.get(rel.split(os.sep)[0], True):
+            continue
         for file in files:
             if not file.endswith('.j2'):
-                src = os.path.join(folder, file)
-                copy_if_changed(src, os.path.join(out_path, os.path.relpath(src, tmpl_path)))
+                copy_if_changed(os.path.join(folder, file), os.path.join(out, rel, file))
+
+
+def render_template(template: str, out: str, **data) -> bool:
+    """A runtime template (path in runtime/) filled with str.format, written to
+    build/n64/<out> if it changed."""
+    with open(os.path.join(get_n64_runtime_path(), template), encoding='utf-8') as f:
+        text = f.read().format(**data)
+    return write_if_changed(build_path(out), text)
 
 
 # =============================================================================
@@ -147,121 +158,48 @@ def trait_chain_events(trait_info: dict, trait_class: str) -> set:
     return chain_events(trait_info.get("traits", {}), trait_key(trait_info, trait_class))
 
 
-def _build_parent_initializer(trait_info: dict, parent_class: str, current_scene: str,
-                              instance_props: dict = None, type_overrides: dict = None,
-                              entity_ptr: str = None) -> str:
-    """Recursively build initializer for parent struct in inheritance chain.
-
-    For Option B (Composition), the parent is embedded at offset 0.
-    This function builds: ._parent = (ParentData){...}
-    The entity_ptr is passed down to initialize the base .object field.
-    """
-    if not parent_class:
-        return ""
-
-    trait = get_trait(trait_info, parent_class)
-    if not trait:
-        return ""
-
-    # Get parent's c_name for proper C identifier
-    parent_c_name = trait.get("c_name", parent_class.replace(".", "_"))
-
-    members = trait.get("members", [])
-    signals = trait.get("meta", {}).get("signals", [])
-    grandparent = trait.get("parent")
-
-    init_fields = []
-    instance_props = instance_props or {}
-    type_overrides = type_overrides or {}
-
-    # First, recursively add grandparent initialization (or object field if base)
-    if grandparent:
-        grandparent_init = _build_parent_initializer(
-            trait_info, grandparent, current_scene, instance_props, type_overrides, entity_ptr
-        )
-        if grandparent_init:
-            init_fields.append(grandparent_init)
-    elif entity_ptr:
-        # This is the base trait - initialize the object pointer
-        init_fields.append(f'.object = {entity_ptr}')
-
-    # Add parent's own members
-    for member in members:
-        member_name = member.get("name", "")
-        if not member_name:
-            continue
-        member_ctype = type_overrides.get(member_name, member.get("ctype", "float"))
-        if member_name in instance_props:
-            c_value = to_c_literal(instance_props[member_name], member_ctype)
-        else:
-            c_value = extract_default_value(member.get("default_value"), member_ctype)
-        init_fields.append(f'.{member_name} = {c_value}')
-
-    # Add parent's signals
-    for sig in signals:
-        sig_name = sig.get("name", "")
-        if sig_name:
-            init_fields.append(f'.{sig_name} = {{0}}')
-
-    if not init_fields:
-        return f"._parent = ({parent_c_name}Data){{0}}"
-
-    return f"._parent = ({parent_c_name}Data){{{', '.join(init_fields)}}}"
-
-
-def build_trait_initializer(trait_info: dict, trait_class: str, current_scene: str,
-                            instance_props: dict = None, type_overrides: dict = None,
-                            entity_ptr: str = None) -> str:
-    """Build C initializer for a trait's data struct.
-
-    For inheritance (Option B - Composition), this includes:
-    - ._parent = (ParentData){...} (recursively for multi-level)
-    - This trait's own members and signals
-    - .object pointer to the owning entity (at base of hierarchy)
-    """
+def _trait_data_fields(trait_info: dict, trait_class: str, instance_props: dict,
+                       type_overrides: dict, entity_ptr) -> list:
+    """The C initializer fields of a trait's data: its parent's data first
+    (._parent = (ParentData){...}, embedded at offset 0, down to the base trait,
+    whose .object is the entity), then its members (an instance's Blender
+    property, else the Haxe initial value) and signals (no subscribers)."""
     trait = get_trait(trait_info, trait_class)
-    members = trait.get("members", [])
-    signals = trait.get("meta", {}).get("signals", [])
+    fields = []
     parent_class = trait.get("parent")
+    parent = get_trait(trait_info, parent_class) if parent_class else None
+    if parent:
+        parent_fields = _trait_data_fields(trait_info, parent_class, instance_props, type_overrides, entity_ptr)
+        parent_c_name = parent.get("c_name", parent_class.replace(".", "_"))
+        fields.append(f"._parent = ({parent_c_name}Data){{{', '.join(parent_fields) or '0'}}}")
+    elif not parent_class and entity_ptr:
+        fields.append(f'.object = {entity_ptr}')
 
-    # Check if we need any initialization
-    if not members and not signals and not parent_class:
-        return ""
-
-    init_fields = []
-    instance_props = instance_props or {}
-    type_overrides = type_overrides or {}
-
-    # First, add parent initialization if this trait has a parent (or object if base)
-    if parent_class:
-        parent_init = _build_parent_initializer(
-            trait_info, parent_class, current_scene, instance_props, type_overrides, entity_ptr
-        )
-        if parent_init:
-            init_fields.append(parent_init)
-    elif entity_ptr:
-        # No parent - this is a base trait, initialize object pointer directly
-        init_fields.append(f'.object = {entity_ptr}')
-
-    # Initialize this trait's own members
-    for member in members:
-        member_name = member.get("name", "")
-        if not member_name:
+    for member in trait.get("members", []):
+        name = member.get("name", "")
+        if not name:
             continue
-        member_ctype = type_overrides.get(member_name, member.get("ctype", "float"))
-        if member_name in instance_props:
-            c_value = to_c_literal(instance_props[member_name], member_ctype)
+        ctype = type_overrides.get(name, member.get("ctype", "float"))
+        if name in instance_props:
+            fields.append(f'.{name} = {to_c_literal(instance_props[name], ctype)}')
         else:
-            c_value = extract_default_value(member.get("default_value"), member_ctype)
-        init_fields.append(f'.{member_name} = {c_value}')
+            fields.append(f'.{name} = {extract_default_value(member.get("default_value"), ctype)}')
 
-    # Initialize signals with zeroed state (no subscribers)
-    for sig in signals:
-        sig_name = sig.get("name", "")
-        if sig_name:
-            init_fields.append(f'.{sig_name} = {{0}}')
+    for signal in trait.get("meta", {}).get("signals", []):
+        if signal.get("name"):
+            fields.append(f'.{signal["name"]} = {{0}}')
+    return fields
 
-    return ', '.join(init_fields)
+
+def build_trait_initializer(trait_info: dict, trait_class: str, instance_props: dict = None,
+                            type_overrides: dict = None, entity_ptr: str = None) -> str:
+    """The C initializer of a trait instance's data struct (empty when the trait
+    has no members, signals nor parent: its on_add sets .object)."""
+    trait = get_trait(trait_info, trait_class)
+    if not trait.get("members") and not trait.get("meta", {}).get("signals") and not trait.get("parent"):
+        return ""
+    return ', '.join(_trait_data_fields(trait_info, trait_class, instance_props or {},
+                                        type_overrides or {}, entity_ptr))
 
 
 # =============================================================================
@@ -341,17 +279,15 @@ def to_c_literal(value, ctype: str) -> str:
 # Collision Mesh
 # =============================================================================
 
-def extract_collision_mesh(obj: bpy.types.Object, scale, max_triangles: int = 256) -> Optional[dict]:
-    """Extract triangulated mesh data for physics collision.
+def extract_collision_mesh(obj: bpy.types.Object, scale) -> Optional[dict]:
+    """The triangles of a static mesh collider (the engine's BVH is sized for the
+    largest, limits.py: a mesh collider costs CPU, simple shapes or a simplified
+    collision mesh are cheaper).
 
     Args:
         obj: Blender mesh object to extract collision data from.
         scale: The object's world scale (vertices are scaled by it; rotation
                and position come from the body's transform).
-        max_triangles: Maximum triangle count for collision mesh (default 256).
-                       This limit exists because N64 collision detection is
-                       CPU-intensive; complex meshes should use simplified
-                       collision geometry or primitive shapes instead.
     """
     if obj.type != 'MESH':
         return None
@@ -372,17 +308,7 @@ def extract_collision_mesh(obj: bpy.types.Object, scale, max_triangles: int = 25
             scaled = [v.co.x * scale[0], v.co.y * scale[1], v.co.z * scale[2]]
             vertices.append(convert_vec3_list(scaled))
 
-        indices = []
-        for face in bm.faces:
-            if len(face.verts) == 3:
-                indices.extend([v.index for v in face.verts])
-            else:
-                log.warn(f'Object "{obj.name}": non-triangle face')
-
-        num_triangles = len(indices) // 3
-        if num_triangles > max_triangles:
-            log.warn(f'Object "{obj.name}": {num_triangles} triangles, limiting to {max_triangles}')
-            indices = indices[:max_triangles * 3]
+        indices = [v.index for face in bm.faces for v in face.verts]  # Triangulated above
 
         bm.free()
         return {
@@ -419,13 +345,55 @@ def write_if_changed(path: str, text: str) -> bool:
     return True
 
 
+def _id_collections():
+    """bpy.data's collections of data blocks (objects, meshes, materials...)."""
+    for name in dir(bpy.data):
+        collection = getattr(bpy.data, name, None)
+        if isinstance(collection, bpy.types.bpy_prop_collection):
+            yield collection
+
+
+def data_snapshot() -> set:
+    """The data blocks the .blend has now (see remove_new_unused_data)."""
+    return {item.as_pointer() for collection in _id_collections() for item in collection
+            if isinstance(item, bpy.types.ID)}
+
+
+def remove_new_unused_data(before: set):
+    """Remove the data blocks added since the snapshot `before` that no data from
+    before (nor a scene, nor a fake user) reaches, directly or through other data:
+    what the export created and left behind, also when those blocks reference each
+    other. The .blend's own data stays, used or not (unlike Blender's Purge)."""
+    users = bpy.data.user_map()
+    uses = {}
+    for item, item_users in users.items():
+        for user in item_users:
+            uses.setdefault(user, set()).add(item)
+    reached = {item for item in users if item.as_pointer() in before or item.use_fake_user
+               or isinstance(item, bpy.types.Scene)}
+    stack = list(reached)
+    while stack:
+        for used in uses.get(stack.pop(), ()):
+            if used not in reached:
+                reached.add(used)
+                stack.append(used)
+    left_behind = [item for item in users if item not in reached]
+    if left_behind:
+        bpy.data.batch_remove(left_behind)
+
+
+def build_path(rel_path: str) -> str:
+    """A path in the N64 build folder (build_<project>/n64)."""
+    return os.path.join(arm.utils.build_dir(), 'n64', rel_path)
+
+
 def write_generated(rel_path: str, body: str, writer: str, included_by: str) -> bool:
     """A generated header under build/n64/src: the part of a runtime file that
     comes from the project (ids, counts, tables). Its first line names what
     writes it and the runtime file that includes it."""
     text = (f'// Generated by armor_64 ({writer}) for {included_by}. Do not edit.\n'
             '#pragma once\n\n' + body.rstrip('\n') + '\n')
-    return write_if_changed(os.path.join(arm.utils.build_dir(), 'n64', 'src', rel_path), text)
+    return write_if_changed(build_path(os.path.join('src', rel_path)), text)
 
 
 def copy_if_changed(src: str, dst: str) -> bool:

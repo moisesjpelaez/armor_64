@@ -869,10 +869,6 @@ def write_canvas(exporter):
     if not exporter.ui_canvas_data:
         return
 
-    # Copy shared header used by label, image, and panel
-    from armor64 import utils as n64_utils
-    n64_utils.copy_src('ui_anchor.h', 'src/ui')
-
     write_label_h(exporter)
     write_label_c(exporter)
     write_image_h(exporter)
@@ -932,9 +928,7 @@ def copy_canvas_images(exporter):
 
 
 def write_label_h(exporter):
-    """Copy label.h and generate label_defs.h: the label keys, counts and sizes."""
-    n64_utils.copy_src('label.h', 'src/ui')
-
+    """Generate label_defs.h (for label.h): the label keys, counts and sizes."""
     label_defines_lines = []
     total_label_count = 0
     seen = {}
@@ -965,10 +959,8 @@ def write_label_h(exporter):
 
 
 def write_label_c(exporter):
-    """Copy label.c and generate label_data.h: each canvas's labels, and g_label_scenes
+    """Generate label_data.h (for label.c): each canvas's labels, and g_label_scenes
     (the labels of each scene's canvas, by SceneId)."""
-    n64_utils.copy_src('label.c', 'src/ui')
-
     canvas_label_arrays = []
     label_scenes = []
 
@@ -1009,9 +1001,7 @@ def write_label_c(exporter):
 
 
 def write_image_h(exporter):
-    """Copy image.h and generate image_defs.h: the image keys, counts and sizes."""
-    n64_utils.copy_src('image.h', 'src/ui')
-
+    """Generate image_defs.h (for image.h): the image keys, counts and sizes."""
     image_defines_lines = []
     total_image_count = 0
     seen = {}
@@ -1041,10 +1031,8 @@ def write_image_h(exporter):
 
 
 def write_image_c(exporter):
-    """Copy image.c and generate image_data.h: the sprite files (each loaded once),
+    """Generate image_data.h (for image.c): the sprite files (each loaded once),
     each canvas's images, and g_image_scenes (by SceneId)."""
-    n64_utils.copy_src('image.c', 'src/ui')
-
     canvas_image_arrays = []
     image_scenes = []
 
@@ -1096,9 +1084,7 @@ def write_image_c(exporter):
 
 
 def write_button_h(exporter):
-    """Copy button.h and generate button_defs.h: the button keys, counts and sizes."""
-    n64_utils.copy_src('button.h', 'src/ui')
-
+    """Generate button_defs.h (for button.h): the button keys, counts and sizes."""
     button_defines_lines = []
     total_button_count = 0
     seen = {}
@@ -1130,10 +1116,8 @@ def write_button_h(exporter):
 
 
 def write_button_c(exporter):
-    """Copy button.c and generate button_data.h: each canvas's buttons, and g_button_scenes
+    """Generate button_data.h (for button.c): each canvas's buttons, and g_button_scenes
     (the buttons of each scene's canvas, by SceneId)."""
-    n64_utils.copy_src('button.c', 'src/ui')
-
     canvas_button_arrays = []
     button_scenes = []
 
@@ -1194,9 +1178,7 @@ def write_button_c(exporter):
 
 
 def write_panel_h(exporter):
-    """Copy panel.h and generate panel_defs.h: the panel keys, counts and sizes."""
-    n64_utils.copy_src('panel.h', 'src/ui')
-
+    """Generate panel_defs.h (for panel.h): the panel keys, counts and sizes."""
     panel_defines_lines = []
     total_panel_count = 0
     seen = {}
@@ -1226,10 +1208,8 @@ def write_panel_h(exporter):
 
 
 def write_panel_c(exporter):
-    """Copy panel.c and generate panel_data.h: each canvas's panels, and g_panel_scenes
+    """Generate panel_data.h (for panel.c): each canvas's panels, and g_panel_scenes
     (the panels of each scene's canvas, by SceneId)."""
-    n64_utils.copy_src('panel.c', 'src/ui')
-
     canvas_panel_arrays = []
     panel_scenes = []
 
@@ -1269,9 +1249,7 @@ def write_panel_c(exporter):
 
 
 def write_canvas_h(exporter):
-    """Copy canvas.h and generate canvas_defs.h: group and Koui scene keys, counts."""
-    n64_utils.copy_src('canvas.h', 'src/ui')
-
+    """Generate canvas_defs.h (for canvas.h): group and Koui scene keys, counts."""
     # Build group defines
     group_defines_lines = []
     total_group_count = 0
@@ -1326,10 +1304,8 @@ def write_canvas_h(exporter):
 
 
 def write_canvas_c(exporter):
-    """Copy canvas.c and generate canvas_data.h: each canvas's groups, elements and
+    """Generate canvas_data.h (for canvas.c): each canvas's groups, elements and
     Koui scenes, the tables of each scene's (by SceneId), and the text colors."""
-    n64_utils.copy_src('canvas.c', 'src/ui')
-
     # Build per-canvas group definition arrays
     canvas_group_arrays = []
     for canvas_name, canvas in exporter.ui_canvas_data.items():
@@ -1501,9 +1477,7 @@ def write_fonts(exporter):
 
 
 def write_fonts_c(exporter):
-    """Copy fonts.c and generate fonts_data.h: the font files, by FontId."""
-    n64_utils.copy_src('fonts.c', 'src/ui')
-
+    """Generate fonts_data.h (for fonts.c): the font files, by FontId."""
     lines = ['static const char *FONT_PATHS[FONT_COUNT] = {']
     sorted_fonts = sorted(exporter.exported_fonts.items(), key=lambda x: x[1]['font_id'])
     lines += [f'    "rom:/{font_key}.font64",' for font_key, _ in sorted_fonts]
@@ -1512,9 +1486,7 @@ def write_fonts_c(exporter):
 
 
 def write_fonts_h(exporter):
-    """Copy fonts.h and generate fonts_defs.h: FontId."""
-    n64_utils.copy_src('fonts.h', 'src/ui')
-
+    """Generate fonts_defs.h (for fonts.h): FontId."""
     lines = ['typedef enum {']
     sorted_fonts = sorted(exporter.exported_fonts.items(), key=lambda x: x[1]['font_id'])
     for font_key, font_info in sorted_fonts:

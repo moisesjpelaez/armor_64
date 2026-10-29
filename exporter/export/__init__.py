@@ -7,7 +7,6 @@ Each module handles a specific domain of the export pipeline:
 - koui_theme_parser: Parses Koui .ksn theme files
 - audio_exporter: Audio scanning, copying, and config generation
 - mesh_exporter: GLTF mesh export via gltf_exporter
-- physics_exporter: Oimo physics engine file generation
 - scene_exporter: Scene data extraction and C code generation
 - traits_exporter: Trait and autoload C code generation
 - ui_exporter: Canvas, fonts, and UI code generation

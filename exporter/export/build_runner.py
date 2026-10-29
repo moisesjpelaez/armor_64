@@ -26,12 +26,6 @@ def write_makefile(exporter):
     from armor64.export import audio_exporter, ui_exporter
 
     wrd = bpy.data.worlds['Arm']
-    tmpl_path = os.path.join(n64_utils.get_n64_runtime_path(), 'Makefile.j2')
-    out_path = os.path.join(arm.utils.build_dir(), 'n64', 'Makefile')
-
-    with open(tmpl_path, 'r', encoding='utf-8') as f:
-        tmpl_content = f.read()
-
     scene_files = []
     for scene in scene_exporter.exported_scenes():
         scene_files.append(f'src/scenes/{arm.utils.safesrc(scene.name).lower()}.c')
@@ -52,7 +46,8 @@ def write_makefile(exporter):
 
     tiny3d_rel = _tiny3d_relpath()
 
-    output = tmpl_content.format(
+    n64_utils.render_template(
+        'Makefile.j2', 'Makefile',
         tiny3d_path=tiny3d_rel,
         game_title=arm.utils.safestr(wrd.arm_project_name),
         enable_physics=1 if exporter.has_physics else 0,
@@ -67,8 +62,6 @@ def write_makefile(exporter):
         audio_targets=audio_targets,
         audio_rules=audio_rules
     )
-
-    n64_utils.write_if_changed(out_path, output)
 
 
 def _make_list(paths):

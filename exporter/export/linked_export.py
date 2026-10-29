@@ -153,13 +153,14 @@ def is_temp_scene(scene):
 
 
 def _safe_remove(data_collection, name):
-    """Safely remove a data block by name."""
+    """Remove a data block by name, if it's there; a failure is reported (the
+    cleanup goes on)."""
     try:
         item = data_collection.get(name)
         if item:
             data_collection.remove(item, do_unlink=True)
-    except Exception:
-        pass
+    except Exception as e:
+        log.error(f'N64: could not remove the temporary "{name}" after the export ({e}): remove it before saving')
 
 
 def cleanup_linked_export():
@@ -181,11 +182,6 @@ def cleanup_linked_export():
 
     # Remove scene
     if _state.temp_scene_name:
-        try:
-            scene = bpy.data.scenes.get(_state.temp_scene_name)
-            if scene:
-                bpy.data.scenes.remove(scene)
-        except Exception:
-            pass
+        _safe_remove(bpy.data.scenes, _state.temp_scene_name)
 
     _state.reset()
