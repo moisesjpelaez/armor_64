@@ -52,7 +52,7 @@ class N64Exporter:
 
         # UI state
         self.ui_canvas_data = {}
-        self.theme_parser = None
+        self.theme = None                # The Koui themes (KouiThemeParser)
         self.color_style_map = {}
         self.font_id_map = {}
         self.ui_images = set()           # Image names the canvases show (ui_exporter)

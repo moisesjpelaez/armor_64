@@ -15,7 +15,7 @@ import glob
 import arm.utils
 import armor64.utils as n64_utils
 import arm.log as log
-from armor64.export.koui_theme_parser import KouiThemeParser
+from armor64.export.koui_theme_parser import KouiThemeParser, ThemeError
 from armor64.codegen.c_text import c_string
 
 
@@ -33,10 +33,6 @@ ANCHOR_MIDDLE_RIGHT = 5
 ANCHOR_BOTTOM_LEFT = 6
 ANCHOR_BOTTOM_CENTER = 7
 ANCHOR_BOTTOM_RIGHT = 8
-
-# Default UI values
-DEFAULT_FONT_SIZE = 15
-DEFAULT_TEXT_COLOR = (221, 221, 221, 255)  # #dddddd
 
 # Kha font size (pixel height) -> N64 font. Measured, not derived: chosen so text
 # looks the same size as on Krom, and its baseline lands where Koui draws it.
@@ -183,6 +179,8 @@ def detect_ui_canvas(exporter):
                         log.warn(f'UI canvas "{canvas_name}" has {count} {type_name}, '
                                  f'exceeding uint8_t index limit (255)')
 
+        except ThemeError:
+            raise
         except Exception as e:
             log.warn(f'Failed to parse Koui canvas {json_path}: {e}')
 
@@ -231,6 +229,14 @@ def _build_full_path(parent_path: str, key: str) -> str:
     if parent_path:
         return f"{parent_path}/{key}"
     return key
+
+
+def _bg_color(style):
+    """A style's background: the gradient's top-left color when it uses one
+    (the N64 draws flat backgrounds), else color.bg."""
+    if style['color']['useGradient']:
+        return style['color']['gradient']['colorTopLeft']
+    return style['color']['bg']
 
 
 def _apply_opacity(color_tuple, opacity):
@@ -365,28 +371,17 @@ def _handle_label(exporter, elem, final_x, final_y, labels, container_width, par
     tid = elem.get('tID', '_label')
     anchor = elem.get('anchor', ANCHOR_TOP_LEFT)
 
-    font_size = DEFAULT_FONT_SIZE
-    text_color = DEFAULT_TEXT_COLOR
+    style = exporter.theme.style(tid)
+    font_size = style['font']['size']
+    text_color = style['color']['text']
 
-    # Shadow defaults (no shadow)
-    shadow = False
-    shadow_dx = 0
-    shadow_dy = 0
-    shadow_style_id = 0
-
-    if exporter.theme_parser:
-        font_size = exporter.theme_parser.get_font_size(tid, DEFAULT_FONT_SIZE)
-        color_hex = exporter.theme_parser.get_text_color(tid, '#dddddd')
-        text_color = KouiThemeParser.parse_hex_color(color_hex)
-
-        shadow_hex = exporter.theme_parser.get_shadow_color(tid, '#00000000')
-        shadow_color = KouiThemeParser.parse_hex_color(shadow_hex)
-        shadow_dx = exporter.theme_parser.get_shadow_offset_x(tid, 0)
-        shadow_dy = exporter.theme_parser.get_shadow_offset_y(tid, 0)
-        # Shadow is active only when alpha > 0 and at least one offset is non-zero
-        shadow = (shadow_color[3] > 0 and (shadow_dx != 0 or shadow_dy != 0))
-        if shadow:
-            shadow_style_id = _get_or_create_color_style(exporter, shadow_color)
+    # textShadow is an optional group; the shadow is drawn when visible and offset
+    text_shadow = style.get('textShadow', {})
+    shadow_color = text_shadow.get('color', (0, 0, 0, 0))
+    shadow_dx = text_shadow.get('offsetX', 0)
+    shadow_dy = text_shadow.get('offsetY', 0)
+    shadow = shadow_color[3] > 0 and (shadow_dx != 0 or shadow_dy != 0)
+    shadow_style_id = _get_or_create_color_style(exporter, shadow_color) if shadow else 0
 
     exporter.font_sizes.add(font_size)
     style_id = _get_or_create_color_style(exporter, text_color)
@@ -432,53 +427,18 @@ def _handle_button(exporter, elem, final_x, final_y, buttons, container_width, p
     tid = elem.get('tID', '_button')
     anchor = elem.get('anchor', ANCHOR_TOP_LEFT)
 
-    font_size = DEFAULT_FONT_SIZE
-    text_color = DEFAULT_TEXT_COLOR
+    style = exporter.theme.style(tid)
+    font_size = style['font']['size']
+    text_color = style['color']['text']
+    border_size = style['border']['size']
 
-    # Defaults matching Koui theme values
-    bg_default = KouiThemeParser.parse_hex_color('#262833')
-    border_default = KouiThemeParser.parse_hex_color('#1f2028')
-    bg_hover = KouiThemeParser.parse_hex_color('#2b2b33')
-    border_hover = KouiThemeParser.parse_hex_color('#ef6413')
-    bg_click = KouiThemeParser.parse_hex_color('#343746')
-    border_click = KouiThemeParser.parse_hex_color('#ffffff')
-    bg_disabled = bg_default
-    border_disabled = border_default
-    border_size = 2
-    opacity_disabled = 0.6  # Koui default: _root!disabled -> opacity: 0.6
-
-    if exporter.theme_parser:
-        tp = exporter.theme_parser
-        font_size = tp.get_font_size(tid, DEFAULT_FONT_SIZE)
-
-        text_hex = tp.get_text_color(tid, '#dddddd')
-        text_color = KouiThemeParser.parse_hex_color(text_hex)
-
-        bg_default = KouiThemeParser.parse_hex_color(tp.get_bg_color(tid, 'default', '#262833'))
-        border_default = KouiThemeParser.parse_hex_color(tp.get_border_color(tid, 'default', '#1f2028'))
-        bg_hover = KouiThemeParser.parse_hex_color(tp.get_bg_color(tid, 'hover', '#2b2b33'))
-        border_hover = KouiThemeParser.parse_hex_color(tp.get_border_color(tid, 'hover', '#ef6413'))
-        bg_click = KouiThemeParser.parse_hex_color(tp.get_bg_color(tid, 'click', '#343746'))
-        border_click = KouiThemeParser.parse_hex_color(tp.get_border_color(tid, 'click', '#ffffff'))
-        bg_disabled = KouiThemeParser.parse_hex_color(tp.get_bg_color(tid, 'disabled', '#262833'))
-        border_disabled = KouiThemeParser.parse_hex_color(tp.get_border_color(tid, 'disabled', '#1f2028'))
-        border_size = tp.get_border_size(tid, 2)
-
-        # Per-state opacity from theme (pre-multiplied into alpha at export time)
-        op = tp.get_opacity(tid, 'default', 1.0)
-        bg_default = _apply_opacity(bg_default, op)
-        border_default = _apply_opacity(border_default, op)
-        op = tp.get_opacity(tid, 'hover', 1.0)
-        bg_hover = _apply_opacity(bg_hover, op)
-        border_hover = _apply_opacity(border_hover, op)
-        op = tp.get_opacity(tid, 'click', 1.0)
-        bg_click = _apply_opacity(bg_click, op)
-        border_click = _apply_opacity(border_click, op)
-        opacity_disabled = tp.get_opacity(tid, 'disabled', 1.0)
-
-    # Always apply disabled opacity (theme value or default 0.6)
-    bg_disabled = _apply_opacity(bg_disabled, opacity_disabled)
-    border_disabled = _apply_opacity(border_disabled, opacity_disabled)
+    # Each state's colors, with its opacity pre-multiplied into the alpha
+    colors = {}
+    for state in ('default', 'hover', 'click', 'disabled'):
+        state_style = exporter.theme.style(tid, state)
+        opacity = state_style['opacity']
+        colors[f'bg_{state}'] = _apply_opacity(_bg_color(state_style), opacity)
+        colors[f'border_{state}'] = _apply_opacity(state_style['border']['color'], opacity)
 
     exporter.font_sizes.add(font_size)
     text_style_id = _get_or_create_color_style(exporter, text_color)
@@ -501,14 +461,7 @@ def _handle_button(exporter, elem, final_x, final_y, buttons, container_width, p
         'font_size': font_size,
         'text_style_id': text_style_id,
         'hover_text_style_id': text_style_id,  # same color; no change on hover in default theme
-        'bg_default': bg_default,
-        'border_default': border_default,
-        'bg_hover': bg_hover,
-        'border_hover': border_hover,
-        'bg_click': bg_click,
-        'border_click': border_click,
-        'bg_disabled': bg_disabled,
-        'border_disabled': border_disabled,
+        **colors,
         'border_size': border_size,
         # Focus graph: resolved to indices by resolve_button_focus(), -1 = no link
         'focus_up_key':    elem.get('focusUp'),
@@ -528,21 +481,10 @@ def _handle_panel(exporter, elem, final_x, final_y, panels, parent_path: str = "
     tid = elem.get('tID', '_panel')
     anchor = elem.get('anchor', ANCHOR_TOP_LEFT)
 
-    # Defaults matching Koui _panel theme
-    bg_color = '#2b2e38ff'
-    border_color = '#000000bb'
-    border_size = 2
-
-    if exporter.theme_parser:
-        tp = exporter.theme_parser
-        bg_hex = tp.get_bg_color(tid, 'default', '#2b2e38')
-        border_hex = tp.get_border_color(tid, 'default', '#000000bb')
-        bg_color = bg_hex if len(bg_hex) > 7 else bg_hex + 'ff'
-        border_color = border_hex if len(border_hex) > 7 else border_hex + 'ff'
-        border_size = tp.get_border_size(tid, 2)
-
-    bg = KouiThemeParser.parse_hex_color(bg_color)
-    border = KouiThemeParser.parse_hex_color(border_color)
+    style = exporter.theme.style(tid)
+    bg = _bg_color(style)
+    border = style['border']['color']
+    border_size = style['border']['size']
 
     full_path = _build_full_path(parent_path, elem['key'])
 
@@ -727,23 +669,19 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent,
 
 
 def _parse_koui_themes(exporter):
-    """Parse Koui base theme and project override files."""
-    exporter.theme_parser = KouiThemeParser()
+    """Read the themes as Koui does: its theme.ksn first, then every other .ksn
+    the build gets (the project's Assets/, sorted here so exports are stable)."""
+    fp = arm.utils.get_fp()
+    main_theme = os.path.join(fp, 'Subprojects', 'Koui', 'Assets', 'theme.ksn')
+    if not os.path.isfile(main_theme):
+        raise ValueError(f'Koui\'s theme not found: {main_theme}')
+    project_themes = sorted(glob.glob(os.path.join(fp, 'Assets', '**', '*.ksn'), recursive=True))
 
-    # Base theme from Koui Subprojects
-    base_theme_path = os.path.join(arm.utils.get_fp(), 'Subprojects', 'Koui', 'Assets', 'theme.ksn')
-    if os.path.exists(base_theme_path):
-        exporter.theme_parser.parse_file(base_theme_path)
-        log.info(f'Parsed base Koui theme: {base_theme_path}')
-
-    # Project override from Assets/koui_canvas
-    override_path = os.path.join(arm.utils.get_fp(), 'Assets', 'koui_canvas', 'ui_override.ksn')
-    if os.path.exists(override_path):
-        exporter.theme_parser.parse_file(override_path)
-        log.info(f'Parsed Koui theme override: {override_path}')
-
-    # Resolve all inheritance chains
-    exporter.theme_parser.resolve_all()
+    exporter.theme = KouiThemeParser()
+    for path in [main_theme] + [p for p in project_themes if os.path.basename(p) != 'theme.ksn']:
+        exporter.theme.parse_file(path)
+        log.info(f'Parsed Koui theme: {path}')
+    exporter.theme.resolve()
 
 
 def _get_or_create_color_style(exporter, color: tuple) -> int:
