@@ -159,28 +159,40 @@ def trait_chain_events(trait_info: dict, trait_class: str) -> set:
 
 
 def _trait_data_fields(trait_info: dict, trait_class: str, instance_props: dict,
-                       type_overrides: dict, entity_ptr) -> list:
+                       type_overrides: dict, entity_ptr, instance_class: str) -> list:
     """The C initializer fields of a trait's data: its parent's data first
     (._parent = (ParentData){...}, embedded at offset 0, down to the base trait,
-    whose .object is the entity), then its members (an instance's Blender
-    property, else the Haxe initial value) and signals (no subscribers)."""
+    whose .object is the entity), the virtual method pointers its struct holds
+    (the instance's class's implementations), then its members (an instance's
+    Blender property, else the Haxe initial value; tweens allocated, as a
+    `new Tween()` member) and signals (no subscribers). The data is initialized
+    when the scene starts (init_trait_data), before any handler runs."""
+    from armor64.codegen.trait_generator import vtable_initializers
+
     trait = get_trait(trait_info, trait_class)
     fields = []
     parent_class = trait.get("parent")
     parent = get_trait(trait_info, parent_class) if parent_class else None
     if parent:
-        parent_fields = _trait_data_fields(trait_info, parent_class, instance_props, type_overrides, entity_ptr)
-        parent_c_name = parent.get("c_name", parent_class.replace(".", "_"))
-        fields.append(f"._parent = ({parent_c_name}Data){{{', '.join(parent_fields) or '0'}}}")
+        parent_fields = _trait_data_fields(trait_info, parent_class, instance_props, type_overrides,
+                                           entity_ptr, instance_class)
+        fields.append(f"._parent = ({parent['c_name']}Data){{{', '.join(parent_fields) or '0'}}}")
     elif not parent_class and entity_ptr:
         fields.append(f'.object = {entity_ptr}')
+
+    traits = trait_info.get("traits", {})
+    for method, function in vtable_initializers(traits, trait_key(trait_info, instance_class),
+                                                trait_key(trait_info, trait_class)):
+        fields.append(f'._vfn_{method} = {function}')
 
     for member in trait.get("members", []):
         name = member.get("name", "")
         if not name:
             continue
-        ctype = type_overrides.get(name, member.get("ctype", "float"))
-        if name in instance_props:
+        ctype = type_overrides.get(name, member["ctype"])
+        if ctype == "ArmTween*":
+            fields.append(f'.{name} = tween_alloc()')
+        elif name in instance_props:
             fields.append(f'.{name} = {to_c_literal(instance_props[name], ctype)}')
         else:
             fields.append(f'.{name} = {extract_default_value(member.get("default_value"), ctype)}')
@@ -193,13 +205,9 @@ def _trait_data_fields(trait_info: dict, trait_class: str, instance_props: dict,
 
 def build_trait_initializer(trait_info: dict, trait_class: str, instance_props: dict = None,
                             type_overrides: dict = None, entity_ptr: str = None) -> str:
-    """The C initializer of a trait instance's data struct (empty when the trait
-    has no members, signals nor parent: its on_add sets .object)."""
-    trait = get_trait(trait_info, trait_class)
-    if not trait.get("members") and not trait.get("meta", {}).get("signals") and not trait.get("parent"):
-        return ""
+    """The C initializer of a trait instance's data struct."""
     return ', '.join(_trait_data_fields(trait_info, trait_class, instance_props or {},
-                                        type_overrides or {}, entity_ptr))
+                                        type_overrides or {}, entity_ptr, trait_class))
 
 
 # =============================================================================

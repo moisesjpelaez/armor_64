@@ -103,9 +103,6 @@ def scene_counts(scene: Dict, trait_key: Callable[[str], str], traits: Dict) -> 
     bodies = mesh_colliders = contact_bodies = contact_subscribers = anim_clips = 0
     instances: Dict[str, int] = {}
 
-    def meta(trait):
-        return traits.get(trait_key(trait.get("class_name", "")), {}).get("meta", {})
-
     def count_traits(trait_list):
         for trait in trait_list:
             key = trait_key(trait.get("class_name", ""))
@@ -120,9 +117,11 @@ def scene_counts(scene: Dict, trait_key: Callable[[str], str], traits: Dict) -> 
             else:
                 bodies += 1
             physics.append((_body_kind(rigid_body), rigid_body.get("collision_group", 1), rigid_body.get("collision_mask", 1)))
-            # Contact handlers subscribed when the scene loads (scene_generator)
+            # Contact handlers the object's traits subscribe (notifyOnContact),
+            # their ancestors' too: a parent's code runs for its children
             handlers = sum(1 for trait in obj.get("traits", [])
-                           for event in meta(trait).get("contact_events", [])
+                           for ancestor in _chain(traits, trait_key(trait.get("class_name", "")))
+                           for event in traits[ancestor].get("meta", {}).get("contact_events", [])
                            if event.get("subscribe", True) and event.get("handler_name"))
             if handlers:
                 contact_bodies += 1

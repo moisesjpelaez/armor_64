@@ -1,17 +1,16 @@
 """
-Trait Code Generator - Generates C code for traits from IR.
-
-This module contains the TraitCodeGenerator class and related functions
-for preparing template data for traits.h and traits.c.
+Trait code generation: data/traits.h and data/traits.c from n64_traits.json
+(the macros' IR): each trait's data struct, handlers, methods and callbacks
+(tweens, buttons, signals), and the inheritance rules the scene generator and
+limits share. Used by traits_exporter.
 """
 
-import json
-import os
 from typing import Dict, List
 
 from arm import log
 from armor64.codegen.trait_emitter import TraitEmitter
 from armor64.codegen import tween_helper
+from armor64.codegen.ir import load_ir_json, nodes_of_type, walk_ir
 from armor64.codegen.signal_codegen import SignalContext, find_signal_bindings
 
 
@@ -20,6 +19,13 @@ from armor64.codegen.signal_codegen import SignalContext, find_signal_bindings
 #
 # Shared by the struct layout, instance allocation (scene generator) and call
 # sites, so they can't disagree. `all_traits` maps trait name -> trait IR.
+#
+# A child's data struct embeds its parent's first (_parent), down to the base
+# trait's, which holds the object. A virtual method (overriding an ancestor's,
+# or overridden) has a function pointer, _vfn_<method>, in the struct of the
+# topmost trait declaring it, set to the instance's most derived
+# implementation when its data is initialized (vtable_initializers); calls go
+# through it, super.method() calls the parent's function directly.
 # =============================================================================
 
 def _ancestors(all_traits: dict, name: str):
@@ -56,6 +62,19 @@ def declared_vtable_methods(all_traits: dict, name: str) -> list:
             if is_virtual_method(all_traits, name, m) and vtable_owner(all_traits, name, m) == name]
 
 
+def vtable_initializers(all_traits: dict, instance: str, level: str) -> list:
+    """(method, C function) of each virtual method pointer in `level`'s struct
+    (`instance` or one of its ancestors) for an instance of `instance`: the most
+    derived implementation, set when the data is initialized, so it works
+    from the start (on_add, other traits), as in Haxe."""
+    chain = [instance, *_ancestors(all_traits, instance)]
+    pointers = []
+    for method in declared_vtable_methods(all_traits, level):
+        owner = next(t for t in chain if method in all_traits[t].get("methods", {}))
+        pointers.append((method, all_traits[owner]["methods"][method]["cName"]))
+    return pointers
+
+
 def visible_vtable_owners(all_traits: dict, name: str) -> dict:
     """Virtual methods callable from trait `name` (own and inherited) -> the
     trait whose struct holds their vtable pointer."""
@@ -76,75 +95,23 @@ def chain_events(all_traits: dict, name: str) -> set:
     return events
 
 
-def walk_ir(value):
-    """Every IR node in a tree (any depth: children, args, bodies, props...)."""
-    if isinstance(value, dict):
-        if "type" in value:
-            yield value
-        for v in value.values():
-            yield from walk_ir(v)
-    elif isinstance(value, list):
-        for v in value:
-            yield from walk_ir(v)
-
-
 def needs_data_struct(all_traits: dict, name: str) -> bool:
     """Whether a trait has a data struct (and its instances get data)."""
     ir = all_traits.get(name, {})
     meta = ir.get("meta", {})
     return bool(ir.get("members") or meta.get("signals") or meta.get("connects_signals")
                 or ir.get("parent") or meta.get("stores_self")
-                or declared_vtable_methods(all_traits, name))
+                or declared_vtable_methods(all_traits, name)
+                or tween_helper.param_captures([ir.get("events", {}), ir.get("methods", {})]))
 
 
 # =============================================================================
-# JSON Loading Utilities
+# The IR files
 # =============================================================================
-
-def _load_ir_json(filename: str, default_key: str, build_dir: str = None) -> dict:
-    """Load an IR JSON file from the build directory.
-
-    Searches multiple possible locations and validates IR version.
-
-    Args:
-        filename: Name of JSON file (e.g., "n64_traits.json")
-        default_key: Key for empty result (e.g., "traits" or "autoloads")
-        build_dir: Build directory path (defaults to arm.utils.build_dir())
-
-    Returns:
-        Parsed JSON dict with ir_version and data
-    """
-    import arm.utils
-
-    if build_dir is None:
-        build_dir = arm.utils.build_dir()
-
-    possible_paths = [
-        os.path.join(build_dir, filename),
-        os.path.join(build_dir, "build", filename),
-        os.path.join(build_dir, "debug", filename),
-    ]
-
-    for path in possible_paths:
-        if os.path.exists(path):
-            try:
-                with open(path, 'r') as f:
-                    data = json.load(f)
-                    version = data.get("ir_version", 0)
-                    if version != 1:
-                        log.warn(f"Expected IR version 1, got {version} in {filename}")
-                    return data
-            except json.JSONDecodeError as e:
-                log.error(f"Invalid JSON in {path}: {e}")
-            except IOError as e:
-                log.error(f"Error reading {path}: {e}")
-
-    return {"ir_version": 0, default_key: {}}
-
 
 def load_signals_json(build_dir: str = None) -> dict:
     """Load n64_signals.json: the signals used by the game (see signal_codegen)."""
-    return _load_ir_json("n64_signals.json", "signals", build_dir)
+    return load_ir_json("n64_signals.json", "signals", build_dir)
 
 
 def signals_context(traits: dict = None) -> SignalContext:
@@ -161,7 +128,7 @@ def signals_context(traits: dict = None) -> SignalContext:
 
 def load_traits_json(build_dir: str = None) -> dict:
     """Load the n64_traits.json file generated by the macro."""
-    return _load_ir_json("n64_traits.json", "traits", build_dir)
+    return load_ir_json("n64_traits.json", "traits", build_dir)
 
 
 def get_trait_info(build_dir: str = None) -> dict:
@@ -181,26 +148,15 @@ def get_trait_info(build_dir: str = None) -> dict:
 # =============================================================================
 
 class TraitCodeGenerator:
-    """Generates C code for a single trait from IR.
-
-    Pure 1:1 emitter - all data comes from macro-generated IR.
-
-    Inheritance Support (Option B - Composition):
-    - Child data structs embed parent struct at offset 0
-    - Each trait generates standalone C code (no IR merging)
-    - Python routes member access through inheritance chain
-    - super() calls emit as parent lifecycle function calls
-
-    Method Support (Option A - Callable Functions):
-    - All non-lifecycle methods are generated as callable C functions
-    - Method calls emit as trait_method_call IR nodes
-    - Child can call parent methods via super_call IR nodes
-    """
+    """The C of one trait: its data struct, lifecycle handlers (each calling
+    its parent's first), methods (C functions taking obj and data), and the
+    functions its callbacks become. Its code is its own: an inherited member or
+    method is reached through the ancestor's struct or function."""
 
     def __init__(self, name: str, ir: Dict, type_overrides: Dict = None, all_traits: Dict = None,
                  signals: SignalContext = None):
         self.name = name
-        self.c_name = ir.get("c_name", "")  # Must be provided by macro
+        self.c_name = ir["c_name"]
         self.members = ir.get("members", [])
         self.methods = ir.get("methods", {})  # Callable methods (non-lifecycle)
         self.events = ir.get("events", {})
@@ -217,9 +173,6 @@ class TraitCodeGenerator:
         # Build complete member map including inherited members for routing
         self.member_map = self._build_member_map()
 
-        # Pre-compute the set of virtual method names for this trait
-        # (methods that are overridden by child classes)
-        self.virtual_method_names = self._compute_virtual_methods()
         vtable_owners = visible_vtable_owners(self.all_traits, self.name)
 
         # Create emitter with inheritance info
@@ -240,17 +193,6 @@ class TraitCodeGenerator:
         self._inherited_callbacks = []  # Collected callback wrappers for inherited method calls
         self._button_callbacks = []  # Collected button_register_callback nodes
 
-    def _compute_virtual_methods(self) -> set:
-        """Compute the set of method names that need vtable dispatch.
-
-        A method is virtual if it's overridden by any child class.
-        """
-        virtual = set()
-        for method_name in self.methods.keys():
-            if self._is_method_virtual(method_name):
-                virtual.add(method_name)
-        return virtual
-
     def _build_member_map(self) -> Dict[str, Dict]:
         """Build a map of all members including inherited ones.
 
@@ -265,7 +207,7 @@ class TraitCodeGenerator:
         for m in self.members:
             mname = m.get("name", "")
             member_map[mname] = {
-                "ctype": m.get("ctype", "float"),
+                "ctype": m["ctype"],
                 "type": m.get("type", ""),
                 "owner": self.name,
                 "depth": 0
@@ -282,7 +224,7 @@ class TraitCodeGenerator:
                 # Don't override if child has same member (child shadows parent)
                 if mname not in member_map:
                     member_map[mname] = {
-                        "ctype": m.get("ctype", "float"),
+                        "ctype": m["ctype"],
                         "type": m.get("type", ""),
                         "owner": current_parent,
                         "depth": depth
@@ -296,29 +238,12 @@ class TraitCodeGenerator:
     def _get_member_ctype(self, member: Dict) -> str:
         """Get the C type for a member, applying overrides if present."""
         name = member.get("name", "unknown")
-        ctype = member.get("ctype", "float")
+        ctype = member["ctype"]
         # Apply type override if present
         if self.name in self.type_overrides:
             if name in self.type_overrides[self.name]:
                 ctype = self.type_overrides[self.name][name]
         return ctype
-
-    def _find_vtable_owner(self, method_name: str) -> str:
-        """Trait whose struct holds the vtable pointer of a method (see vtable_owner)."""
-        return vtable_owner(self.all_traits, self.name, method_name)
-
-    def _is_method_virtual(self, method_name: str) -> bool:
-        """Whether a method needs vtable dispatch (see is_virtual_method).
-
-        Vtable implementation:
-        - The struct of the topmost trait declaring a virtual method holds its
-          `_vfn_<method>` function pointer
-        - Each trait sets the pointer to its own implementation in on_ready, after
-          calling its parent's on_ready, so the most derived override wins
-        - Calls (own and inherited methods): `((OwnerData*)data)->_vfn_method(obj, data, ...)`
-        - super.method() calls the parent's implementation directly
-        """
-        return is_virtual_method(self.all_traits, self.name, method_name)
 
     def _get_object_access_path(self) -> str:
         """Get the path to access 'object' member from trait data struct.
@@ -369,7 +294,7 @@ class TraitCodeGenerator:
         # Embed parent struct at offset 0 (if any)
         if self.parent_name:
             # Get parent's c_name for proper C identifier
-            parent_c_name = self.all_traits.get(self.parent_name, {}).get("c_name", self.parent_name.replace(".", "_"))
+            parent_c_name = self.all_traits[self.parent_name]["c_name"]
             lines.append(f"    {parent_c_name}Data _parent;")
         else:
             # Base trait - add object pointer (like iron.Trait.object)
@@ -383,7 +308,7 @@ class TraitCodeGenerator:
             # Build function pointer signature: returnType (*_vfn_methodname)(void* obj, void* data, params...)
             param_types = ["void*", "void*"]  # obj and data
             for p in vm_params:
-                param_types.append(p.get("ctype", "void*"))
+                param_types.append(p["ctype"])
             params_str = ", ".join(param_types)
             lines.append(f"    {vm_ret} (*_vfn_{vm_name})({params_str});")
 
@@ -396,6 +321,10 @@ class TraitCodeGenerator:
                 ctype = "void*"
             name = m.get("name", "unknown")
             lines.append(f"    {ctype} {name};")
+
+        # Parameters this trait's callbacks capture (tween_helper.capture_ref)
+        for callback, param, ctype in tween_helper.param_captures([self.events, self.methods]):
+            lines.append(f"    {ctype} _cap_{callback}_{param};")
 
         # Signal members - each signal is an ArmSignal struct
         for sig in signals:
@@ -411,35 +340,6 @@ class TraitCodeGenerator:
         """Recursively find all tween callbacks in IR nodes."""
         # Delegate to shared helper
         return tween_helper.find_tween_callbacks(nodes)
-
-    def _find_nodes_by_type(self, nodes: list, target_type: str) -> list:
-        """Recursively find all nodes of a specific type in IR tree.
-
-        Generic helper for finding callback wrappers, tween nodes, etc.
-        """
-        found = []
-        for node in nodes:
-            if node is None:
-                continue
-            node_type = node.get("type", "")
-            if node_type == target_type:
-                found.append(node)
-            # Recurse into children
-            if "children" in node and node["children"]:
-                found.extend(self._find_nodes_by_type(node["children"], target_type))
-            if "args" in node and node["args"]:
-                found.extend(self._find_nodes_by_type(node["args"], target_type))
-            if "body" in node and isinstance(node.get("body"), list):
-                found.extend(self._find_nodes_by_type(node["body"], target_type))
-            # Also search inside props (contains then/else_ branches, on_done callbacks, etc.)
-            if "props" in node and node["props"]:
-                props = node["props"]
-                for key, val in props.items():
-                    if isinstance(val, list):
-                        found.extend(self._find_nodes_by_type(val, target_type))
-                    elif isinstance(val, dict):
-                        found.extend(self._find_nodes_by_type([val], target_type))
-        return found
 
     def _collect_callbacks_from_all_bodies(self, cache_list: list, finder_fn) -> None:
         """Scan all events AND methods for callbacks using the given finder function.
@@ -482,35 +382,13 @@ class TraitCodeGenerator:
         )
 
     def generate_tween_callbacks(self) -> str:
-        """Generate all tween callback functions for this trait.
-
-        Includes capture globals for any captured function parameters.
-        """
+        """Generate all tween callback functions for this trait."""
         self._collect_tween_callbacks()
 
         if not self._tween_callbacks:
             return ""
 
         lines = []
-
-        # First, generate capture globals for any captured params
-        callback_param_captures = {}
-        for cb in self._tween_callbacks:
-            cb_name = cb.get("callback_name", "")
-            captures = cb.get("captures", [])
-            param_caps = [(c["name"], c.get("ctype", c.get("type", "void*")))
-                          for c in captures if c.get("is_param", False)]
-            if param_caps:
-                callback_param_captures[cb_name] = param_caps
-
-        if callback_param_captures:
-            capture_globals = tween_helper.generate_capture_globals(
-                callback_param_captures, self.c_name
-            )
-            lines.extend(capture_globals)
-            lines.append("")
-
-        # Then generate callback functions
         seen_callbacks = set()
 
         for cb in self._tween_callbacks:
@@ -525,8 +403,7 @@ class TraitCodeGenerator:
         return "\n".join(lines)
 
     def _find_inherited_callbacks(self, nodes: list) -> list:
-        """Recursively find all callback_wrapper nodes in IR nodes."""
-        return self._find_nodes_by_type(nodes, "callback_wrapper")
+        return nodes_of_type(nodes, "callback_wrapper")
 
     def _collect_inherited_callbacks(self):
         """Scan all events AND methods for inherited method callback wrappers."""
@@ -560,40 +437,19 @@ class TraitCodeGenerator:
         else:
             lines.append(f"static void {cb_name}(void* obj, void* data) {{")
 
-        # Build param captures map for substitution
-        param_captures = {}
-        for cap in captures:
-            if cap.get("is_param", False):
-                cap_name = cap.get("name", "")
-                if cap_name:
-                    param_captures[cap_name] = f"{self.c_name}_capture_{cap_name}"
+        # The captured parameters, read where the call stored them
+        param_captures = {cap["name"]: tween_helper.capture_ref(self.c_name, True, cb_name, cap["name"])
+                          for cap in captures if cap.get("is_param", False)}
 
         # Use capture-aware emitter if we have param captures
         emitter = self.emitter
         if param_captures:
             emitter = tween_helper._CaptureEmitter(self.emitter, param_captures)
 
-        # Track if obj is used - if body has no ident("object") references, silence warning
-        body_code_lines = []
-        for node in body_nodes:
-            code = emitter.emit(node)
-            if code:
-                # Handle multi-line statements
-                for line in code.split('\n'):
-                    if line.strip():
-                        if not line.rstrip().endswith((';', '{', '}')):
-                            body_code_lines.append(f"    {line};")
-                        else:
-                            body_code_lines.append(f"    {line}")
-
-        # Check if obj is used in the body
-        body_str = "\n".join(body_code_lines)
-        obj_used = "obj" in body_str and "ArmObject*)obj" in body_str
-
-        if not obj_used:
-            lines.append("    (void)obj;  // Suppress unused parameter warning")
-
-        lines.extend(body_code_lines)
+        lines.append("    (void)obj;")
+        body = emitter.emit_statements(body_nodes, "    ")
+        if body:
+            lines.append(body)
         lines.append("}")
         return "\n".join(lines)
 
@@ -602,7 +458,6 @@ class TraitCodeGenerator:
 
         Generates forward declarations first to handle mutual references between
         callbacks (e.g., fadeIn_cb calls fadeOut which uses fadeOut_cb).
-        Also generates capture globals for any captured parameters.
         """
         self._collect_inherited_callbacks()
 
@@ -611,23 +466,6 @@ class TraitCodeGenerator:
 
         lines = []
         seen_callbacks = set()
-
-        # First, generate capture globals for any captured params
-        callback_param_captures = {}
-        for cb in self._inherited_callbacks:
-            cb_name = cb.get("callback_name", "")
-            captures = cb.get("captures", [])
-            param_caps = [(c["name"], c.get("ctype", c.get("type", "void*")))
-                          for c in captures if c.get("is_param", False)]
-            if param_caps:
-                callback_param_captures[cb_name] = param_caps
-
-        if callback_param_captures:
-            capture_globals = tween_helper.generate_capture_globals(
-                callback_param_captures, self.c_name
-            )
-            lines.extend(capture_globals)
-            lines.append("")
 
         # Second pass: collect unique callbacks with their signatures for forward declarations
         unique_callbacks = []
@@ -666,8 +504,7 @@ class TraitCodeGenerator:
         return "\n".join(lines)
 
     def _find_button_callbacks(self, nodes: list) -> list:
-        """Recursively find all button_register_callback nodes in IR nodes."""
-        return self._find_nodes_by_type(nodes, "button_register_callback")
+        return nodes_of_type(nodes, "button_register_callback")
 
     def _collect_button_callbacks(self):
         """Scan all events AND methods for button callback registrations."""
@@ -699,16 +536,9 @@ class TraitCodeGenerator:
         lines.append(f"    void* obj = (void*){obj_access};")
         lines.append(f"    (void)obj;")
 
-        for node in body_nodes:
-            code = self.emitter.emit(node)
-            if code:
-                for line in code.split('\n'):
-                    if line.strip():
-                        if not line.rstrip().endswith((';', '{', '}')):
-                            lines.append(f"    {line};")
-                        else:
-                            lines.append(f"    {line}")
-
+        body = self.emitter.emit_statements(body_nodes, "    ")
+        if body:
+            lines.append(body)
         lines.append("}")
         return "\n".join(lines)
 
@@ -785,7 +615,7 @@ class TraitCodeGenerator:
         """
         decls = []
         for method_name, method_ir in self.methods.items():
-            c_name = method_ir.get("cName", f"{self.c_name}_{method_name.lower()}")
+            c_name = method_ir["cName"]
             return_type = method_ir.get("returnType", "void")
             params = method_ir.get("params", [])
 
@@ -793,7 +623,7 @@ class TraitCodeGenerator:
             param_strs = ["void* obj", "void* data"]
             for p in params:
                 pname = p.get("name", "")
-                ctype = p.get("ctype", "int32_t")
+                ctype = p["ctype"]
                 param_strs.append(f"{ctype} {pname}")
 
             decls.append(f"{return_type} {c_name}({', '.join(param_strs)});")
@@ -811,7 +641,7 @@ class TraitCodeGenerator:
         impl_lines = []
 
         for method_name, method_ir in self.methods.items():
-            c_name = method_ir.get("cName", f"{self.c_name}_{method_name.lower()}")
+            c_name = method_ir["cName"]
             return_type = method_ir.get("returnType", "void")
             params = method_ir.get("params", [])
             body = method_ir.get("body", [])
@@ -820,7 +650,7 @@ class TraitCodeGenerator:
             param_strs = ["void* obj", "void* data"]
             for p in params:
                 pname = p.get("name", "")
-                ctype = p.get("ctype", "int32_t")
+                ctype = p["ctype"]
                 param_strs.append(f"{ctype} {pname}")
 
             impl_lines.append(f"{return_type} {c_name}({', '.join(param_strs)}) {{")
@@ -860,9 +690,38 @@ class TraitCodeGenerator:
             return []
         if event not in chain_events(self.all_traits, self.parent_name):
             return []
-        parent_c_name = self.all_traits[self.parent_name].get("c_name", self.parent_name.lower())
+        parent_c_name = self.all_traits[self.parent_name]["c_name"]
         args = "obj, _dt, data" if with_dt else "obj, data"
         return [f"    {parent_c_name}_{event}({args});"]
+
+    def _update_handler(self, event: str) -> List[str]:
+        """on_fixed_update, on_update or on_late_update (dt before data): the
+        parent's first; with several functions registered (notifyOnUpdate), a
+        dispatcher calling each one still enabled, else the body, skipped once
+        removed (removeUpdate)."""
+        if not self.handles(event):
+            return []
+        kind = event[len("on_"):]  # fixed_update, update, late_update
+        lines = [f"void {self.c_name}_{event}(void* obj, float _dt, void* data) {{"]
+        lines += self._parent_event_call(event, True)
+        dynamic = self.meta.get(f"dynamic_{kind}s", [])
+        if dynamic:
+            lines.append(f"    {self.c_name}Data* d = ({self.c_name}Data*)data;")
+            for callback_name in dynamic:
+                lines.append(f"    if (d->_{kind}_{callback_name}_enabled) "
+                             f"{self.c_name}_{event}_{callback_name}(obj, _dt, data);")
+            lines += ["}", ""]
+            for callback_name in dynamic:
+                event_nodes = self.events.get(f"{event}_{callback_name}", [])
+                body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
+                lines += [f"void {self.c_name}_{event}_{callback_name}(void* obj, float _dt, void* data) {{",
+                          body, "}", ""]
+            return lines
+        if self.meta.get(f"has_remove_{kind}", False):
+            lines.append(f"    if (!(({self.c_name}Data*)data)->_{kind}_enabled) return;")
+        event_nodes = self.events.get(event, [])
+        lines += [self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty", "}", ""]
+        return lines
 
     def generate_signal_handlers(self) -> list:
         """(name, declaration, definition) of the handlers this trait connects
@@ -889,7 +748,7 @@ class TraitCodeGenerator:
         impl_lines.append(f"void {self.c_name}_on_add(void* obj, void* data) {{")
         if self.parent_name and self.parent_name in self.all_traits:
             parent_ir = self.all_traits[self.parent_name]
-            parent_c_name = parent_ir.get("c_name", self.parent_name.lower())
+            parent_c_name = parent_ir["c_name"]
             impl_lines.append(f"    {parent_c_name}_on_add(obj, data);")
         else:
             # Base trait - initialize object pointer in data struct
@@ -908,127 +767,19 @@ class TraitCodeGenerator:
         # Since _parent is at offset 0, casting to parent type works
         if self.parent_name and self.parent_name in self.all_traits:
             parent_ir = self.all_traits[self.parent_name]
-            parent_c_name = parent_ir.get("c_name", self.parent_name.lower())
+            parent_c_name = parent_ir["c_name"]
             impl_lines.append(f"    {parent_c_name}_on_ready(obj, data);")
 
-        # Initialize virtual function pointers for this trait's virtual methods
-        # This happens AFTER parent's on_ready so child overrides replace parent's pointers
-        for method_name, method_ir in self.methods.items():
-            if self._is_method_virtual(method_name):
-                method_c_name = method_ir.get("cName", f"{self.c_name}_{method_name}")
-                # Find which ancestor defines this method (has the vtable pointer)
-                # If this trait defines it, use this trait's Data type
-                # If it's an override, find the ancestor that originally defines it
-                vtable_owner = self._find_vtable_owner(method_name)
-                vtable_owner_c_name = self.all_traits.get(vtable_owner, {}).get("c_name", vtable_owner.replace(".", "_"))
-                impl_lines.append(f"    (({vtable_owner_c_name}Data*)data)->_vfn_{method_name} = {method_c_name};")
-
-        # Allocate tweens at the start of on_ready (before user code)
-        tween_alloc_lines = []
-        for member in self.members:
-            mtype = member.get("ctype", "")
-            mname = member.get("name", "")
-            if mtype == "ArmTween*":
-                tween_alloc_lines.append(f"    (({self.c_name}Data*)data)->{mname} = tween_alloc();")
-
-        if tween_alloc_lines:
-            impl_lines.extend(tween_alloc_lines)
+        # Virtual method pointers and member tweens are set when the data is
+        # initialized (utils.build_trait_initializer), before any handler
 
         body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
         impl_lines.append(body)
         impl_lines.append("}")
         impl_lines.append("")
 
-        # on_fixed_update - dt before data (ArmTraitFixedUpdateFn)
-        if self.handles("on_fixed_update"):
-            # Check if we have multiple dynamic fixed update functions
-            dynamic_fixed_updates = self.meta.get("dynamic_fixed_updates", [])
-
-            if dynamic_fixed_updates and len(dynamic_fixed_updates) > 0:
-                # Multiple fixed update functions - generate dispatcher that calls each enabled sub-update
-                impl_lines.append(f"void {self.c_name}_on_fixed_update(void* obj, float _dt, void* data) {{")
-                impl_lines += self._parent_event_call("on_fixed_update", True)
-                impl_lines.append(f"    {self.c_name}Data* d = ({self.c_name}Data*)data;")
-                for callback_name in dynamic_fixed_updates:
-                    flag_name = f"_fixed_update_{callback_name}_enabled"
-                    func_name = f"on_fixed_update_{callback_name}"
-                    impl_lines.append(f"    if (d->{flag_name}) {self.c_name}_{func_name}(obj, _dt, data);")
-                impl_lines.append("}")
-                impl_lines.append("")
-
-                # Generate each individual fixed update function
-                for callback_name in dynamic_fixed_updates:
-                    func_name = f"on_fixed_update_{callback_name}"
-                    event_nodes = self.events.get(func_name, [])
-                    body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-                    impl_lines.append(f"void {self.c_name}_{func_name}(void* obj, float _dt, void* data) {{")
-                    impl_lines.append(body)
-                    impl_lines.append("}")
-                    impl_lines.append("")
-            else:
-                # Single/no fixed update - original behavior
-                event_nodes = self.events.get("on_fixed_update", [])
-                body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-                impl_lines.append(f"void {self.c_name}_on_fixed_update(void* obj, float _dt, void* data) {{")
-                impl_lines += self._parent_event_call("on_fixed_update", True)
-                # Add early return guard if trait uses removeFixedUpdate()
-                if self.meta.get("has_remove_fixed_update", False):
-                    impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_fixed_update_enabled) return;")
-                impl_lines.append(body)
-                impl_lines.append("}")
-                impl_lines.append("")
-
-        # on_update - dt before data (ArmTraitUpdateFn)
-        if self.handles("on_update"):
-            # Check if we have multiple dynamic update functions
-            dynamic_updates = self.meta.get("dynamic_updates", [])
-
-            if dynamic_updates and len(dynamic_updates) > 0:
-                # Multiple update functions - generate dispatcher that calls each enabled sub-update
-                impl_lines.append(f"void {self.c_name}_on_update(void* obj, float _dt, void* data) {{")
-                impl_lines += self._parent_event_call("on_update", True)
-                impl_lines.append(f"    {self.c_name}Data* d = ({self.c_name}Data*)data;")
-                for callback_name in dynamic_updates:
-                    flag_name = f"_update_{callback_name}_enabled"
-                    func_name = f"on_update_{callback_name}"
-                    impl_lines.append(f"    if (d->{flag_name}) {self.c_name}_{func_name}(obj, _dt, data);")
-                impl_lines.append("}")
-                impl_lines.append("")
-
-                # Generate each individual update function
-                for callback_name in dynamic_updates:
-                    func_name = f"on_update_{callback_name}"
-                    event_nodes = self.events.get(func_name, [])
-                    body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-                    impl_lines.append(f"void {self.c_name}_{func_name}(void* obj, float _dt, void* data) {{")
-                    impl_lines.append(body)
-                    impl_lines.append("}")
-                    impl_lines.append("")
-            else:
-                # Single/no update - original behavior
-                event_nodes = self.events.get("on_update", [])
-                body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-                impl_lines.append(f"void {self.c_name}_on_update(void* obj, float _dt, void* data) {{")
-                impl_lines += self._parent_event_call("on_update", True)
-                # Add early return guard if trait uses removeUpdate()
-                if self.meta.get("has_remove_update", False):
-                    impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_update_enabled) return;")
-                impl_lines.append(body)
-                impl_lines.append("}")
-                impl_lines.append("")
-
-        # on_late_update - dt before data (ArmTraitLateUpdateFn)
-        if self.handles("on_late_update"):
-            event_nodes = self.events.get("on_late_update", [])
-            body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-            impl_lines.append(f"void {self.c_name}_on_late_update(void* obj, float _dt, void* data) {{")
-            impl_lines += self._parent_event_call("on_late_update", True)
-            # Add early return guard if trait uses removeLateUpdate()
-            if self.meta.get("has_remove_late_update", False):
-                impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_late_update_enabled) return;")
-            impl_lines.append(body)
-            impl_lines.append("}")
-            impl_lines.append("")
+        for event in ("on_fixed_update", "on_update", "on_late_update"):
+            impl_lines += self._update_handler(event)
 
         # on_remove - no dt parameter
         if self.handles("on_remove"):
@@ -1046,12 +797,11 @@ class TraitCodeGenerator:
             has_render2d_content = event_nodes and len(event_nodes) > 0
             body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
             impl_lines.append(f"void {self.c_name}_on_render2d(void* obj, void* data) {{")
-            # Add early return guard if trait uses removeRender2D()
+            # The parent's first (it draws behind), then this trait's unless it was
+            # removed (removeRender2D): removing it leaves the parent's, as in Armory
+            impl_lines += self._parent_event_call("on_render2d", False)
             if self.meta.get("has_remove_render2d", False):
                 impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_render2d_enabled) return;")
-            # Call parent's on_render2d FIRST (parent renders background)
-            # Pass full data pointer so virtual method calls work correctly
-            impl_lines += self._parent_event_call("on_render2d", False)
             # Only add render2d infrastructure if there's actual content
             if has_render2d_content:
                 impl_lines.append("    color_t _g2_color = RGBA32(255, 255, 255, 255);")

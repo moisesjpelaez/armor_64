@@ -151,7 +151,8 @@ class N64Exporter:
     def _compute_limits(self):
         """The engine limits for this project (codegen/limits.py): self.limits."""
         from armor64.codegen import limits
-        from armor64.codegen.trait_generator import load_signals_json, _load_ir_json
+        from armor64.codegen.ir import load_ir_json
+        from armor64.codegen.trait_generator import load_signals_json
         from armor64.codegen.autoload_generator import load_autoloads_json
         traits = self.trait_info.get("traits", {})
 
@@ -165,7 +166,7 @@ class N64Exporter:
             traits=traits,
             autoloads=load_autoloads_json().get("autoloads", {}),
             signals=load_signals_json().get("signals", {}),
-            facts=_load_ir_json("n64_limits.json", "map_keys"),
+            facts=load_ir_json("n64_limits.json", "map_keys"),
             notes=self.limit_notes,
         )
 

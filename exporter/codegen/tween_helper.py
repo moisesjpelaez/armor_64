@@ -5,85 +5,47 @@ This module provides common functions for finding and generating tween
 callback functions, used by both trait_generator.py and autoload_generator.py.
 """
 
-from typing import List, Dict, Set, Tuple, Optional, Callable
+from typing import List, Dict, Tuple
+
+from armor64.codegen.ir import nodes_of_type
+
+
+def capture_ref(c_name: str, is_trait: bool, callback_name: str, param: str) -> str:
+    """Where a callback keeps a parameter of its function it captures (a Haxe
+    closure keeps its own copy): a field of the trait's data, so each instance
+    has its own, or a global in an autoload (one instance); per callback, so
+    two callbacks capturing a parameter with the same name don't share it."""
+    if is_trait:
+        return f"(({c_name}Data*)data)->_cap_{callback_name}_{param}"
+    return f"{c_name}_cap_{callback_name}_{param}"
+
+
+def param_captures(ir) -> List[Tuple[str, str, str]]:
+    """(callback, parameter, C type) of each function parameter the callbacks in
+    an IR tree capture (tween callbacks, callbacks passed to methods), once each."""
+    found = {}
+    for callback in find_tween_callbacks(ir) + nodes_of_type(ir, "callback_wrapper"):
+        for capture in callback.get("captures", []):
+            if capture.get("is_param"):
+                found.setdefault((callback["callback_name"], capture["name"]), capture["ctype"])
+    return [(callback, param, ctype) for (callback, param), ctype in found.items()]
+
+
+def capture_globals(captures: List[Tuple[str, str, str]], c_name: str) -> List[str]:
+    """An autoload's capture globals (traits keep them in their data)."""
+    return [f"static {ctype} {capture_ref(c_name, False, callback, param)};" for callback, param, ctype in captures]
 
 
 def find_tween_callbacks(nodes: List[dict]) -> List[dict]:
-    """Recursively find all tween callback definitions in IR nodes.
-
-    Searches for tween_float, tween_vec4, and tween_delay nodes which have
-    callback info in their props.on_update and props.on_done fields.
-    Each callback info contains:
-    - callback_name: The generated C function name
-    - callback_type: "float", "vec4", or "done"
-    - body: List of IR nodes for the callback body
-    - param_name: The parameter name in the callback
-
-    Args:
-        nodes: List of IR nodes to search
-
-    Returns:
-        List of tween callback info dicts
-    """
+    """The callbacks (props on_update, on_done) of the tween nodes in an IR tree
+    that need a generated function: anonymous ones, not method references."""
     callbacks = []
-    for node in nodes:
-        if node is None:
-            continue
-        node_type = node.get("type")
-
-        # Check for tween nodes that contain callbacks in their props
-        if node_type in ("tween_float", "tween_vec4", "tween_delay"):
-            props = node.get("props", {})
-            on_update = props.get("on_update")
-            on_done = props.get("on_done")
-            if on_update and isinstance(on_update, dict) and on_update.get("callback_name"):
-                if not on_update.get("is_method_ref"):
-                    callbacks.append(on_update)
-            if on_done and isinstance(on_done, dict) and on_done.get("callback_name"):
-                # Method refs point at an existing trait method - there is no
-                # wrapper function to generate.
-                if not on_done.get("is_method_ref"):
-                    callbacks.append(on_done)
-
-        # Recurse into children
-        children = node.get("children", [])
-        if children:
-            callbacks.extend(find_tween_callbacks(children))
-        # Recurse into args
-        args = node.get("args", [])
-        if args:
-            callbacks.extend(find_tween_callbacks(args))
-        # Recurse into body (for callback_wrapper nodes and similar)
-        body = node.get("body", [])
-        if body and isinstance(body, list):
-            callbacks.extend(find_tween_callbacks(body))
-        # Recurse into ALL props values (handles then, else_, and any future props)
-        props = node.get("props", {})
-        if props:
-            callbacks.extend(_find_callbacks_in_value(props))
-        # Recurse into object
-        obj = node.get("object")
-        if obj and isinstance(obj, dict):
-            callbacks.extend(find_tween_callbacks([obj]))
-    return callbacks
-
-
-def _find_callbacks_in_value(value) -> List[dict]:
-    """Recursively find tween callbacks in any value (list, dict, or node)."""
-    callbacks = []
-    if value is None:
-        return callbacks
-    if isinstance(value, list):
-        for v in value:
-            callbacks.extend(_find_callbacks_in_value(v))
-    elif isinstance(value, dict):
-        if "type" in value:
-            # It's a node
-            callbacks.extend(find_tween_callbacks([value]))
-        else:
-            # Plain dict - recurse into values
-            for v in value.values():
-                callbacks.extend(_find_callbacks_in_value(v))
+    for node in nodes_of_type(nodes, "tween_float", "tween_vec4", "tween_delay"):
+        props = node.get("props") or {}
+        for key in ("on_update", "on_done"):
+            callback = props.get(key)
+            if isinstance(callback, dict) and callback.get("callback_name") and not callback.get("is_method_ref"):
+                callbacks.append(callback)
     return callbacks
 
 
@@ -125,13 +87,9 @@ def generate_tween_callback(
 
     lines = []
 
-    # Build param captures map for both autoloads and traits
-    param_captures = {}
-    if captures:
-        param_captures = {
-            c["name"]: f"{c_name}_capture_{c['name']}"
-            for c in captures if c.get("is_param", False)
-        }
+    # The captured parameters, read where the call stored them
+    param_captures = {c["name"]: capture_ref(c_name, is_trait, cb_name, c["name"])
+                      for c in captures if c.get("is_param", False)}
 
     # Generate function signature based on callback type
     if cb_type == "float":
@@ -159,28 +117,16 @@ def generate_tween_callback(
     if param_captures:
         emitter = _CaptureEmitter(emitter, param_captures)
 
-    # Emit body
-    for node in body_nodes:
-        code = emitter.emit(node)
-        if code and code != "":
-            for line in code.split('\n'):
-                if line.strip():
-                    if not line.strip().endswith((';', '{', '}')):
-                        lines.append(f"    {line};")
-                    else:
-                        lines.append(f"    {line}")
-
+    body = emitter.emit_statements(body_nodes, "    ")
+    if body:
+        lines.append(body)
     lines.append("}")
     return "\n".join(lines)
 
 
 class _CaptureEmitter:
-    """Wrapper emitter that substitutes captured params with their globals.
-
-    This emitter intercepts all node emissions and replaces captured parameter
-    names with their corresponding capture global names throughout the entire
-    expression tree.
-    """
+    """An emitter reading a callback's captured parameters where they're kept
+    (capture_ref) instead of as the function's locals."""
 
     def __init__(self, base_emitter, param_captures: dict):
         self.base = base_emitter
@@ -195,6 +141,9 @@ class _CaptureEmitter:
 
         # Then emit using the base emitter
         return self.base.emit(substituted_node)
+
+    def emit_statements(self, nodes, indent: str = "    ") -> str:
+        return self.base.emit_statements([self._substitute_captures_in_node(n) for n in nodes], indent)
 
     def _substitute_captures_in_node(self, node):
         """Recursively substitute captured params throughout the node tree."""
@@ -261,29 +210,3 @@ class _CaptureEmitter:
                 return {k: self._substitute_captures_in_value(v) for k, v in value.items()}
         # Primitive value (string, int, etc.) - return as-is
         return value
-
-
-def generate_capture_globals(
-    callback_param_captures: Dict[str, List[Tuple[str, str]]],
-    c_name: str
-) -> List[str]:
-    """Generate static global variables for captured function parameters.
-
-    Args:
-        callback_param_captures: Map of callback_name to list of (param_name, ctype)
-        c_name: The C name prefix for this class
-
-    Returns:
-        List of C global variable declaration lines
-    """
-    lines = []
-    seen = set()
-
-    for cb_name, param_caps in callback_param_captures.items():
-        for pname, pctype in param_caps:
-            global_name = f"{c_name}_capture_{pname}"
-            if global_name not in seen:
-                seen.add(global_name)
-                lines.append(f"static {pctype} {global_name};")
-
-    return lines

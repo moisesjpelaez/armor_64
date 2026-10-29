@@ -1,27 +1,25 @@
 """
-Trait Emitter - Core IR→C translation engine for traits.
+Trait emitter: the C of each IR node the macros write, for traits (and
+autoloads, through AutoloadEmitter). Used by trait_generator, autoload_generator,
+tween_helper and signal_codegen.
 
-This module provides the TraitEmitter class which performs pure 1:1 translation
-from IR nodes to C code. No semantic analysis - just translation.
-
-Inheritance Support (Option B - Composition):
-- Child data structs embed parent at offset 0 as _parent field
-- Member access routes through inheritance chain: data->member or data->_parent.member
-- super() calls emit as parent lifecycle function calls
-
-Virtual Method Support:
-- Public methods can be overridden in child classes
-- Virtual methods are called through function pointers (_vfn_methodname)
-- Child classes set their own function pointers in on_ready
+A trait's code reaches its data through `data` (members of an ancestor through
+the ancestor's struct, embedded first) and its object through `obj`; virtual
+methods are called through their pointer (trait_generator's inheritance rules).
+A node that gives no C stops the export, unless the macros left something out
+there themselves (a skip node, which they reported).
 """
 
-import logging
 import re
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 from armor64.codegen.c_text import c_string
+from armor64.codegen.ir import walk_ir
+from armor64.codegen.tween_helper import capture_ref
 
-log = logging.getLogger(__name__)
+# Nodes that can rightly give no C: the macros' skip (they reported it) and an
+# empty block
+_MAY_BE_EMPTY = ("skip", "block")
 
 # A binding template's placeholder: {0}, {self}, {1=1.0f} (Bindings.hx)
 _PLACEHOLDER = re.compile(r'\{([A-Za-z0-9_]+)(?:=([^{}]*))?\}')
@@ -35,17 +33,8 @@ _PLAIN_C = re.compile(r'''^(?:
 
 
 class TraitEmitter:
-    """Emits C code from IR nodes. No semantic analysis, just translation.
-
-    Inheritance Support:
-    - Tracks parent_name and all_traits for member routing
-    - emit_member() routes to correct depth in inheritance chain
-    - emit_super_call() emits parent function calls
-
-    Virtual Method Support:
-    - Tracks methods dict to identify virtual methods
-    - emit_trait_method_call() calls through vtable for virtual methods
-    """
+    """The C of IR nodes (emit), and of statement lists (emit_statements), for
+    one trait: emit_<node type> for each node type the macros write."""
 
     def __init__(self, trait_name: str, c_name: str, member_names: List[str],
                  is_trait: bool = True, parent_name: str = None, all_traits: Dict = None,
@@ -99,21 +88,22 @@ class TraitEmitter:
         return self._get_member_info(member_name, "ctype")
 
     def emit(self, node: Optional[Dict]) -> str:
-        """Emit C code for an IR node."""
+        """The C of an IR node. A node that gives none stops the export (the
+        macros and the exporter disagree), unless the macros left something out
+        there themselves (a skip node, which they reported)."""
         if node is None:
             return ""
-
         node_type = node.get("type", "")
-        method_name = f"emit_{node_type}"
-        method = getattr(self, method_name, None)
-
-        if method:
-            return method(node)
-
-        # Unknown node type - warn and skip
-        if node_type and node_type != "skip":
-            log.warn(f"N64 Trait Emitter: Unknown IR node type '{node_type}' - skipping")
-        return ""
+        method = getattr(self, f"emit_{node_type}", None)
+        if method is None:
+            raise ValueError(f'{self.trait_name}: the exporter doesn\'t know the IR node "{node_type}" '
+                             f'(the macros and the exporter are from different versions)')
+        code = method(node)
+        if not code and node_type not in _MAY_BE_EMPTY and not any(
+                n.get("type") == "skip" for n in walk_ir(node)):
+            raise ValueError(f'{self.trait_name}: the IR node "{node_type}" gave no C '
+                             f'(the macros and the exporter disagree)')
+        return code
 
     def emit_list(self, nodes: List[Dict]) -> List[str]:
         """Emit list of nodes, filtering out empty results."""
@@ -192,12 +182,13 @@ class TraitEmitter:
         return str(node.get("value", 0))
 
     def emit_float(self, node: Dict) -> str:
-        val = node.get("value", 0.0)
-        # Ensure float format (e.g., 0.0f not 0f)
-        val_str = str(val)
-        if "." not in val_str:
-            val_str = f"{val}.0"
-        return f"{val_str}f"
+        # A C float literal: 2 -> 2.0f, 0.00001 -> 1e-05f (an exponent needs no dot)
+        text = repr(float(node.get("value", 0.0)))
+        if text in ("inf", "-inf", "nan"):
+            return {"inf": "INFINITY", "-inf": "(-INFINITY)", "nan": "NAN"}[text]
+        if "." not in text and "e" not in text:
+            text += ".0"
+        return f"{text}f"
 
     def emit_string(self, node: Dict) -> str:
         # "" stays "" (Haxe's null is a null node)
@@ -328,7 +319,7 @@ class TraitEmitter:
         owner = node.get("owner")
         if owner:
             # Declared by an ancestor: its struct is at offset 0 of ours
-            owner_c_name = self.all_traits.get(owner, {}).get("c_name", owner.replace(".", "_").lower())
+            owner_c_name = self.all_traits[owner]["c_name"]
             return f"(({owner_c_name}Data*)data)->{name}"
         return self._get_member_access(name)
 
@@ -378,16 +369,8 @@ class TraitEmitter:
         return field
 
     def emit_array_access(self, node: Dict) -> str:
-        """Array access: array[index]
-
-        IR format:
-            type: "array_access"
-            children: [array_node, index_node]
-
-        For N64 UI elements (like Koui's elements array), this maps to
-        canvas_get_image() since logo screens typically use images.
-        Returns a pointer so field access like .visible works directly.
-        """
+        """C array access: array[index] (children: the array, the index).
+        Canvas elements are canvas_element nodes."""
         children = node.get("children", [])
         if len(children) < 2:
             return ""
@@ -431,12 +414,8 @@ class TraitEmitter:
         if children[1].get("type") == "skip":
             return ""
 
-        # Check for special case: elements[i].visible = value
-        # This maps to canvas_element_set_visible(i, value) for proper group handling
         target = self.emit(children[0])
         value = self.emit(children[1])
-
-        # Only emit if both target and value are non-empty
         if target and value:
             return f"{target} = {value}"
         return ""
@@ -500,18 +479,12 @@ class TraitEmitter:
         if not cond:
             return ""
 
-        then_nodes = props.get("then", [])
-        if not then_nodes:
-            return ""
-
-        # Emit body with single indent level (caller adds outer indent via emit_statements)
-        then_code = self.emit_statements(then_nodes, "    ")
-        result = f"if ({cond}) {{\n{then_code}\n}}"
-
-        # Check for else branch
-        else_nodes = props.get("else_")
-        if else_nodes:
-            else_code = self.emit_statements(else_nodes, "    ")
+        # Bodies with one indent level (the caller adds the outer one); an empty
+        # then is kept, for its else and its condition's side effects
+        then_code = self.emit_statements(props.get("then") or [], "    ")
+        result = f"if ({cond}) {{\n{then_code}\n}}" if then_code else f"if ({cond}) {{ }}"
+        else_code = self.emit_statements(props.get("else_") or [], "    ")
+        if else_code:
             result += f" else {{\n{else_code}\n}}"
 
         return result
@@ -556,7 +529,9 @@ class TraitEmitter:
         return "\n".join(self._emit_statement_lines([node]))
 
     def emit_for_range(self, node: Dict) -> str:
-        """For loop with integer range: for (int i = start; i < end; i++) { body }
+        """for (i in start...end): the end evaluated once, as Haxe does
+        (for (int i = start, i_end = end; i < i_end; i++)), inline when it's a
+        literal.
 
         IR format:
             value: loop variable name
@@ -588,7 +563,10 @@ class TraitEmitter:
         else:
             body_block = body_code if body_code else "{ }"
 
-        return f"for (int {var_name} = {start}; {var_name} < {end}; {var_name}++) {body_block}"
+        if re.fullmatch(r'-?\d+', end):
+            return f"for (int {var_name} = {start}; {var_name} < {end}; {var_name}++) {body_block}"
+        return (f"for (int {var_name} = {start}, {var_name}_end = {end}; {var_name} < {var_name}_end; "
+                f"{var_name}++) {body_block}")
 
     def emit_while(self, node: Dict) -> str:
         """While loop: while (cond) { body }
@@ -774,12 +752,16 @@ class TraitEmitter:
         Support both for compatibility.
         """
         func_name = node.get("method", "") or node.get("value", "")
-        if func_name:
-            # IR uses 'args' for call arguments
-            args = node.get("args", []) or node.get("children", [])
-            arg_strs = [self.emit(a) for a in args if self.emit(a)]
-            return f"{func_name}({', '.join(arg_strs)})"
-        return ""
+        if not func_name:
+            return ""
+        args = self._args(node.get("args", []) or node.get("children", []))
+        return f"{func_name}({', '.join(args)})" if args is not None else ""
+
+    def _args(self, nodes: List[Dict]) -> Optional[List[str]]:
+        """A call's arguments, each translated once and kept in its place; None
+        when one was left out by the macros (skip: the call can't be made)."""
+        args = [self.emit(a) for a in nodes]
+        return None if any(not a for a in args) else args
 
     def emit_callback_param_call(self, node: Dict) -> str:
         """Emit call to a function-type parameter (callback invocation).
@@ -804,12 +786,11 @@ class TraitEmitter:
         if not name:
             return ""
 
-        # Emit with standard obj, data parameters plus any extra args
-        # For callbacks like Float->Void, the float value comes first
-        arg_strs = [self.emit(a) for a in args if self.emit(a)]
-        # Always append obj, data for our callback convention
-        arg_strs.extend(["obj", "data"])
-        return f"if ({name}) {{ {name}({', '.join(arg_strs)}); }}"
+        # The callback's own arguments first (Float->Void: the float), then obj, data
+        arg_strs = self._args(args)
+        if arg_strs is None:
+            return ""
+        return f"if ({name}) {{ {name}({', '.join(arg_strs + ['obj', 'data'])}); }}"
 
     def emit_super_call(self, node: Dict) -> str:
         """Emit super() or super.method() calls for inheritance.
@@ -834,14 +815,16 @@ class TraitEmitter:
             return "// super call - no parent found"
 
         parent_ir = self.all_traits[parent_name]
-        parent_c_name = parent_ir.get("c_name", parent_name.lower())
+        parent_c_name = parent_ir["c_name"]
 
         # super(): the parent's constructor, i.e. its on_ready
         if method == "new":
             return f"{parent_c_name}_on_ready(obj, data)"
         # super.method(): the C function of the ancestor declaring it (Haxe gives its name)
-        arg_strs = ["obj", "data"] + [a for a in (self.emit(a) for a in args) if a]
-        return f"{node.get('cName', '')}({', '.join(arg_strs)})"
+        arg_strs = self._args(args)
+        if arg_strs is None:
+            return ""
+        return f"{node['cName']}({', '.join(['obj', 'data'] + arg_strs)})"
 
     def emit_trait_method_call(self, node: Dict) -> str:
         """Emit call to this trait's own method (generated as C function).
@@ -866,26 +849,16 @@ class TraitEmitter:
         if not c_name:
             return "// trait_method_call - missing cName"
 
-        # Collect capture assignments that need to happen before the call
-        capture_assignments = []
-
-        # Emit argument values - skip nodes become NULL for optional callback params
+        # Arguments: an omitted optional one (skip) is NULL, a callback its
+        # generated function (its captured parameters stored before the call)
+        callbacks = []
         arg_strs = []
         for a in args:
             if a and a.get("type") == "skip":
-                # Skip node = omitted optional parameter, pass NULL
                 arg_strs.append("NULL")
             elif a and a.get("type") == "callback_wrapper":
-                # Callback wrapper - use the generated function name
                 arg_strs.append(a.get("callback_name", ""))
-                # Generate capture assignments for any captured params
-                captures = a.get("captures", [])
-                for cap in captures:
-                    if cap.get("is_param", False):
-                        cap_name = cap.get("name", "")
-                        if cap_name:
-                            global_name = f"{self.c_name}_capture_{cap_name}"
-                            capture_assignments.append(f"{global_name} = {cap_name}")
+                callbacks.append(a)
             else:
                 emitted = self.emit(a)
                 if emitted:
@@ -907,10 +880,14 @@ class TraitEmitter:
             else:
                 method_call = f"{c_name}(obj, data)"
 
-        # If we have capture assignments, emit them before the call
-        if capture_assignments:
-            return "; ".join(capture_assignments) + "; " + method_call
-        return method_call
+        return self._with_captures(callbacks, method_call)
+
+    def _with_captures(self, callbacks: List[Optional[Dict]], call: str) -> str:
+        """A call after storing the parameters its callbacks capture (capture_ref):
+        a comma expression, so it works as a statement, a value or in a chain."""
+        stores = [f"{capture_ref(self.c_name, self.is_trait, cb['callback_name'], cap['name'])} = {cap['name']}"
+                  for cb in callbacks if cb for cap in cb.get("captures", []) if cap.get("is_param")]
+        return f"({', '.join(stores + [call])})" if stores else call
 
     def _vtable_call(self, method: str) -> str:
         """`((OwnerData*)data)->_vfn_method` for virtual methods, through the struct
@@ -918,7 +895,7 @@ class TraitEmitter:
         owner = self.vtable_owners.get(method)
         if not owner:
             return ""
-        owner_c_name = self.all_traits.get(owner, {}).get("c_name", owner.lower())
+        owner_c_name = self.all_traits[owner]["c_name"]
         return f"(({owner_c_name}Data*)data)->_vfn_{method}"
 
     def emit_scene_call(self, node: Dict) -> str:
@@ -942,7 +919,7 @@ class TraitEmitter:
         props = node.get("props", {})
         label_key = props.get("key", "")
         if not label_key:
-            return "NULL"
+            raise ValueError(f'{self.trait_name}: a canvas label without a key')
 
         safe_key = arm.utils.safesrc(label_key).upper()
         return f"canvas_get_label(UI_LABEL_{safe_key})"
@@ -956,7 +933,7 @@ class TraitEmitter:
         props = node.get("props", {})
         group_key = props.get("key", "")
         if not group_key:
-            return "NULL"
+            raise ValueError(f'{self.trait_name}: a canvas group without a key')
 
         safe_key = arm.utils.safesrc(group_key).upper()
         return f"canvas_get_group(UI_GROUP_{safe_key})"
@@ -971,7 +948,7 @@ class TraitEmitter:
         props = node.get("props", {})
         button_key = props.get("key", "")
         if not button_key:
-            return "0"
+            raise ValueError(f'{self.trait_name}: a canvas button without a key')
 
         safe_key = arm.utils.safesrc(button_key).upper()
         return f"UI_BUTTON_{safe_key}"
@@ -1209,7 +1186,9 @@ class TraitEmitter:
         args = node.get("args", [])
         if not args:
             return 'debugf("")'
-        arg_strs = [self.emit(a) for a in args if self.emit(a)]
+        arg_strs = self._args(args)
+        if arg_strs is None:
+            return ""
         if len(arg_strs) == 1:
             return f'debugf("%s\\n", {arg_strs[0]})'
         return f'debugf("{", ".join(["%s"] * len(arg_strs))}\\n", {", ".join(arg_strs)})'
@@ -1348,8 +1327,7 @@ class TraitEmitter:
         The actual callback functions are generated separately at the autoload level.
         Here we just emit the setup and start calls.
 
-        If callbacks have captured parameters, we emit assignments to the
-        capture globals before the tween call.
+        Parameters the callbacks capture are stored first (_with_captures).
         """
         obj = node.get("object")
         args = node.get("args", [])
@@ -1368,17 +1346,6 @@ class TraitEmitter:
         update_str = self._tween_callback_name(on_update, "_float") or "NULL"
         done_str = self._tween_callback_name(on_done, "_done") or "NULL"
 
-        # Generate capture assignments for param captures
-        capture_lines = []
-        for callback_info in [on_update, on_done]:
-            if callback_info:
-                captures = callback_info.get("captures", [])
-                for cap in captures:
-                    if cap.get("is_param", False):
-                        cap_name = cap.get("name", "")
-                        # Assign param to capture global
-                        capture_lines.append(f"{self.c_name}_capture_{cap_name} = {cap_name}")
-
         # Tween returns itself for chaining, so emit setup
         # tween_float(tween, from, to, duration, on_update, on_done, ease, obj, data)
         # For traits, pass obj/data so callbacks can access trait members
@@ -1387,14 +1354,7 @@ class TraitEmitter:
         data_param = "data" if self.is_trait else "NULL"
 
         tween_call = f"tween_float({tween_var}, {from_val}, {to_val}, {duration}, {update_str}, {done_str}, {ease}, {obj_param}, {data_param})"
-
-        # If we have capture assignments, combine them with semicolons
-        if capture_lines:
-            # Return multiple statements - need to handle this carefully
-            # We'll join with "; " so the emit_statements can handle it
-            return "; ".join(capture_lines) + "; " + tween_call
-
-        return tween_call
+        return self._with_captures([on_update, on_done], tween_call)
 
     def emit_tween_vec4(self, node: Dict) -> str:
         """Emit tween_vec4() call."""
@@ -1415,23 +1375,10 @@ class TraitEmitter:
         update_str = self._tween_callback_name(on_update, "_vec4") or "NULL"
         done_str = self._tween_callback_name(on_done, "_done") or "NULL"
 
-        # Generate capture assignments for param captures
-        capture_lines = []
-        for callback_info in [on_update, on_done]:
-            if callback_info:
-                captures = callback_info.get("captures", [])
-                for cap in captures:
-                    if cap.get("is_param", False):
-                        cap_name = cap.get("name", "")
-                        capture_lines.append(f"{self.c_name}_capture_{cap_name} = {cap_name}")
-
         obj_param = "obj" if self.is_trait else "NULL"
         data_param = "data" if self.is_trait else "NULL"
         tween_call = f"tween_vec4({tween_var}, &{from_val}, &{to_val}, {duration}, {update_str}, {done_str}, {ease}, {obj_param}, {data_param})"
-
-        if capture_lines:
-            return "; ".join(capture_lines) + "; " + tween_call
-        return tween_call
+        return self._with_captures([on_update, on_done], tween_call)
 
     def emit_tween_delay(self, node: Dict) -> str:
         """Emit tween_delay() call."""
@@ -1445,22 +1392,10 @@ class TraitEmitter:
         on_done = props.get("on_done")
         done_str = self._tween_callback_name(on_done, "_done") or "NULL"
 
-        # Generate capture assignments for param captures
-        capture_lines = []
-        if on_done:
-            captures = on_done.get("captures", [])
-            for cap in captures:
-                if cap.get("is_param", False):
-                    cap_name = cap.get("name", "")
-                    capture_lines.append(f"{self.c_name}_capture_{cap_name} = {cap_name}")
-
         obj_param = "obj" if self.is_trait else "NULL"
         data_param = "data" if self.is_trait else "NULL"
         tween_call = f"tween_delay({tween_var}, {duration}, {done_str}, {obj_param}, {data_param})"
-
-        if capture_lines:
-            return "; ".join(capture_lines) + "; " + tween_call
-        return tween_call
+        return self._with_captures([on_done], tween_call)
 
     def emit_tween_start(self, node: Dict) -> str:
         """Emit tween_start() call."""

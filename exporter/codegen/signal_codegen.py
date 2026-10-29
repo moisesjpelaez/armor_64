@@ -19,6 +19,8 @@ definitions in n64_signals.json, for traits and autoloads alike:
 
 from typing import Dict, List, Optional
 
+from armor64.codegen.ir import nodes_of_type
+
 
 class SignalContext:
     """Signal definitions plus the class info needed to name things in C."""
@@ -29,7 +31,7 @@ class SignalContext:
         # Autoloads by full class path (module) and by class name
         self.autoload_c_names = {}
         for name, ir in (autoloads or {}).items():
-            c_name = ir.get("c_name", name.lower())
+            c_name = ir["c_name"]
             self.autoload_c_names[ir.get("module", name)] = c_name
             self.autoload_c_names[name] = c_name
 
@@ -38,7 +40,7 @@ class SignalContext:
     def class_c_name(self, path: str) -> str:
         """C prefix of a trait or autoload class."""
         if path in self.traits:
-            return self.traits[path].get("c_name", "")
+            return self.traits[path]["c_name"]
         if path in self.autoload_c_names:
             return self.autoload_c_names[path]
         return self.autoload_c_names.get(path.rsplit('.', 1)[-1], path.replace('.', '_').lower())
@@ -164,7 +166,10 @@ class SignalContext:
         vtable_owner = visible_vtable_owners(self.traits, owner).get(name)
         if vtable_owner:
             return f"(({self.class_c_name(vtable_owner)}Data*)data)->_vfn_{name}({call_args})"
-        return f"{self.class_c_name(owner)}_{name.lower()}({call_args})"
+        c_name = self.traits.get(owner, {}).get("methods", {}).get(name, {}).get("cName")
+        if not c_name:
+            raise ValueError(f'Signal handler {owner}.{name}: the method has no N64 code (not in the Haxe build\'s IR)')
+        return f"{c_name}({call_args})"
 
     def _root_c_name(self, trait: str) -> str:
         """The topmost ancestor's struct holds the object pointer."""
@@ -182,17 +187,4 @@ def _payload_ctype(ctype: str) -> str:
 def find_signal_bindings(ir) -> List[Dict]:
     """All signal_connect/signal_disconnect nodes in an IR tree (any depth,
     including callbacks and handler bodies)."""
-    found = []
-
-    def walk(value):
-        if isinstance(value, dict):
-            if value.get("type") in ("signal_connect", "signal_disconnect"):
-                found.append(value)
-            for v in value.values():
-                walk(v)
-        elif isinstance(value, list):
-            for v in value:
-                walk(v)
-
-    walk(ir)
-    return found
+    return nodes_of_type(ir, "signal_connect", "signal_disconnect")
