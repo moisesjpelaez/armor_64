@@ -520,8 +520,6 @@ class TraitExtractor extends N64Extractor {
     }
 
     override function convertAssign(e1:Expr, e2:Expr):IRNode {
-        // Check if assigning to transform.loc/rot/scale (mutating transform)
-        checkTransformMutation(e1);
 
         // g2.color = value -> render2d_set_color
         if (isGraphics2ColorAssign(e1)) {
@@ -635,31 +633,6 @@ class TraitExtractor extends N64Extractor {
         }
 
         return super.convertFunctionCall(callExpr, funcName, params, args);
-    }
-
-    // Check if expression is an assignment to transform properties (loc, rot, scale, dirty)
-    function checkTransformMutation(expr:Expr):Void {
-        switch (expr.expr) {
-            case EField(obj, field):
-                switch (obj.expr) {
-                    // transform.loc = ..., transform.rot = ..., transform.scale = ..., transform.dirty = ...
-                    case EField(_, "transform"), EConst(CIdent("transform")):
-                        if (field == "loc" || field == "rot" || field == "scale" || field == "dirty") {
-                            meta.mutates_transform = true;
-                        }
-                    // transform.loc.x = ... (nested field access)
-                    case EField(innerObj, innerField):
-                        if (innerField == "loc" || innerField == "rot" || innerField == "scale") {
-                            switch (innerObj.expr) {
-                                case EField(_, "transform"), EConst(CIdent("transform")):
-                                    meta.mutates_transform = true;
-                                default:
-                            }
-                        }
-                    default:
-                }
-            default:
-        }
     }
 
     // g2.color = v on a 2D graphics (kha.graphics2.Graphics, from the typed AST)

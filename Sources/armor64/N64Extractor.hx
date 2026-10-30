@@ -64,7 +64,6 @@ class N64Extractor implements IExtractorContext {
         this.meta = {
             uses_input: false,
             uses_transform: false,
-            mutates_transform: false,
             uses_time: false,
             uses_physics: false,
             uses_ui: false,
@@ -608,7 +607,6 @@ class N64Extractor implements IExtractorContext {
 
     // `t.loc = v` or `t.loc.x = v`
     function transformWrite(target:Expr, value:Expr):IRNode {
-        meta.mutates_transform = true;
         var component = transformComponent(target);
         if (component != null) {
             return { type: "c_template", c_code: 'it_set_${component.field}_${component.axis}($TRANSFORM, {0});', object: component.owner, args: [exprToIR(value)] };
@@ -620,7 +618,6 @@ class N64Extractor implements IExtractorContext {
 
     // `t.loc.x op= v`, `t.loc.x++`: read, compute as Haxe, write (the transform once)
     function transformUpdate(target:Expr, op:Binop, value:Expr):IRNode {
-        meta.mutates_transform = true;
         var c = transformComponent(target);
         var current = 'it_get_${c.field}(_t).${c.axis}';
         var template = operatorTemplate(op, "Float", getExprType(value));
@@ -642,8 +639,7 @@ class N64Extractor implements IExtractorContext {
         var vector = transformVector(obj);
         if (vector == null) return null;
         if (method == "set") {
-            meta.mutates_transform = true;
-            var count = vector.field == "rot" ? 4 : 3;
+                var count = vector.field == "rot" ? 4 : 3;
             if (args.length < count) return N64MacroBase.unsupported('transform.${vector.field}.set() needs $count values on N64');
             var placeholders = [for (i in 0...count) '{$i}'].join(", ");
             return { type: "c_template", c_code: 'it_set_${vector.field}_b($TRANSFORM, $placeholders);', object: vector.owner, args: args.slice(0, count) };

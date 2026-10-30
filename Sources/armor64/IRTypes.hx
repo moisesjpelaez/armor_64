@@ -179,7 +179,6 @@ typedef MethodIR = {
 typedef TraitMeta = {
     uses_input: Bool,
     uses_transform: Bool,
-    mutates_transform: Bool,   // True if trait modifies transform (translate, rotate, etc.)
     uses_time: Bool,
     uses_physics: Bool,
     uses_ui: Bool,             // True if trait uses UI labels (canvas.getElementAs, label.text)

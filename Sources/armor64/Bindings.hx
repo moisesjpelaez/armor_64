@@ -87,20 +87,20 @@ class Bindings {
 
             // Transform, on `x.transform` (the C works on the owning object).
             // Blender (x, y, z) -> N64 (x, z, -y)
-            "iron.object.Transform.translate" => transform('it_translate($TRANSFORM, {0}, {2}, -({1}));', true),
-            "iron.object.Transform.rotate" => transform('it_rotate_axis_global($TRANSFORM, ({0}).x, ({0}).z, -({0}).y, {1});', true),
-            "iron.object.Transform.move" => transform('it_move($TRANSFORM, ({0}).x, ({0}).z, -({0}).y, {1=1.0f});', true),
-            "iron.object.Transform.setRotation" => transform('it_set_rot_euler($TRANSFORM, {0}, {2}, -({1}));', true),
-            "iron.object.Transform.reset" => transform('it_reset($TRANSFORM);', true),
+            "iron.object.Transform.translate" => transform('it_translate($TRANSFORM, {0}, {2}, -({1}));'),
+            "iron.object.Transform.rotate" => transform('it_rotate_axis_global($TRANSFORM, ({0}).x, ({0}).z, -({0}).y, {1});'),
+            "iron.object.Transform.move" => transform('it_move($TRANSFORM, ({0}).x, ({0}).z, -({0}).y, {1=1.0f});'),
+            "iron.object.Transform.setRotation" => transform('it_set_rot_euler($TRANSFORM, {0}, {2}, -({1}));'),
+            "iron.object.Transform.reset" => transform('it_reset($TRANSFORM);'),
             // The matrix is rebuilt from the dirty flag, into every framebuffer's slot
-            "iron.object.Transform.buildMatrix" => transform("((ArmObject*){self})->transform.dirty = TRANSFORM_DIRTY_FRAMES;", true),
+            "iron.object.Transform.buildMatrix" => transform("((ArmObject*){self})->transform.dirty = TRANSFORM_DIRTY_FRAMES;"),
             // Directions: N64 (x, y, z) -> Blender (x, -z, y)
-            "iron.object.Transform.look" => transform('({ T3DVec3 _d; it_look($TRANSFORM, &_d); (ArmVec4){_d.v[0], -_d.v[2], _d.v[1], 1.0f}; })', false),
-            "iron.object.Transform.right" => transform('({ T3DVec3 _d; it_right($TRANSFORM, &_d); (ArmVec4){_d.v[0], -_d.v[2], _d.v[1], 1.0f}; })', false),
-            "iron.object.Transform.up" => transform('({ T3DVec3 _d; it_up($TRANSFORM, &_d); (ArmVec4){_d.v[0], -_d.v[2], _d.v[1], 1.0f}; })', false),
-            "iron.object.Transform.worldx" => transform('it_world_x($TRANSFORM)', false),
-            "iron.object.Transform.worldy" => transform('it_world_y($TRANSFORM)', false),
-            "iron.object.Transform.worldz" => transform('it_world_z($TRANSFORM)', false),
+            "iron.object.Transform.look" => transform('({ T3DVec3 _d; it_look($TRANSFORM, &_d); (ArmVec4){_d.v[0], -_d.v[2], _d.v[1], 1.0f}; })'),
+            "iron.object.Transform.right" => transform('({ T3DVec3 _d; it_right($TRANSFORM, &_d); (ArmVec4){_d.v[0], -_d.v[2], _d.v[1], 1.0f}; })'),
+            "iron.object.Transform.up" => transform('({ T3DVec3 _d; it_up($TRANSFORM, &_d); (ArmVec4){_d.v[0], -_d.v[2], _d.v[1], 1.0f}; })'),
+            "iron.object.Transform.worldx" => transform('it_world_x($TRANSFORM)'),
+            "iron.object.Transform.worldy" => transform('it_world_y($TRANSFORM)'),
+            "iron.object.Transform.worldz" => transform('it_world_z($TRANSFORM)'),
 
             // RigidBody: the receiver is its object's pointer (body = ->rigid_body). Blender -> Oimo (x, z, -y)
             "armory.trait.physics.oimo.RigidBody.applyForce" => physics("{ OimoVec3 _f = (OimoVec3){({0}).x, ({0}).z, -({0}).y}; physics_apply_force({self}->rigid_body, &_f); }"),
@@ -148,10 +148,8 @@ class Bindings {
         return map;
     }
 
-    static function transform(c:String, mutates:Bool):Binding {
-        var flags = ["uses_transform"];
-        if (mutates) flags.push("mutates_transform");
-        return {c: c, receiver: FieldOwner("transform"), flags: flags};
+    static function transform(c:String):Binding {
+        return {c: c, receiver: FieldOwner("transform"), flags: ["uses_transform"]};
     }
 
     static function physics(c:String):Binding {
