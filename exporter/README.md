@@ -66,7 +66,7 @@ After Armory's export (scene data, `khafile.js`, `Main.hx`), Haxe runs only to e
 | `export/audio_exporter.py` | Audio asset processing |
 | `export/ui_exporter.py` | Canvas/font generation |
 | `export/physics_exporter.py` | Physics engine files |
-| `export/build_runner.py` | Makefile generation, build execution |
+| `export/build_runner.py` | The Makefile, make (one job per core) and Ares, through Armory's `run_process` / `run_player` |
 
 ### Haxe Side (`Sources/armor64/`)
 

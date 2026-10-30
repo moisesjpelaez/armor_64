@@ -1193,11 +1193,15 @@ class N64Extractor implements IExtractorContext {
     }
 
     function convertCall(callExpr:Expr, params:Array<Expr>):IRNode {
-        // Asset loading (done on N64), before the arguments it doesn't use are converted
+        // Before the arguments are converted (they aren't used): asset loading
+        // (done on N64), and trace() with Armory's No Traces (Haxe's
+        // --no-traces drops the whole call)
         switch (callExpr.expr) {
             case EField(obj, method):
                 var loading = AudioCallConverter.loadingCall(obj, method, params, this);
                 if (loading != null) return loading;
+            case EConst(CIdent("trace")) if (Context.defined("no_traces")):
+                return { type: "skip" };
             default:
         }
         var args = [for (p in params) exprToIR(p)];

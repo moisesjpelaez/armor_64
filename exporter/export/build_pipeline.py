@@ -12,6 +12,10 @@ this computer, the game as C++, a Visual Studio project):
      placeholders (Kha builds kha.Shaders from it) and copies Koui's themes
   3. Haxe runs directly, with --no-output; meanwhile the meshes are exported
      (they only need the .blend), and the rest of the export follows Haxe
+  4. For Play and Publish, make builds the ROM (build_runner.py), then Play
+     runs it in Ares
+Every process runs in the background (Armory's run_process, run_player):
+Blender stays responsive and Stop ends them.
 With Armory's compilation server preference on, Haxe runs through armor_64's
 own compilation server (its own port: Armory's serves the other targets),
 which keeps the typed modules between builds.
@@ -304,16 +308,28 @@ def _haxe_done(code: int):
         _finish(False)
         return
     try:
-        if _request.is_play:
-            success = exporter.play()
-        elif _request.is_publish:
-            success = exporter.publish()
-        else:
-            exporter.export()
-            success = True
-        if success and not _request.is_play and n64_utils.get_open_n64_rom_directory():
-            arm.utils.open_folder(os.path.abspath(os.path.join(arm.utils.build_dir(), 'n64')))
+        exporter.for_emulator = _request.is_play
+        exporter.export()
     except Exception:
         traceback.print_exc()
-        success = False
+        _finish(False)
+        return
+    if _request.is_play or _request.is_publish:
+        from armor64.export import build_runner
+        build_runner.run_make(_make_done)
+    else:
+        _built(True)
+
+
+def _make_done(success: bool):
+    if success and _request.is_play:
+        from armor64.export import build_runner
+        success = build_runner.run_emulator()
+    _built(success)
+
+
+def _built(success: bool):
+    """The end: the ROM's folder opened (if set, not for Play), done(success)."""
+    if success and not _request.is_play and n64_utils.get_open_n64_rom_directory():
+        arm.utils.open_folder(os.path.abspath(os.path.join(arm.utils.build_dir(), 'n64')))
     _finish(success)

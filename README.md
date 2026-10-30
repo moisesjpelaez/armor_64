@@ -64,9 +64,7 @@ Supported features:
   - MSYS2 Bash Executable
   - MinGW 64
   - Ares Emulator
-- Click `Install Dependencies` and wait for it to finish
-- Click `Build libdragon` and wait for it to finish
-- Click `Build Tiny3D` and wait for it to finish
+- Click `Install Dependencies`, then `Build libdragon`, then `Build Tiny3D`, each once the previous one is done: they run in the background (the console shows their output, Armory's log says when each is done, Stop ends it). Later builds only rebuild what changed; check `Rebuild From Scratch` to build everything again
 - Set `Render > Armory Project > Modules > Physics Engine` to Oimo
 
 ## License

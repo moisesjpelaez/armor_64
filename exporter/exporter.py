@@ -189,19 +189,6 @@ class N64Exporter:
             n64_utils.remove_new_unused_data(self.data_before)
             self.data_before = None
 
-    def publish(self):
-        """Export and build the project."""
-        self.export()
-        return build_runner.run_make()
-
-    def play(self) -> bool:
-        """Export, build, and run in emulator."""
-        self.for_emulator = True
-        if not self.publish():
-            return False
-        build_runner.run_emulator()
-        return True
-
     # -------------------------------------------------------------------------
     # Directory Setup
     # -------------------------------------------------------------------------

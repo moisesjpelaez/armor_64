@@ -111,6 +111,10 @@ def preferences():
             name='Open Nintendo 64 ROM Directory',
             description='Open the Nintendo 64 ROM directory after successfully build',
             default=False),
+        'n64_rebuild_libraries': BoolProperty(
+            name='Rebuild From Scratch',
+            description='Build libdragon and tiny3d from scratch (clean first) instead of building what changed',
+            default=False),
         'n64_compilation_server_port': IntProperty(
             name='N64 Compilation Server Port',
             description="Port of the Haxe compilation server of Nintendo 64 builds (used when "
@@ -129,6 +133,7 @@ def draw_preferences(layout, prefs):
     if getattr(prefs, 'compilation_server', False):
         layout.prop(prefs, 'n64_compilation_server_port')
     layout.label(text='Libraries:')
+    layout.prop(prefs, 'n64_rebuild_libraries')
     row = layout.row(align=True)
     row.operator('n64_exporter.install_libdragon_dependencies', icon='IMPORT')
     row.operator('n64_exporter.build_libdragon', icon='MOD_BUILD')

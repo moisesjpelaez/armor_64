@@ -451,6 +451,31 @@ def get_open_n64_rom_directory() -> bool:
     return _preference('open_n64_rom_directory', False)
 
 
+def get_rebuild_libraries() -> bool:
+    return _preference('n64_rebuild_libraries', False)
+
+
+def msys2_command(script: str) -> Optional[List[str]]:
+    """`script` run by MSYS2's bash with the N64 toolchain set up (N64_INST,
+    PATH), as a command for Armory's library_hooks.run_process(). Not a login
+    shell: the paths it needs are set here, and a login shell costs ~0.35 s.
+    None if MSYS2's bash isn't set (reported)."""
+    bash = get_msys2_bash_executable()
+    if not bash or not os.path.isfile(bash):
+        log.error("N64: set the MSYS2 Bash Executable in Armory's preferences (Nintendo 64 settings)")
+        return None
+    toolchain = get_n64_toolchain_path()
+    mingw64 = get_mingw64_path()
+    setup = (f'export MSYSTEM=MINGW64; export N64_INST="{toolchain}"; '
+             f'export PATH="{toolchain}/bin:{mingw64}:/mingw64/bin:/usr/bin:$PATH"; ')
+    return [bash, '-c', setup + script]
+
+
+def jobs() -> int:
+    """Parallel make jobs: one per core."""
+    return os.cpu_count() or 1
+
+
 def get_n64_compilation_server_port() -> int:
     return _preference('n64_compilation_server_port', 7002)
 

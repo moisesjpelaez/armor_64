@@ -1,31 +1,21 @@
 """
-N64 Exporter - Standalone Library Integration for Armory3D
-
-This module is loaded by Armory's library system (handlers.py load_py_libraries).
-On register():
-  - Registers the armor64 Python package (exporter/)
-  - Registers N64 build operators (Install Dependencies, Build libdragon, Build Tiny3D)
-The builds themselves ("Ares" runtime, "Nintendo 64" target) go through
-Armory's library hooks: see armory_hooks.py.
-
-On unregister(), all of it is cleanly reversed.
+armor_64's Blender side, loaded by Armory's library system
+(handlers.py load_py_libraries()). register():
+  - the `armor64` Python package (exporter/)
+  - the operators of the Nintendo 64 preferences: Install Dependencies (MSYS2
+    packages), Build libdragon, Build Tiny3D
+unregister() removes both. The builds themselves ("Ares" runtime, "Nintendo
+64" target) go through Armory's library hooks: see armory_hooks.py.
 """
 
 import importlib.util
 import os
-import subprocess
 import sys
-
 
 import bpy
 
-# ---------------------------------------------------------------------------
-# Library path (determined at import time — Armory adds our dir to sys.path)
-# ---------------------------------------------------------------------------
 _LIBRARY_DIR = os.path.dirname(os.path.abspath(__file__))
 _EXPORTER_DIR = os.path.join(_LIBRARY_DIR, 'exporter')
-
-_registered_classes = []
 
 
 # =============================================================================
@@ -53,8 +43,45 @@ def _unregister_package():
 
 
 # =============================================================================
-# N64 Build Operators
+# Operators: MSYS2 packages, libdragon and tiny3d
 # =============================================================================
+
+def _run_msys2(operator, task: str, script: str):
+    """Run `script` in MSYS2 as Armory's build process: in the background (the
+    output in the console), Stop ends it; the result is logged when it ends."""
+    import arm.library_hooks as library_hooks
+    import arm.log as log
+    import arm.make_state as state
+    import armor64.utils as n64_utils
+
+    if state.proc_build is not None:
+        operator.report({'ERROR'}, 'A build is running: wait for it to end, or Stop it')
+        return {'CANCELLED'}
+    cmd = n64_utils.msys2_command(script)
+    if cmd is None:
+        operator.report({'ERROR'}, 'Set the MSYS2 Bash Executable in the Nintendo 64 settings')
+        return {'CANCELLED'}
+
+    def done(code: int):
+        if code == 0:
+            log.info(f'N64: {task} done')
+        else:
+            log.error(f'N64: {task} failed (exit code {code}), see the console')
+
+    log.info(f'N64: {task}, see the console')
+    library_hooks.run_process(cmd, done)
+    return {'FINISHED'}
+
+
+def _library_path(operator, name: str, path: str):
+    """The library's MSYS2 path, None if it isn't there (reported)."""
+    import armor64.utils as n64_utils
+    if not os.path.isdir(path):
+        operator.report({'ERROR'}, f"{name} not found. Clone it into the project's Libraries directory: "
+                                   f"{n64_utils.get_n64_libraries_dir()}")
+        return None
+    return n64_utils.win_path_to_posix(path)
+
 
 class N64_OT_InstallLibdragonDependencies(bpy.types.Operator):
     """Install libdragon dependencies via pacman"""
@@ -63,163 +90,53 @@ class N64_OT_InstallLibdragonDependencies(bpy.types.Operator):
     bl_description = "Install libdragon dependencies (base-devel, mingw-w64-x86_64-gcc, mingw-w64-x86_64-make, git)"
 
     def execute(self, context):
-        import armor64.utils as n64_utils
-        import arm.utils
-
-        sdk_path = arm.utils.get_sdk_path()
-        if sdk_path == "":
-            self.report({"ERROR"}, "Configure Armory SDK path first")
-            return {"CANCELLED"}
-
-        msys2_exe = n64_utils.get_msys2_bash_executable()
-        if not msys2_exe or not os.path.exists(msys2_exe):
-            self.report({'ERROR'}, 'MSYS2 Bash executable not configured in preferences')
-            return {'CANCELLED'}
-
-        env = os.environ.copy()
-        env['MSYSTEM'] = 'MINGW64'
-
-        result = subprocess.run(
-            [
-                rf'{msys2_exe}',
-                '--login',
-                '-c',
-                'pacman -S --needed --noconfirm base-devel mingw-w64-x86_64-gcc mingw-w64-x86_64-make git'
-            ],
-            stdout=None, stderr=None, text=True, env=env
-        )
-
-        if result.returncode == 0:
-            self.report({'INFO'}, 'libdragon dependencies installed successfully.')
-        else:
-            self.report({'WARNING'}, 'libdragon dependencies installation completed with errors. Check console for details.')
-
-        return {'FINISHED'}
+        return _run_msys2(self, 'installing the libdragon dependencies',
+                          'pacman -S --needed --noconfirm base-devel mingw-w64-x86_64-gcc mingw-w64-x86_64-make git')
 
 
 class N64_OT_BuildLibdragon(bpy.types.Operator):
     """Build libdragon for Nintendo 64"""
     bl_idname = "n64_exporter.build_libdragon"
     bl_label = "Build libdragon"
-    bl_description = "Build libdragon for Nintendo 64 development"
+    bl_description = "Build libdragon, its tools and examples (what changed, or everything with Rebuild From Scratch)"
 
     def execute(self, context):
         import armor64.utils as n64_utils
-        import arm.utils
-
-        sdk_path = arm.utils.get_sdk_path()
-        if sdk_path == "":
-            self.report({"ERROR"}, "Configure Armory SDK path first")
-            return {"CANCELLED"}
-
-        msys2_exe = n64_utils.get_msys2_bash_executable()
-        if not msys2_exe:
-            self.report({"ERROR"}, "Configure MSYS2 Bash executable path first")
-            return {"CANCELLED"}
-
-        libdragon_path = n64_utils.get_libdragon_path()
-        if not os.path.isdir(libdragon_path):
-            self.report({"ERROR"}, f"libdragon not found. Clone it into the project's Libraries directory: {n64_utils.get_n64_libraries_dir()}")
-            return {"CANCELLED"}
-
-        addon_prefs = arm.utils.get_arm_preferences()
-        libdragon_path_posix = n64_utils.win_path_to_posix(libdragon_path)
-        n64_toolchain_path = n64_utils.win_path_to_posix(addon_prefs.n64_toolchain_path)
-        mingw64_path = n64_utils.win_path_to_posix(addon_prefs.mingw64_path)
-
-        print('Building libdragon for Nintendo 64, check console for details.')
-
-        env = os.environ.copy()
-        env['MSYSTEM'] = 'MINGW64'
-        env['N64_INST'] = n64_toolchain_path
-        env['PATH'] = f"{n64_toolchain_path}:{mingw64_path}:{env.get('PATH', '')}"
-
-        # Run make commands directly (instead of build.sh) so we can pass
-        # CURDIR=. to work around spaces in the project path.  n64.mk uses
-        # $(CURDIR) in -ffile-prefix-map which breaks when CWD has spaces.
-        build_cmd = (
-            f'cd "{libdragon_path_posix}" && '
-            f'make CURDIR=. -j4 install-mk && '
-            f'make CURDIR=. -j4 clobber && '
-            f'make CURDIR=. -j4 libdragon tools && '
-            f'make CURDIR=. -j4 install tools-install && '
-            f'make CURDIR=. -j4 examples'
-        )
-        result = subprocess.run(
-            [rf'{msys2_exe}', '--login', '-c', build_cmd],
-            stdout=None, stderr=None, text=True, env=env
-        )
-
-        if result.returncode != 0:
-            self.report({"ERROR"}, "Failed building libdragon, check console for details.")
-        else:
-            self.report({'INFO'}, 'libdragon build completed.')
-
-        return {"FINISHED"}
+        path = _library_path(self, 'libdragon', n64_utils.get_libdragon_path())
+        if path is None:
+            return {'CANCELLED'}
+        # make's own commands instead of build.sh: CURDIR=. works around spaces
+        # in the project's path (n64.mk uses $(CURDIR) in -ffile-prefix-map)
+        make = f'make CURDIR=. -j{n64_utils.jobs()}'
+        clean = f'{make} clobber && ' if n64_utils.get_rebuild_libraries() else ''
+        return _run_msys2(self, 'building libdragon', (
+            f'cd "{path}" && {make} install-mk && {clean}'
+            f'{make} libdragon tools && {make} install tools-install && {make} examples'))
 
 
 class N64_OT_BuildTiny3d(bpy.types.Operator):
     """Build Tiny3D for Nintendo 64"""
     bl_idname = "n64_exporter.build_tiny3d"
     bl_label = "Build Tiny3D"
-    bl_description = "Build Tiny3D rendering library for Nintendo 64 development"
+    bl_description = "Build Tiny3D, its glTF importer and examples (what changed, or everything with Rebuild From Scratch)"
 
     def execute(self, context):
         import armor64.utils as n64_utils
-        import arm.utils
+        path = _library_path(self, 'tiny3d', n64_utils.get_tiny3d_path())
+        if path is None:
+            return {'CANCELLED'}
+        make = f'make CURDIR=. -j{n64_utils.jobs()}'
+        t3d_inst = f'T3D_INST="{n64_utils.get_n64_toolchain_path()}/include"'
+        rebuild = n64_utils.get_rebuild_libraries()
 
-        sdk_path = arm.utils.get_sdk_path()
-        if sdk_path == "":
-            self.report({"ERROR"}, "Configure Armory SDK path first")
-            return {"CANCELLED"}
+        def build(make_cmd: str) -> str:
+            # Grouped: a failed `cd` before it stops the chain
+            return f'({make_cmd} clean; {make_cmd})' if rebuild else make_cmd
 
-        msys2_exe = n64_utils.get_msys2_bash_executable()
-        if not msys2_exe:
-            self.report({"ERROR"}, "Configure MSYS2 Bash executable path first")
-            return {"CANCELLED"}
-
-        tiny3d_path = n64_utils.get_tiny3d_path()
-        if not os.path.isdir(tiny3d_path):
-            self.report({"ERROR"}, f"tiny3d not found. Clone it into the project's Libraries directory: {n64_utils.get_n64_libraries_dir()}")
-            return {"CANCELLED"}
-
-        addon_prefs = arm.utils.get_arm_preferences()
-        tiny3d_path_posix = n64_utils.win_path_to_posix(tiny3d_path)
-        n64_toolchain_path = n64_utils.win_path_to_posix(addon_prefs.n64_toolchain_path)
-        mingw64_path = n64_utils.win_path_to_posix(addon_prefs.mingw64_path)
-
-        print('Building Tiny3D for Nintendo 64, check console for details.')
-
-        env = os.environ.copy()
-        env['MSYSTEM'] = 'MINGW64'
-        env['N64_INST'] = n64_toolchain_path
-        env['PATH'] = f"{n64_toolchain_path}:{mingw64_path}:{env.get('PATH', '')}"
-
-        # Run make commands directly (instead of build.sh) so we can pass
-        # CURDIR=. to work around spaces in the project path.  n64.mk uses
-        # $(CURDIR) in -ffile-prefix-map which breaks when CWD has spaces.
-        build_cmd = (
-            f'cd "{tiny3d_path_posix}" && '
-            f'make CURDIR=. clean; '
-            f'make CURDIR=. -j4 && '
-            f'make CURDIR=. install && '
-            f'(cd tools/gltf_importer && make CURDIR=. clean); '
-            f'(cd tools/gltf_importer && make CURDIR=. -j4 && make CURDIR=. install) && '
-            f'for d in examples/*/; do (cd "$d" && '
-            f'make T3D_INST="{n64_toolchain_path}/include" CURDIR=. clean; '
-            f'make T3D_INST="{n64_toolchain_path}/include" CURDIR=. -j4) || exit 1; done'
-        )
-        result = subprocess.run(
-            [rf'{msys2_exe}', '--login', '-c', build_cmd],
-            stdout=None, stderr=None, text=True, env=env
-        )
-
-        if result.returncode != 0:
-            self.report({"ERROR"}, "Failed building Tiny3D, check console for details.")
-        else:
-            self.report({'INFO'}, 'Tiny3D build completed.')
-
-        return {"FINISHED"}
+        return _run_msys2(self, 'building tiny3d', (
+            f'cd "{path}" && {build(make)} && make CURDIR=. install && '
+            f'(cd tools/gltf_importer && {build(make)} && make CURDIR=. install) && '
+            f'for d in examples/*/; do (cd "$d" && {build(f"{make} {t3d_inst}")}) || exit 1; done'))
 
 
 _N64_OPERATOR_CLASSES = [
@@ -232,16 +149,14 @@ _N64_OPERATOR_CLASSES = [
 def _register_operators():
     for cls in _N64_OPERATOR_CLASSES:
         bpy.utils.register_class(cls)
-        _registered_classes.append(cls)
 
 
 def _unregister_operators():
     for cls in reversed(_N64_OPERATOR_CLASSES):
         try:
             bpy.utils.unregister_class(cls)
-        except Exception:
+        except RuntimeError:  # Not registered (a failed register)
             pass
-    _registered_classes.clear()
 
 
 # =============================================================================
@@ -249,17 +164,15 @@ def _unregister_operators():
 # =============================================================================
 
 def register():
-    """Register the N64 exporter library. Called by Armory's load_py_libraries()."""
-    # Order matters: the package first
+    """Called by Armory's load_py_libraries()."""
+    # The package first: the operators import it
     _register_package()
     _register_operators()
-
     print('N64 Exporter library registered')
 
 
 def unregister():
-    """Unregister the N64 exporter library. Called by Armory's unload_py_libraries()."""
+    """Called by Armory's unload_py_libraries()."""
     _unregister_operators()
     _unregister_package()
-
     print('N64 Exporter library unregistered')
