@@ -1,225 +1,78 @@
-# N64 Exporter Architecture
+# The Python exporter (`exporter/`)
 
-This document provides an architectural overview of the Armory3D N64 exporter, which transpiles Armory/Iron Haxe traits to C code targeting the Nintendo 64 via libdragon and Tiny3D.
+The Python side of armor_64: it runs the N64 build from Blender, exports the scenes, meshes, UI and audio, turns the macros' IR into C, decides the engine's limits and builds the ROM. `blender.py` loads it as the `armor64` package (`from armor64.export import scene_exporter`).
 
-## Pipeline Overview
+The other parts: [Sources/armor64/](../Sources/armor64/README.md) (the Haxe macros that write the IR), [runtime/](../runtime/README.md) (the C runtime and templates), [Tests/](../Tests/README.md).
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  Blender Export │ ──► │  Haxe IR Macros  │ ──► │  Python Codegen │ ──► │  libdragon Build│
-│  (Python)       │     │  (Compile-time)  │     │  (Templates)    │     │  (make/gcc)     │
-└─────────────────┘     └──────────────────┘     └─────────────────┘     └─────────────────┘
-        │                       │                        │                       │
-        ▼                       ▼                        ▼                       ▼
-   Scene data            n64_traits.json            C source files           .z64 ROM
-   GLTF meshes           n64_autoloads.json         Header files
-   Audio assets                                     Makefile
+Blender + Armory ─► khamake (asset list) ─► Haxe + armor_64's macros ─► IR (build_<project>/n64_*.json)
+        │                                                                  │
+        └─ meshes, while Haxe compiles ─► export_code(): scenes, UI, audio, C from the IR, limits
+                                                  │
+                                                  └─► make (build_<project>/n64/) ─► ROM ─► Ares (Play)
 ```
 
-## Armory Integration
+## Armory integration (`../armory_hooks.py`)
 
-armor_64 plugs into Armory through Armory's library hooks (`arm/library_hooks.py` in Armory), without patching Armory's code. Its `armory_hooks.py` adds:
+armor_64 plugs into Armory through its library hooks (`arm/library_hooks.py` in Armory), without patching Armory:
 
 | Hook | What it does |
 |---|---|
-| `runtimes()`, `targets()` | "Ares" in the Runtime list (Play) and "Nintendo 64" in the exporter's Target list (Build, Publish); Armory exports these as Kha's `custom` target |
+| `runtimes()`, `targets()` | "Ares" in the Runtime list (Play), "Nintendo 64" in the exporter's Target list (Build, Publish); Armory exports them as Kha's `custom` target |
 | `owns_build(request)` | Those builds are armor_64's |
 | `compile(request, done)` | armor_64 builds them (`export/build_pipeline.py`) instead of Armory's khamake compile |
-| `clean(request)` | Publish cleans only the N64 output (khamake's cache stays warm) |
-| `write_main()` | For those builds: the `arm_target_n64` and `arm_build_dir` defines and the `N64Macro` Haxe macro |
+| `clean(request)`, `clean_project()` | Publish cleans only the N64 output (khamake's cache stays warm); Clean Project stops armor_64's compilation server |
+| `write_main()` | The `arm_target_n64` and `arm_build_dir` defines, and the macro's registration |
+| `preferences()`, `draw_preferences()` | The Nintendo 64 settings in Armory's preferences |
 
-`blender.py` only registers the `arm.n64` Python namespace, the N64 preferences and the libdragon/tiny3d operators.
+armor_64 uses Armory's `run_process` (the build's processes: Blender stays responsive, Stop ends them), `run_player` (Ares as Armory's player) and `stop_process`. `../blender.py` registers the package and the libdragon/tiny3d operators, which run in MSYS2 through the same `run_process`.
 
-### Build pipeline (`export/build_pipeline.py`)
+## The build (`export/build_pipeline.py`)
 
-After Armory's export (scene data, `khafile.js`, `Main.hx`), Haxe runs only to execute armor_64's macros, which write the IR: its output isn't used. So no shader is compiled and no code is generated:
+After Armory's export (scene data, `khafile.js`, `Main.hx`), Haxe only has to run the macros: its output isn't used, so no shader is compiled and no code is generated.
 
-1. khamake `--nohaxe --noshaders --noproject`: only the Haxe build file and the asset list (a fraction of a second when warm)
-2. The asset list for Haxe (`build/n64haxe-resources/files.json`): khamake's assets, plus every shader as an empty placeholder (Kha builds `kha.Shaders` from it). Shader names come from the project's and libraries' `khafile.js` `addShaders()` and from `Sources/Shaders`. Koui's themes (`.ksn`) are copied next to it (`build/n64haxe/`), where Koui's theme macro reads them.
-3. Haxe directly on khamake's build file, retargeted to `n64haxe` with `--no-output`
-4. The N64 export, make, and Ares for Play
+1. khamake `--nohaxe --noshaders --noproject`: only the Haxe build file and the asset list.
+2. The asset list for Haxe (`build/n64haxe-resources/files.json`): khamake's assets, plus every shader as an empty placeholder (Kha builds `kha.Shaders` from it); Koui's `.ksn` themes copied where Koui's theme macro reads them.
+3. Haxe on khamake's build file, retargeted to `n64haxe` with `--no-output`; meanwhile the meshes are exported (`N64Exporter.export_assets()`: they only need the .blend). With Armory's compilation server preference on, Haxe runs through armor_64's own server (its own port), which keeps typed modules between builds; `n64_compile.stamp` makes it type the game's modules again every build.
+4. `N64Exporter.export_code()` (`exporter.py`): the rest of the export; then the .blend is cleaned up.
+5. Play and Publish: `make` (`export/build_runner.py`), one job per core, in MSYS2's bash (not a login shell: `utils.msys2_command()` sets the toolchain's paths). Then Play runs Ares.
 
-## Key Design Principles
+## Modules
 
-0. **Extraction runs after typing**: the build macros only capture each class's untyped fields; extraction runs in `onAfterTyping` (`N64MacroBase.deferExtraction`) so extractors can ask `TypedIndex` what an expression really is (e.g. which class an identifier refers to) instead of guessing from names. Resolve calls from their receiver's typed node: inlined calls (e.g. `Vec4.mult`) have no typed call node of their own. `getExprType()` returns the typed type (`TypedIndex.typeOf`) in the same short-name format `TypeMap` uses. Nothing is matched by variable or class names: engine-provided values (gamepad, rigid body, transform) are recognized by type in `mapping/EngineTypes.hx`, and calls whose receiver has no typed node are reported as unsupported.
-
-1. **Clean IR Separation**: Haxe macros perform semantic analysis and emit JSON IR. Python does mechanical 1:1 translation to C without re-analyzing semantics.
-
-2. **Bindings table, then converters**: a Haxe call that maps straight to C is one entry in `Bindings.hx` (`"Class.method" => C template`). Calls needing logic (callbacks, export-time lookups, generated code) have a converter per API domain (`converters/`). See [Adding Support for New Haxe APIs](#adding-support-for-new-haxe-apis).
-
-3. **Template-Based Codegen**: Jinja2 templates separate C code structure from generated data.
-
-## Module Responsibilities
-
-### Python Side (`exporter/`, loaded by `blender.py` as `arm.n64`)
-
-| Module | Purpose |
-|--------|---------|
-| `exporter.py` | Main entry point, orchestrates pipeline |
-| `utils.py` | Shared utilities, configuration, coordinate conversion |
-| `codegen/trait_emitter.py` | IR → C code translation (`emit_c_template` renders the bindings) |
-| `codegen/trait_generator.py` | Prepares template data, handles inheritance |
-| `codegen/autoload_generator.py` | Autoload-specific code generation |
-| `codegen/tween_helper.py` | Tween animation support |
-| `export/scene_exporter.py` | Scene data extraction |
-| `export/mesh_exporter.py` | GLTF mesh export |
-| `export/audio_exporter.py` | Audio asset processing |
-| `export/ui_exporter.py` | Canvas/font generation |
-| `export/physics_exporter.py` | Physics engine files |
-| `export/build_runner.py` | The Makefile, make (one job per core) and Ares, through Armory's `run_process` / `run_player` |
-
-### Haxe Side (`Sources/armor64/`)
-
-| Module | Purpose |
-|--------|---------|
-| `N64Macro.hx` | Entry point (`register()`): one build macro on the `arm` package, hands classes to the two below |
-| `N64Extractor.hx` | Haxe → IR conversion shared by traits and autoloads; subclasses override a few hooks |
-| `N64TraitMacro.hx` | Traits: lifecycles and events, inheritance, data struct → `n64_traits.json` |
-| `N64AutoloadMacro.hx` | Autoloads: static members and functions as C globals → `n64_autoloads.json` |
-| `IRTypes.hx` | IR node type definitions and documentation |
-| `TypedIndex.hx` | Maps source positions to the compiler's typed AST |
-| `Bindings.hx` | Haxe calls that map straight to C: one template per `Class.method` |
-| `converters/*.hx` | Calls needing logic, one converter per API domain |
-| `mapping/TypeMap.hx` | Haxe → C type mapping |
-| `mapping/Constants.hx` | Shared constants (scale factors, limits) |
-
-### C Runtime and Templates (`runtime/src/`)
-
-Templates use Python `.format()` placeholders (`{variable}`):
-
-| Directory | Contents |
-|-----------|----------|
-| `data/` | traits.c/h, autoloads.c/h, signals.c/h |
-| `scenes/` | scene.c template |
-| `ui/` | canvas.c/h, fonts.c/h |
-| `autoloads/` | Per-autoload C files |
-
-## Trait Inheritance
-
-Traits can extend other traits to any depth. In C, each trait's data struct embeds its parent's struct first (`_parent`), so a pointer to a child's data is also a valid pointer to every ancestor's data:
-
-- Members, signals and vtable pointers are accessed through the struct of the trait declaring them (`((OwnerData*)data)->field`), which costs nothing at runtime.
-- Virtual methods (overriding or overridden) are called through a `_vfn_<method>` pointer stored in the struct of the topmost trait declaring them; each trait sets it in `on_ready` after its parent, so the most derived override wins. `super.method()` calls the parent's implementation directly.
-- Every lifecycle handler calls its parent's first, so callbacks a parent registers (`notifyOnUpdate`, `notifyOnRemove`, ...) run for its children too.
-
-The rules deciding whether a trait has a data struct, which lifecycle events the runtime calls and where vtable pointers live are shared functions at the top of `codegen/trait_generator.py` (`needs_data_struct`, `chain_events`, `vtable_owner`, ...). The struct layout, the call sites and the scene generator all use them; don't duplicate them.
-
-Trait and autoload class names must be unique across packages: they identify classes in the IR, and a clash is reported as a compile error.
-
-## Signals
-
-`armory.system.Signal` fields, static (e.g. in autoloads) or per-instance (in traits), work the same way, with any argument types (numbers, bools, strings, vectors, objects) and any number of arguments:
-
-- `SignalCallConverter.hx` turns `connect`, `disconnect` and `emit` into `signal_connect`, `signal_disconnect` and `signal_emit` nodes. A signal is identified by its declaring class and name, and `N64MacroBase.signals` collects its argument types from typed handlers (first) and emits across the whole game, written to `n64_signals.json`.
-- `codegen/signal_codegen.py` renders everything: `data/signals.h` (a payload struct per signal with arguments, the static signals), emits (`{ <signal>_payload_t _p = {...}; signal_emit(&sig, &_p); }`), connections, and one handler function per handler. Method handlers call the method (through its vtable pointer if it's virtual) and anonymous handlers contain their body; each unpacks only the parameters it declares.
-- Handlers of a trait are connected with its data as context. Connecting and disconnecting is up to the game code: a trait must disconnect its handlers before it's removed (e.g. in `notifyOnRemove`), since its data is freed with its scene.
-- `system/signal.c`: disconnect matches handler and context; handlers can connect and disconnect (also themselves) during an emit.
-
-Every signal has `ARM_SIGNAL_MAX_SUBS` subscriber slots (16 by default).
-
-## IR Node Types
-
-The IR (Intermediate Representation) is a JSON format that bridges Haxe semantics to C code. See `IRTypes.hx` for complete documentation.
-
-**Key Categories:**
-- **Literals**: `int`, `float`, `string`, `bool`, `null`, `c_literal`
-- **Variables**: `member`, `ident`, `field_access`, `autoload_field`
-- **Operators**: `assign`, `binop`, `unop`
-- **Control Flow**: `if`, `while`, `for_range`, `return`, `break`, `continue`
-- **Calls**: `c_template` (a binding), `call`, `trait_method_call`, `autoload_call`, `signal_*`, `audio_*`, `tween_*`, etc.
-- **Containers**: `map_*`, `array_*`, `container_element`
-
-## Adding Support for New Haxe APIs
-
-A call either maps straight to C, and is **one line in `Bindings.hx`**, or needs logic, and is a **converter**. Use the table unless the call needs one of:
-
-- a decision from the arguments' values or types (`Std.string` writes its argument by its type, `Scene.setActive("Level")` resolves the scene ID at export time)
-- something recorded for the exporter (input buttons used, map key lengths, contact handlers)
-- generated code (callbacks, captures, signal handlers)
-
-Calls nothing translates are reported at their Haxe line (`N64MacroBase.unsupportedMethodCall`), never copied to the C.
-
-### The bindings table (`Sources/armor64/Bindings.hx`)
-
-An entry is keyed by the class (or abstract) **declaring** the method, from the typed AST. So aliases, imports, full paths, inherited methods and `using` extensions all match, whatever the code calls the receiver:
-
-```haxe
-"Math.sin" => {c: "fm_sinf({0})"},
-"iron.object.Animation.play" => {c: 'animation_play({self}, {0=""})', receiver: Value},
-"iron.object.Transform.move" => {c: "it_move(&((ArmObject*){self})->transform, ({0}).x, ({0}).z, -({0}).y, {1=1.0f});",
-                                 receiver: FieldOwner("transform"), flags: ["uses_transform", "mutates_transform"]},
-"kha.graphics2.Graphics.begin" => {noop: true},
-```
-
-Then add the C function to the runtime, if it's new. Nothing else is needed: no IR node type, no Python code.
-
-**Placeholders in `c`:**
-
-| Placeholder | Is |
+| Module | What it does |
 |---|---|
-| `{0}`, `{1}`, ... | The call's arguments |
-| `{1=1.0f}` | Argument 1, or `1.0f` when the call leaves it out |
-| `{self}` | The receiver, see `receiver` below |
+| `exporter.py` | `N64Exporter`: the export steps in order, the export state, the .blend cleaned up afterwards (only the data the export added) |
+| `utils.py` | Blender → N64 coordinates, Blender data reads, trait data initializers, C literals, files written only when they change, settings and paths, `msys2_command()` |
+| `export/build_pipeline.py` | The build above: khamake, Haxe (and the compilation server), the export, make, Ares |
+| `export/build_runner.py` | The Makefile, make, the RAM report, Ares |
+| `export/scene_exporter.py` | Scene data (objects, cameras, lights, physics, traits), the scene files and `main_config.h` |
+| `export/mesh_exporter.py` | glTF export of the meshes through Fast64 (F3D materials), cached: unchanged meshes aren't exported again |
+| `export/linked_export.py` | Linked objects: local copies Fast64 can convert, removed afterwards |
+| `export/ui_exporter.py`, `export/koui_theme_parser.py` | Koui canvases → UI tables, fonts and sprites; `.ksn` themes read as Koui reads them |
+| `export/audio_exporter.py` | The sounds the game uses, converted to `wav64` |
+| `export/traits_exporter.py` | The C of the Haxe code (traits, autoloads, signals) and the configuration headers (`engine.h`, `limits.h`, `debug_config.h`) |
+| `codegen/ir.py` | Reads the IR files (`n64_traits.json`, `n64_autoloads.json`, `n64_signals.json`, `n64_audio.json`, `n64_limits.json`); a different IR version stops the export |
+| `codegen/trait_generator.py` | `data/traits.h`, `data/traits.c`: data structs, lifecycle dispatch, methods, callbacks; the inheritance rules at its top (`needs_data_struct`, `chain_events`, `vtable_owner`...), shared with the scene generator |
+| `codegen/trait_emitter.py` | The C of each IR node; `autoload_emitter.py` adapts it to autoloads |
+| `codegen/autoload_generator.py` | One C file per autoload |
+| `codegen/signal_codegen.py` | Signals: payload structs, static signals, handler functions |
+| `codegen/tween_helper.py` | Callbacks and their captures (tweens, method arguments, signal handlers, buttons, lifecycle functions) |
+| `codegen/scene_generator.py` | The scene tables (objects, cameras, lights, trait instances and their data) |
+| `codegen/limits.py` | The engine limits (below) and the `limits.txt` report |
+| `codegen/audio_codegen.py` | `audio/audio_config.h` |
+| `codegen/c_text.py` | C string literals (no Blender imports: the tests load it) |
 
-Any other `{name}` is an error. A C brace around a bare name needs a space: `{ x }`. Braces next to other text, such as `(ArmVec4){{self}.x, ...}`, are fine.
+## From the IR to C
 
-**`receiver`, what `{self}` is:**
+The macros ([Sources/armor64/](../Sources/armor64/README.md)) do the analysis; the codegen translates each IR node mechanically. An IR node type the exporter doesn't know stops the export (the macros and the exporter are from different versions). The generated C doesn't need to be readable: what matters is its speed and size (the test suites' `metrics.txt`).
 
-| Receiver | `{self}` | Example |
-|---|---|---|
-| `None` (default) | Nothing: a static call | `Math.sin(x)`, `StringTools.endsWith(s, x)` (or `s.endsWith(x)`) |
-| `Value` | The receiver | `v.length()`, `anim.play("run")`, `rb.applyForce(f)` (a RigidBody is its object's pointer) |
-| `InPlace` | The receiver, which is written to. It's used as written and never copied. | `v.normalize()` |
-| `FieldOwner("transform")` | The object owning the field: `x.transform.m()` gives `x`, `transform.m()` gives the trait's object (traits only) | `object.transform.translate(...)` |
+- **Traits**: each trait instance has a data struct, static and filled when its scene starts (`init_trait_data()`); methods are C functions `<trait>_<method>(obj, data, ...)`, next to the runtime handlers (`on_add`, `on_ready`, `on_update`...). A child's struct embeds its parent's first, so a child's data is also each ancestor's: members are reached through the declaring trait's struct; overridden methods through a `_vfn_<method>` pointer, set when the data is filled. A trait's static vars are globals (`<trait>_<name>`).
+- **Lifecycles**: each `notifyOnX(f)` call site is a counter in the trait's data (`_lc_<n>`) and a function (`<trait>_lc_<n>`). The call adds one; `removeX(f)` takes one from the first site that registers `f`. A handler runs each site as many times as its counter, the parent's sites first. `on_add` runs the constructor (`<trait>_on_create`) then the add sites.
+- **Callbacks**: a callback's captured locals are copied where it's registered, into its trait's data (`_cap_<callback>_<name>`) or an autoload global (`<autoload>_cap_<callback>_<name>`), and read there by its function (`tween_helper.py`).
+- **Another trait instance**: a call passes that instance's data (the reference) and its object; a field is read through the declaring trait's struct.
+- **Signals**: a signal is identified by its declaring class and name; its argument types come from `n64_signals.json`. Every handler is a `void (void* ctx, void* payload)` function: method handlers call the method (through its `_vfn_` pointer if overridden), anonymous ones hold their body.
 
-**Other fields:**
-- `flags`: the `TraitMeta` flags the call sets, such as `uses_physics`.
-- `noop: true`: the call does nothing on N64, and its arguments aren't evaluated.
-
-**Rules, checked when a call uses the entry** (a broken entry fails at the Haxe line, not in C):
-- Every argument the call passes must appear in the template. An argument the C can't take, such as `applyForce`'s `loc`, is reported instead of dropped.
-- A template ending with `;` or starting with `{` (a block) is a statement. Otherwise it's an expression; it may still end with `}`, as a compound literal does. A value computed with statements is a statement expression: `({ T3DVec3 _d; it_look(..., &_d); (ArmVec4){...}; })`.
-- An argument or receiver used more than once, and that isn't plain C (a name, member path or literal), is evaluated once into a temporary (`__auto_type _t0 = ...`). A receiver used once that isn't plain C is parenthesized. So `({0}).x, ({0}).z, -({0}).y` is safe with any argument.
-- No logic in the table. An entry that would need a condition or a lookup is a converter.
-
-### Converters (`Sources/armor64/converters/`)
-
-Converters run **before** the table, so they also handle special cases of methods the table maps (e.g. `Vec4.set()` on a transform's `loc`, or a mix channel's `setVolume()`). Return `null` for anything you don't handle, so the table and the other converters get it.
-
-Decide whether a call is yours from the typed AST, not from variable or class names:
-
-- `TypedIndex.receiverPath(obj)`: what the receiver is, e.g. `"iron.system.Gamepad"` for `pad` in `pad.started("a")`
-- `TypedIndex.isClassRef(obj, "iron.Scene")`: static calls (`Scene.x()`, `iron.Scene.x()`, aliases)
-- `TypedIndex.callOwner(obj, method)`: the class declaring the method
-
-They return null/false for expressions without a typed node; don't add name-based fallbacks.
-
-```haxe
-class MyCallConverter implements ICallConverter {
-    public function tryConvert(obj:Expr, method:String, args:Array<IRNode>,
-                               rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
-        if (TypedIndex.receiverPath(obj) != "my.api.MyClass") return null;
-        if (method != "load") return null;
-
-        // The logic: here, an asset resolved at export time
-        var asset = ctx.extractStringArg(rawParams[0]);
-        if (asset == null) return N64MacroBase.unsupported("MyClass.load() needs a constant name on N64");
-        return {type: "c_template", c_code: 'my_load(ASSET_${asset.toUpperCase()})', args: []};
-    }
-}
-```
-
-A converter can return a `c_template` node, rendered like a table entry (placeholders, temporaries) with no Python needed; the entry checks above are the converter's job. Use its own IR node type and an `emit_<type>` method in `trait_emitter.py` only when the C needs data the template can't carry, such as callbacks or handler names.
-
-Register it in the converter list passed to `super()` in `N64TraitMacro.hx`. Also add it in `N64AutoloadMacro.hx` if its C doesn't use the trait's `obj` or `data`.
-
-### Tests
-
-Add the call to a golden suite (`Tests/suites/*/Sources`) and accept the output with `python Tests/run_tests.py --update` once the generated C is right. The suites' compile stage builds the C with `-Werror`. `typed_resolution/.../ApiSurface.hx` calls every binding in the forms games write.
-
-## Configuration
-
-### Engine limits (`codegen/limits.py`)
+## Engine limits (`codegen/limits.py`)
 
 The runtime allocates nothing during gameplay: pools and containers are static
 arrays, so each one has a size decided at export. `limits.py` decides all of
@@ -239,7 +92,7 @@ A full pool or container reports it once with `debugf` (`ARM_LIMIT_REACHED` in
 
 Values that can't be counted keep the default as a floor: a `new Tween()` inside a function, a map key built at runtime, a string argument that isn't a literal. Concatenated strings and label/button text report truncation with `ARM_LIMIT_REACHED` too.
 
-Each export writes `build/n64/limits.txt`: every limit with its default and how its value was decided. After a successful build, the RAM is appended from the built ELF (code, data, bss; the pools with the limits sizing them; the largest other symbols) and the whole report is printed to the console.
+Each export writes `build_<project>/n64/limits.txt`: every limit with its default and how its value was decided. After a successful build, the RAM is appended from the built ELF (code, data, bss; the pools with the limits sizing them; the largest other symbols) and the whole report is printed to the console.
 
 | Limit | Default | What it limits | Where it's defined |
 |---|---|---|---|
@@ -281,47 +134,14 @@ Each export writes `build/n64/limits.txt`: every limit with its default and how 
 | `UI_MAX_GROUPS` | 1 | Layout groups | UI headers |
 | `UI_MAX_GROUP_CHILDREN` | 8 | Children of one layout group | UI headers |
 
-### Haxe Metadata
+## Blender → N64 coordinates (`utils.py`)
 
-- `@:n64Autoload(order=N)` - Set autoload initialization order (the order of their static initializers at boot; their `init()` is called by the game, as in Armory)
-
-## Coordinate System
-
-Armory uses Blender's Z-up coordinate system. The exporter converts to N64's Y-up system:
-
-- Blender X → N64 X
-- Blender Y → N64 -Z
-- Blender Z → N64 Y
-
-Position scale factor: `1/64` (64 Blender units = 1 N64 unit)
+The runtime keeps N64 space (tiny3d's, y up): Blender's (x, y, z) is (x, z, −y), quaternions (x, z, −y, w). Positions stay in Blender units. Root objects' scales are ×1/64 (`SCALE_FACTOR`), because models are exported 64× bigger for tiny3d's fixed-point precision; a parented object keeps its scale and has its local position ×64 (its parent's matrix has the 1/64). Game code still sees Blender's axes and units: the macros convert every transform access (see [runtime/](../runtime/README.md)).
 
 ## Debugging
 
-### IR Inspection
-
-After export, check `build_<project>/n64_traits.json` and `n64_autoloads.json` to see the generated IR.
-
-### Generated Code
-
-C code is generated in `build/n64/src/data/traits.c` and related files.
-
-### Unsupported Code
-
-Haxe the macros can't translate is reported as a compile warning at its source line (`N64: ...`) and kept as an `/* N64 unsupported: ... */` comment in the generated C. Converters report it with `N64MacroBase.unsupported(msg)`; return a plain `{ type: "skip" }` (or use a `noop` binding) only for code that is intentionally a no-op on N64. `-D n64_strict` turns the warnings into errors.
-
-### Tests
-
-See `Tests/README.md`: golden tests that run the macros and the Python codegen without Blender.
-
-### Build Errors
-
-Build output appears in Blender's system console. Common issues:
-- Missing includes: Check template files
-- Type errors: Check TypeMap.hx mappings
-- Link errors: Check that C functions exist in runtime
-
-## Version Compatibility
-
-The IR format includes a version number. If the Haxe macro IR version doesn't match what Python expects, export will warn. Update both sides when changing IR structure.
-
-Current IR version: Check `ir_version` in `n64_traits.json` header.
+- The IR: `build_<project>/n64_traits.json`, `n64_autoloads.json` and the other `n64_*.json`.
+- The generated C: `build_<project>/n64/src/` (`data/traits.c`, `autoloads/`, `scenes/`).
+- `build_<project>/n64/limits.txt`: each limit, how it was decided, the RAM of the built game.
+- make's and the compilers' output: Blender's system console.
+- Code the macros can't translate: an `N64: ...` warning at its Haxe line (an error with `n64_strict`), and a comment in the C.
