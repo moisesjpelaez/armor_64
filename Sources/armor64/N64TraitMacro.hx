@@ -139,7 +139,6 @@ class N64TraitMacro {
 class TraitExtractor extends N64Extractor {
     var methodIRMap:Map<String, MethodIR> = new Map();   // Extracted methods as IR for C generation
     var events:Map<String, Array<IRNode>> = new Map();
-    var currentSetterTarget:String;  // Inside a setter body, the member it sets (written directly, not through the setter)
 
     // Lifecycle registrations (registerLifecycle), in the order found; each is
     // a counter in the trait's data, see trait_generator.py
@@ -195,10 +194,10 @@ class TraitExtractor extends N64Extractor {
         for (field in fields) {
             switch (field.kind) {
                 case FVar(t, e):
-                    collectVar(field.name, t, e, null, field.pos);
-                case FProp(_, set, t, e):
+                    collectVar(field.name, t, e, field.pos, isStatic(field));
+                case FProp(get, set, t, e):
                     // Property with a backing field (e.g., @:isVar var paused(default, set): Bool)
-                    collectVar(field.name, t, e, set, field.pos);
+                    if (N64Extractor.hasStorage(field, get, set)) collectVar(field.name, t, e, field.pos, isStatic(field));
                 case FFun(func):
                     methodMap.set(field.name, func);
                 default:
@@ -276,18 +275,7 @@ class TraitExtractor extends N64Extractor {
             var retHaxeType = returnTypeName(methodName, method.ret);
             if (retHaxeType != "Void") returnType = TypeMap.getCType(retHaxeType);
 
-            // Convert method body to IR
-            // If this is a setter method (set_X), mark it so assignments to X inside
-            // the body do direct writes instead of recursively calling the setter
-            var prevSetterTarget = currentSetterTarget;
-            if (methodName.length > 4 && methodName.substr(0, 4) == "set_") {
-                var memberName = methodName.substr(4);
-                if (members.exists(memberName) && members.get(memberName).setter != null) {
-                    currentSetterTarget = memberName;
-                }
-            }
             var bodyNodes = statements(method.expr);
-            currentSetterTarget = prevSetterTarget;
 
             methodIRMap.set(methodName, {
                 name: methodName,
@@ -304,6 +292,10 @@ class TraitExtractor extends N64Extractor {
                 }
             }
         }
+    }
+
+    static function isStatic(field:Field):Bool {
+        return field.access != null && field.access.indexOf(AStatic) >= 0;
     }
 
     function getFuncName(e:Expr):String {
@@ -556,20 +548,6 @@ class TraitExtractor extends N64Extractor {
         }
 
         var targetIR = exprToIR(e1);
-        // A member with a setter: call it, except inside that setter's own
-        // body (to avoid infinite recursion)
-        if (targetIR != null && targetIR.type == "member" && targetIR.value != currentSetterTarget) {
-            var member = members.get(targetIR.value);
-            if (member != null && member.setter != null) {
-                return {
-                    type: "trait_method_call",
-                    cName: methodCName(member.setter),
-                    method: member.setter,
-                    trait: traitKey,
-                    args: [exprToIR(e2)]
-                };
-            }
-        }
         // `this` stored in a trait-typed member: the trait's data
         if (targetIR != null && targetIR.type == "member" && isThis(e2)) {
             var member = members.get(targetIR.value);

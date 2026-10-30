@@ -287,8 +287,8 @@ class N64MacroBase {
         for (name in members.keys()) {
             var m = members.get(name);
             var obj:Dynamic = { name: name, type: m.haxeType, ctype: m.ctype, default_value: serializeIRNode(m.defaultValue) };
-            if (m.setter != null) obj.setter = m.setter;
             if (m.traitRef != null) obj.trait_ref = m.traitRef;
+            if (m.isStatic) obj.is_static = true;
             out.push(obj);
         }
         return out;

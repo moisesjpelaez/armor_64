@@ -158,7 +158,17 @@ class N64Extractor implements IExtractorContext {
         return name == "Dynamic" && written == null && types == null ? "Void" : name;
     }
 
-    function collectVar(name:String, t:ComplexType, e:Expr, ?setter:String, ?pos:Position):Void {
+    /**
+     * Whether a property has storage (Haxe: an access that isn't through an
+     * accessor, or @:isVar); one with only accessors has no member.
+     */
+    public static function hasStorage(field:Field, get:String, set:String):Bool {
+        var direct = ["default", "null"];
+        return direct.indexOf(get) >= 0 || direct.indexOf(set) >= 0
+            || (field.meta != null && Lambda.exists(field.meta, m -> m.name == ":isVar"));
+    }
+
+    function collectVar(name:String, t:ComplexType, e:Expr, ?pos:Position, isStatic:Bool = false):Void {
         var haxeType = typeNameOf(classFieldType(name), t);
         memberTypes.set(name, haxeType);
 
@@ -170,7 +180,14 @@ class N64Extractor implements IExtractorContext {
         }
         var member = extractMember(name, haxeType, e, pos);
         if (member == null) return;
-        if (setter == "set") member.setter = "set_" + name;
+        if (isStatic) {
+            // Shared by every instance: a C global, initialized at compile time
+            if (member.ctype == "ArmTween*") {
+                N64MacroBase.unsupported('a static Tween in a trait is not supported on N64 yet ($name)', pos);
+                return;
+            }
+            member.isStatic = true;
+        }
         members.set(name, member);
         memberNames.push(name);
     }
@@ -306,6 +323,9 @@ class N64Extractor implements IExtractorContext {
 
     function convertExpr(e:Expr):IRNode {
         return switch (e.expr) {
+            // A property read the compiler made a getter call (get_x())
+            case EConst(CIdent(_)) | EField(_, _) if (TypedIndex.accessorAt(e, "get_") != null):
+                convertCall(accessorCallee(e, TypedIndex.accessorAt(e, "get_")), []);
             case EConst(CIdent(name)) if (name != "true" && name != "false" && name != "null"):
                 resolveIdent(name, e);
             // 'Score: $score': the same as a concatenation
@@ -313,6 +333,14 @@ class N64Extractor implements IExtractorContext {
                 StringFormatter.format(e, exprToIR);
             case EConst(c):
                 N64MacroBase.constToIR(c);
+
+            // Property accessors, as the compiler resolved them (set_x(v), get_x())
+            case EBinop(OpAssign, e1, e2) if (TypedIndex.accessorAt(e, "set_") != null):
+                propertyWrite(e, e1, null, e2);
+            case EBinop(OpAssignOp(op), e1, e2) if (TypedIndex.accessorAt(e, "set_") != null):
+                propertyWrite(e, e1, op, e2);
+            case EUnop(op = OpIncrement | OpDecrement, postFix, e1) if (TypedIndex.accessorAt(e, "set_") != null):
+                propertyWrite(e, e1, op == OpIncrement ? OpAdd : OpSub, { expr: EConst(CInt("1")), pos: e.pos }, postFix);
 
             // transform.loc / scale / rot and their components: Blender's values (transform.h)
             case EBinop(OpAssign, e1, e2) if (transformVector(e1) != null || transformComponent(e1) != null):
@@ -414,6 +442,115 @@ class N64Extractor implements IExtractorContext {
     function resolveIdent(name:String, e:Expr):IRNode {
         if (localVarTypes.exists(name)) return localIdent(name);
         return { type: "ident", value: name };
+    }
+
+    // ========================================================================
+    // Properties: an access the compiler made an accessor call (TypedIndex.
+    // accessorAt) is that call, converted as any call (this trait's, an
+    // ancestor's, an autoload's...)
+    // ========================================================================
+
+    // `x = v`, `x op= v`, `x++`: set_x(v), set_x(x op v) (x read as Haxe reads it
+    // there); `x++` as a value is x before. A receiver that isn't a plain name
+    // (`hero().x += 1`) is evaluated once, as the compiler does
+    function propertyWrite(e:Expr, target:Expr, op:Null<Binop>, value:Expr, postfix:Bool = false):IRNode {
+        var setter = TypedIndex.accessorAt(e, "set_");
+        var receiver = switch (target.expr) {
+            case EField(obj, field) if (!isPlainReceiver(obj)): { obj: obj, field: field };
+            default: null;
+        };
+        if (receiver != null) {
+            localVarTypes.set("__recv", getExprType(receiver.obj));
+            target = { expr: EField({ expr: EConst(CIdent("__recv")), pos: receiver.obj.pos }, receiver.field), pos: target.pos };
+        }
+
+        // x read as the compiler reads it there (its getter, or directly)
+        var getter = op != null ? TypedIndex.compoundReadAccessor(e) : null;
+        var current:Expr = getter != null ? { expr: ECall(accessorCallee(target, getter), []), pos: target.pos } : target;
+        var result:IRNode;
+        if (postfix) {
+            localVarTypes.set("__old", getExprType(e));
+            var call = convertCall(accessorCallee(target, setter), [{ expr: EBinop(op, { expr: EConst(CIdent("__old")), pos: e.pos }, value), pos: e.pos }]);
+            localVarTypes.remove("__old");
+            result = { type: "c_template", c_code: "({ __auto_type __old = {0}; {1}; __old; })", args: [exprToIR(current), call] };
+        } else {
+            var newValue = op == null ? value : { expr: EBinop(op, current, value), pos: e.pos };
+            result = convertCall(accessorCallee(target, setter), [newValue]);
+        }
+
+        if (receiver == null) return result;
+        localVarTypes.remove("__recv");
+        return { type: "c_template", c_code: "({ __auto_type __recv = {0}; {1}; })", args: [exprToIR(receiver.obj), result] };
+    }
+
+    // A receiver evaluated without side effects: names and fields of names
+    static function isPlainReceiver(e:Expr):Bool {
+        return switch (e.expr) {
+            case EConst(CIdent(_)): true;
+            case EField(obj, _), EParenthesis(obj): isPlainReceiver(obj);
+            default: false;
+        };
+    }
+
+    // ========================================================================
+    // Other trait instances and trait statics
+    // ========================================================================
+
+    // The topmost exported trait class of a trait instance's type (its struct holds `object`)
+    static function rootTrait(t:Null<Type>):Null<String> {
+        var c = t != null ? switch (Context.follow(t)) {
+            case TInst(inst, _): inst.get();
+            default: null;
+        } : null;
+        var root:String = null;
+        while (c != null && N64MacroBase.extractedClass(TypedIndex.classPath(c)) != null && isTrait(c)) {
+            root = TypedIndex.classPath(c);
+            c = c.superClass != null ? c.superClass.t.get() : null;
+        }
+        return root;
+    }
+
+    static function isMethodOf(c:ClassType, name:String):Bool {
+        while (c != null) {
+            for (f in c.fields.get().concat(c.statics.get())) if (f.name == name) return f.kind.match(FMethod(_));
+            c = c.superClass != null ? c.superClass.t.get() : null;
+        }
+        return false;
+    }
+
+    /**
+     * `other.method(args)` on another trait instance (a reference holds its
+     * data: the call passes that data and its object, through the vtable when
+     * the method is overridden), or `Trait.method(args)` for a trait's static
+     * function (no instance). Functions passed as arguments are reported:
+     * their wrapper would get the other instance's data.
+     */
+    function otherTraitCall(owner:ClassType, obj:Expr, method:String, params:Array<Expr>, args:Array<IRNode>):IRNode {
+        for (p in params) switch (p.expr) {
+            case EFunction(_, _): return N64MacroBase.unsupported('passing a function to $method() of another trait instance is not supported on N64 yet');
+            default:
+        }
+        var node:IRNode = {
+            type: "trait_method_call",
+            cName: methodCNameOf(traitCName(owner), method),
+            method: method,
+            trait: TypedIndex.classPath(owner),
+            args: args
+        };
+        if (TypedIndex.typeRefPath(obj) != null) node.props = { is_static: true };
+        else node.object = exprToIR(obj);
+        return node;
+    }
+
+    // ========================================================================
+    // Transform vectors: Iron's loc, scale and rot in Blender's axes and units.
+
+    // The accessor as a callee, on the access's receiver: `x` -> `set_x`, `o.x` -> `o.set_x`
+    static function accessorCallee(access:Expr, accessor:String):Expr {
+        return switch (access.expr) {
+            case EField(obj, _): { expr: EField(obj, accessor), pos: access.pos };
+            default: { expr: EConst(CIdent(accessor)), pos: access.pos };
+        };
     }
 
     // ========================================================================
@@ -1020,6 +1157,21 @@ class N64Extractor implements IExtractorContext {
             return { type: "c_template", c_code: "object_get_parent((ArmObject*)({0}), scene_get(scene_get_current_id()))", args: [exprToIR(obj)] };
         }
 
+        // A field of another trait instance (through its data pointer) or a
+        // trait's static var: the declaring trait's member
+        var ref = TypedIndex.fieldRef(e);
+        var owner = ref != null && ref.name == field ? { owner: ref.owner, isStatic: ref.isStatic } : TypedIndex.memberOwner(obj, field);
+        var declaring = owner != null ? N64MacroBase.extractedClass(owner.owner) : null;
+        if (declaring != null && isTrait(declaring) && !isMethodOf(declaring, field)) {
+            if (owner.isStatic) return { type: "member", value: field, owner: owner.owner, props: { is_static: true } };
+            return { type: "member", value: field, owner: owner.owner, object: exprToIR(obj) };
+        }
+        // other.object: the base trait's object pointer
+        if (field == "object" && owner != null && owner.owner == "iron.Trait") {
+            var root = rootTrait(TypedIndex.exprType(obj));
+            if (root != null) return { type: "member", value: "object", owner: root, object: exprToIR(obj) };
+        }
+
         // Static field of a class nothing above translates
         var classPath = TypedIndex.typeRefPath(obj);
         if (classPath != null && !N64MacroBase.isExtractedClass(classPath)) {
@@ -1102,7 +1254,7 @@ class N64Extractor implements IExtractorContext {
                             props: { c_name: autoload, method: method }
                         };
                     }
-                    return N64MacroBase.unsupported('calling $method() on another trait instance is not supported on N64 yet');
+                    return otherTraitCall(owner, obj, method, params, args);
                 }
 
                 return N64MacroBase.unsupportedMethodCall(obj, method);

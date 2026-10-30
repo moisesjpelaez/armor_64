@@ -191,7 +191,9 @@ class TypedIndex {
                     default: declaringClass(c.get(), method, true);
                 }
             case TTypeExpr(TAbstract(a)): abstractOwner(a.get(), method);
-            default: ownerFromType(list[0].t, method);
+            default:
+                var t = exprType(obj);
+                ownerFromType(t != null ? t : list[0].t, method);
         };
         if (owner != null) return owner;
 
@@ -339,7 +341,10 @@ class TypedIndex {
         if (implicit != null) list = list.concat([implicit]);
         for (t in list) {
             switch (t.expr) {
-                case TField(_, FInstance(c, _, cf)): return {owner: classPath(c.get()), name: cf.get().name, isStatic: false};
+                // The class declaring it (the compiler names the receiver's class)
+                case TField(_, FInstance(c, _, cf)):
+                    var declaring = declaringClass(c.get(), cf.get().name, false);
+                    return {owner: declaring != null ? declaring : classPath(c.get()), name: cf.get().name, isStatic: false};
                 case TField(_, FClosure(owner, cf)) if (owner != null): return {owner: classPath(owner.c.get()), name: cf.get().name, isStatic: false};
                 case TField(_, FStatic(c, cf)): return {owner: classPath(c.get()), name: cf.get().name, isStatic: true};
                 case TField(_, _): return null;
@@ -347,6 +352,27 @@ class TypedIndex {
             }
         }
         return null;
+    }
+
+    /**
+     * The class declaring field `name` of `obj` (its value's class, or the
+     * class itself for a static), when the field's own typed node isn't at
+     * its position (the compiler's temporaries, accessor rewrites).
+     */
+    public static function memberOwner(obj:Expr, name:String):Null<{owner:String, isStatic:Bool}> {
+        var c = classOf(obj);
+        if (c != null) {
+            var path = declaringClass(c, name, true);
+            return path != null ? {owner: path, isStatic: true} : null;
+        }
+        var t = exprType(obj);
+        if (t == null) return null;
+        return switch (Context.follow(t)) {
+            case TInst(inst, _):
+                var path = declaringClass(inst.get(), name, false);
+                path != null ? {owner: path, isStatic: false} : null;
+            default: null;
+        };
     }
 
     /**
@@ -449,6 +475,80 @@ class TypedIndex {
      * Integer value of an expression the compiler folded to a constant, e.g.
      * an enum abstract value like `Color.Black` (0xff000000). Null otherwise.
      */
+    /**
+     * The property accessor the compiler calls for `e` (it rewrites property
+     * accesses while typing, with Haxe's rules: none inside the accessor of
+     * the same kind), on the game's own classes, e.g. "set_volume" for `volume = v` or `volume += v`
+     * (e: the assignment, ++ or --), "get_steps" for a read of `steps` (e: the
+     * identifier or field). prefix: "set_" or "get_". Null for a direct access.
+     */
+    public static function accessorAt(e:Expr, prefix:String):Null<String> {
+        var list = nodesAt(e);
+        return list.length > 0 ? accessorIn(list[0], prefix) : null;
+    }
+
+    /**
+     * In `x op= v` (or ++/--) through a setter, how the compiler reads x: its
+     * getter's name, null for a direct read.
+     */
+    public static function compoundReadAccessor(e:Expr):Null<String> {
+        var list = nodesAt(e);
+        if (list.length == 0) return null;
+        function find(t:TypedExpr):Null<String> {
+            return switch (t.expr) {
+                case TCall({expr: TField(_, _)}, [{expr: TBinop(_, left, _)}]) if (accessorIn(t, "set_") != null): accessorIn(left, "get_");
+                // x++ as a value: `var v = get_x(); set_x(v + 1); v`
+                case TVar(_, init) if (init != null): accessorIn(init, "get_");
+                case TBlock(exprs):
+                    var found:Null<String> = null;
+                    for (x in exprs) if (found == null) found = find(x);
+                    found;
+                case TParenthesis(inner), TMeta(_, inner): find(inner);
+                default: null;
+            };
+        }
+        return find(list[0]);
+    }
+
+    static function accessorIn(t:TypedExpr, prefix:String):Null<String> {
+        return switch (t.expr) {
+            case TCall({expr: TField(_, access)}, _):
+                var info = switch (access) {
+                    case FInstance(c, _, cf): {owner: c.get(), field: cf.get()};
+                    case FStatic(c, cf): {owner: c.get(), field: cf.get()};
+                    default: null;
+                };
+                // Only the game's classes (traits, autoloads): engine properties
+                // (Label.text, Time.delta...) are converted by field
+                info != null && StringTools.startsWith(info.field.name, prefix)
+                    && N64MacroBase.extractedClass(classPath(info.owner)) != null
+                    && isAccessor(info.owner, info.field.name.substr(4), prefix == "set_") ? info.field.name : null;
+            // The compiler's temporaries (`obj.x += v` on a receiver it evaluates once)
+            case TBlock(exprs):
+                var found:Null<String> = null;
+                for (x in exprs) if (found == null) found = accessorIn(x, prefix);
+                found;
+            case TParenthesis(inner), TMeta(_, inner): accessorIn(inner, prefix);
+            default: null;
+        };
+    }
+
+    // Whether `property` of class c (or an ancestor) is a property whose read
+    // (write) access is through its accessor
+    static function isAccessor(c:ClassType, property:String, write:Bool):Bool {
+        while (c != null) {
+            for (f in c.fields.get().concat(c.statics.get())) {
+                if (f.name != property) continue;
+                return switch (f.kind) {
+                    case FVar(read, w): (write ? w : read).match(AccCall);
+                    default: false;
+                };
+            }
+            c = c.superClass != null ? c.superClass.t.get() : null;
+        }
+        return false;
+    }
+
     public static function intConstant(e:Expr):Null<Int> {
         var list = nodesAt(e);
         if (list.length == 0) return null;

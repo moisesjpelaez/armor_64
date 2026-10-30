@@ -228,12 +228,13 @@ class AutoloadExtractor extends N64Extractor {
                 // Fields of the class's own type are the singleton instance
                 case FVar(_, _) | FProp(_, _, _, _) if (isOwnClass(field.name)):
                 case FVar(t, e):
-                    collectVar(field.name, t, e, null, field.pos);
-                case FProp(_, set, t, e):
+                    collectVar(field.name, t, e, field.pos);
+                case FProp(get, set, t, e):
                     // Property with a backing field (e.g., public var volume(default, set): Float)
-                    collectVar(field.name, t, e, set, field.pos);
+                    if (N64Extractor.hasStorage(field, get, set)) collectVar(field.name, t, e, field.pos);
                 case FFun(func):
-                    var funcIR = extractFunction(field.name, func, hasAccess(field.access, APublic));
+                    // A public property's accessors are called wherever it's used
+                    var funcIR = extractFunction(field.name, func, hasAccess(field.access, APublic) || isPublicAccessor(field.name));
                     functions.set(field.name, funcIR);
                     if (field.name == "init") hasInit = true;
                 default:
@@ -259,6 +260,13 @@ class AutoloadExtractor extends N64Extractor {
             case TInst(c, _): TypedIndex.classPath(c.get()) == TypedIndex.classPath(cls);
             default: false;
         };
+    }
+
+    // get_x / set_x of a public property x of this class
+    function isPublicAccessor(name:String):Bool {
+        if (!StringTools.startsWith(name, "get_") && !StringTools.startsWith(name, "set_")) return false;
+        var property = Lambda.find(fields, f -> f.name == name.substr(4));
+        return property != null && property.kind.match(FProp(_, _, _, _)) && hasAccess(property.access, APublic);
     }
 
     function hasAccess(access:Array<Access>, target:Access):Bool {

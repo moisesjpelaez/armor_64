@@ -292,9 +292,16 @@ class TraitEmitter:
         - Parent's members: data->_parent.member
         - Grandparent's: data->_parent._parent.member
         """
+        from armor64.codegen.trait_generator import is_static_member, static_member_symbol
         name = node.get("value", "")
-        owner = node.get("owner")
-        if owner:
+        owner = node.get("owner") or self.member_map.get(name, {}).get("owner") or self.trait_name
+        # A static var: the trait's global
+        if owner in self.all_traits and is_static_member(self.all_traits, owner, name):
+            return static_member_symbol(self.all_traits, owner, name)
+        # Another instance's: through its data pointer (the declaring trait's struct is at offset 0)
+        if node.get("object"):
+            return f"(({self.all_traits[owner]['c_name']}Data*)({self.emit(node['object'])}))->{name}"
+        if node.get("owner"):
             # Declared by an ancestor: its struct is at offset 0 of ours
             owner_c_name = self.all_traits[owner]["c_name"]
             return f"(({owner_c_name}Data*)data)->{name}"
@@ -846,6 +853,25 @@ class TraitEmitter:
                 if emitted:
                     arg_strs.append(emitted)
         args_part = ", ".join(arg_strs) if arg_strs else ""
+
+        # A trait's static function (no instance), or a method of another
+        # instance: its data (the reference) and object, through its vtable
+        # when overridden
+        props = node.get("props") or {}
+        if props.get("is_static"):
+            return f"{c_name}(NULL, NULL{', ' + args_part if args_part else ''})"
+        if node.get("object"):
+            from armor64.codegen.trait_generator import chain_root, visible_vtable_owners
+            trait = node.get("trait", "")
+            if trait not in self.all_traits:
+                raise ValueError(f"{self.trait_name}: {method_name}() of {trait}, which has no N64 code")
+            vtable_owner = visible_vtable_owners(self.all_traits, trait).get(method_name)
+            function = (f"(({self.all_traits[vtable_owner]['c_name']}Data*)_d)->_vfn_{method_name}"
+                        if vtable_owner else c_name)
+            root_c_name = self.all_traits[chain_root(self.all_traits, trait)]["c_name"]
+            receiver = self.emit(node["object"])
+            return (f"({{ void* _d = (void*)({receiver}); "
+                    f"{function}((({root_c_name}Data*)_d)->object, _d{', ' + args_part if args_part else ''}); }})")
 
         # Build the method call
         vtable_call = self._vtable_call(method_name)

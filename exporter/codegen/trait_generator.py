@@ -87,6 +87,23 @@ def vtable_initializers(all_traits: dict, instance: str, level: str) -> list:
     return pointers
 
 
+def chain_root(all_traits: dict, name: str) -> str:
+    """The topmost exported ancestor of a trait (its struct holds `object`)."""
+    for ancestor in _ancestors(all_traits, name):
+        name = ancestor
+    return name
+
+
+def is_static_member(all_traits: dict, trait: str, name: str) -> bool:
+    """Whether `name` is a static var of `trait` (a C global, static_member_symbol)."""
+    return any(m.get("name") == name and m.get("is_static")
+               for m in all_traits.get(trait, {}).get("members", []))
+
+
+def static_member_symbol(all_traits: dict, trait: str, name: str) -> str:
+    return f"{all_traits[trait]['c_name']}_{name}"
+
+
 def visible_vtable_owners(all_traits: dict, name: str) -> dict:
     """Virtual methods callable from trait `name` (own and inherited) -> the
     trait whose struct holds their vtable pointer."""
@@ -325,8 +342,10 @@ class TraitCodeGenerator:
             params_str = ", ".join(param_types)
             lines.append(f"    {vm_ret} (*_vfn_{vm_name})({params_str});")
 
-        # This trait's own members
+        # This trait's own members (its static vars are globals: static_definitions)
         for m in self.members:
+            if m.get("is_static"):
+                continue
             ctype = self._get_member_ctype(m)
             # Another trait's data (any trait, this one too): the structs are
             # anonymous typedefs declared in any order
@@ -587,9 +606,21 @@ class TraitCodeGenerator:
 
         return "\n".join(lines)
 
+    def static_definitions(self) -> List[str]:
+        """The trait's static vars: one global each, shared by its instances
+        (and its descendants), with its initial value."""
+        lines = []
+        for m in self.members:
+            if not m.get("is_static"):
+                continue
+            default = m.get("default_value")
+            value = self.emitter.emit(default) if default and default.get("type") != "skip" else ""
+            lines.append(f"{m['ctype']} {self.c_name}_{m['name']} = {value or '{0}'};")
+        return lines
+
     def generate_lifecycle_declarations(self) -> List[str]:
         """Generate declarations for lifecycle event handlers."""
-        decls = []
+        decls = [f"extern {m['ctype']} {self.c_name}_{m['name']};" for m in self.members if m.get("is_static")]
         # Match the typedefs in types.h:
         # ArmTraitAddFn: (void *entity, void *data) - no dt, called when trait is added
         # ArmTraitReadyFn: (void *entity, void *data) - no dt
@@ -1011,6 +1042,7 @@ def _prepare_traits_template_data(traits: dict, type_overrides: dict = None) -> 
     event_handler_declarations = []
     trait_implementations = []
     tween_callbacks = []  # Tween callback functions (must come before implementations)
+    static_definitions = []  # The traits' static vars
 
     signals = signals_context(traits)
     # Signal handler functions, once each (several traits may use the same one)
@@ -1052,6 +1084,8 @@ def _prepare_traits_template_data(traits: dict, type_overrides: dict = None) -> 
             all_features['has_physics'] = True
         all_features.setdefault('autoloads', set()).update(meta.get("autoloads_used", []))
 
+        static_definitions.extend(gen.static_definitions())
+
         # Generate tween callbacks (must come before implementations that reference them)
         tween_cb_code = gen.generate_tween_callbacks()
         if tween_cb_code:
@@ -1085,6 +1119,8 @@ def _prepare_traits_template_data(traits: dict, type_overrides: dict = None) -> 
 
     # Combine tween callbacks with implementations (callbacks must come first)
     all_implementations = []
+    if static_definitions:
+        all_implementations.append("// Static vars of the traits\n" + "\n".join(static_definitions) + "\n")
     if tween_callbacks:
         all_implementations.append("\n".join(tween_callbacks))
     all_implementations.append("\n".join(trait_implementations))

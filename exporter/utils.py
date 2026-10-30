@@ -187,7 +187,7 @@ def _trait_data_fields(trait_info: dict, trait_class: str, instance_props: dict,
 
     for member in trait.get("members", []):
         name = member.get("name", "")
-        if not name:
+        if not name or member.get("is_static"):
             continue
         ctype = type_overrides.get(name, member["ctype"])
         if ctype == "ArmTween*":

@@ -16,7 +16,8 @@ package armor64;
  *   c_literal                        - Raw C code passthrough
  *
  * VARIABLES:
- *   member                           - Trait data member: data->name
+ *   member                           - Trait data member: data->name; owner: the declaring trait;
+ *                                      object: another instance's data (its member); a static var is a global
  *   ident                            - Identifier: local var, dt, object, this
  *   field_access                     - Field access: object.field, vec.x, this.field
  *   autoload_field                   - Access to another autoload's member
@@ -48,7 +49,8 @@ package armor64;
  *   call                             - A C function call (value = its name)
  *   super_call                       - super.method(): cName of the declaring ancestor's C function;
  *                                      super(): the parent's constructor (on_create)
- *   trait_method_call                - A method of the trait or an ancestor (cName; vtable when overridden)
+ *   trait_method_call                - A method of the trait or an ancestor (cName; vtable when overridden);
+ *                                      object: another instance (its data and object); props.is_static: no instance
  *   callback_wrapper                 - An anonymous function passed to a method (body, captures)
  *   callback_param_call              - Calling a function parameter (name)
  *   scene_call, input_call           - Scene.setActive(), input calls
@@ -123,8 +125,8 @@ typedef MemberIR = {
     haxeType: String,
     ctype: String,
     defaultValue: IRNode,
-    ?setter: String,  // Setter method name (e.g., "set_paused") for FProp fields
-    ?traitRef: String // Typed as a trait (full path): ctype is a pointer to its data
+    ?traitRef: String, // Typed as a trait (full path): ctype is a pointer to its data
+    ?isStatic: Bool    // A trait's static var: one C global, <trait C name>_<name>
 }
 
 typedef ContactEventMeta = {
