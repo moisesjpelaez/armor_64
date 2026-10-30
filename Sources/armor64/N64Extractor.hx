@@ -257,6 +257,14 @@ class N64Extractor implements IExtractorContext {
             case EConst(c):
                 N64MacroBase.constToIR(c);
 
+            // transform.loc / scale / rot and their components: Blender's values (transform.h)
+            case EBinop(OpAssign, e1, e2) if (transformVector(e1) != null || transformComponent(e1) != null):
+                transformWrite(e1, e2);
+            case EBinop(OpAssignOp(op), e1, e2) if (transformComponent(e1) != null):
+                transformUpdate(e1, op, e2);
+            case EUnop(op = OpIncrement | OpDecrement, _, e1) if (transformComponent(e1) != null):
+                transformUpdate(e1, op == OpIncrement ? OpAdd : OpSub, { expr: EConst(CFloat("1.0")), pos: e.pos });
+
             // handle = null: the runtime's "no sound" handle
             case EBinop(OpAssign, e1, e2) if (isSoundHandle(e1) && N64MacroBase.isNullLiteral(e2)):
                 { type: "assign", children: [exprToIR(e1), SOUND_HANDLE_NULL] };
@@ -345,6 +353,107 @@ class N64Extractor implements IExtractorContext {
     function resolveIdent(name:String, e:Expr):IRNode {
         if (localVarTypes.exists(name)) return localIdent(name);
         return { type: "ident", value: name };
+    }
+
+    // ========================================================================
+    // Transform vectors: Iron's loc, scale and rot in Blender's axes and units.
+    // The runtime keeps N64 space; transform.h's functions convert each access
+    // ========================================================================
+
+    static var TRANSFORM_VECTORS = ["loc", "scale", "rot"];
+    // The transform of the object a template's {self} is
+    static inline var TRANSFORM = "&((ArmObject*)({self}))->transform";
+    // Vec4 methods that change their vector in Iron (Vec4.set is converted)
+    static var MUTATING_VEC_METHODS = ["add", "sub", "mult", "normalize", "setFrom", "addf", "subf", "cross",
+        "applyQuat", "applymat", "applyproj", "applyAxisAngle", "lerp", "clamp"];
+
+    /** The object owning `x.transform` or `transform`, null if e isn't one. */
+    function transformOwner(e:Expr):Null<IRNode> {
+        return switch (e.expr) {
+            case EField(innerObj, "transform"):
+                meta.uses_transform = true;
+                switch (innerObj.expr) {
+                    case EConst(CIdent("this")), EConst(CIdent("object")): { type: "ident", value: "object" };
+                    default: exprToIR(innerObj);
+                }
+            case EConst(CIdent("transform")) if (!localVarTypes.exists("transform")):
+                meta.uses_transform = true;
+                { type: "ident", value: "object" };
+            default: null;
+        };
+    }
+
+    /** `x.transform.loc` (scale, rot): its owner and field, null if e isn't one. */
+    function transformVector(e:Expr):Null<{owner:IRNode, field:String}> {
+        return switch (e.expr) {
+            case EField(t, field) if (TRANSFORM_VECTORS.indexOf(field) >= 0):
+                var owner = transformOwner(t);
+                owner != null ? { owner: owner, field: field } : null;
+            default: null;
+        };
+    }
+
+    /** `x.transform.loc.x` (y, z; w of rot): the vector and axis, null if e isn't one. */
+    function transformComponent(e:Expr):Null<{owner:IRNode, field:String, axis:String}> {
+        return switch (e.expr) {
+            case EField(v, axis) if (axis == "x" || axis == "y" || axis == "z" || axis == "w"):
+                var vector = transformVector(v);
+                vector != null && (axis != "w" || vector.field == "rot") ? { owner: vector.owner, field: vector.field, axis: axis } : null;
+            default: null;
+        };
+    }
+
+    // The vector's value (a Vec4 in Blender space; a component is read from it)
+    function transformRead(owner:IRNode, field:String):IRNode {
+        return { type: "c_template", c_code: 'it_get_$field($TRANSFORM)', object: owner };
+    }
+
+    // `t.loc = v` or `t.loc.x = v`
+    function transformWrite(target:Expr, value:Expr):IRNode {
+        meta.mutates_transform = true;
+        var component = transformComponent(target);
+        if (component != null) {
+            return { type: "c_template", c_code: 'it_set_${component.field}_${component.axis}($TRANSFORM, {0});', object: component.owner, args: [exprToIR(value)] };
+        }
+        var vector = transformVector(target);
+        var w = vector.field == "rot" ? ", _v.w" : "";
+        return { type: "c_template", c_code: '{ ArmVec4 _v = {0}; it_set_${vector.field}_b($TRANSFORM, _v.x, _v.y, _v.z$w); }', object: vector.owner, args: [exprToIR(value)] };
+    }
+
+    // `t.loc.x op= v`, `t.loc.x++`: read, compute as Haxe, write (the transform once)
+    function transformUpdate(target:Expr, op:Binop, value:Expr):IRNode {
+        meta.mutates_transform = true;
+        var c = transformComponent(target);
+        var current = 'it_get_${c.field}(_t).${c.axis}';
+        var template = operatorTemplate(op, "Float", getExprType(value));
+        var result:String;
+        if (template != null) {
+            if (template.length == 0) return { type: "skip" };
+            result = StringTools.replace(StringTools.replace(template, "{0}", current), "{1}", "({0})");
+        } else {
+            var cOp = N64MacroBase.binopToString(op);
+            if (cOp == null) return N64MacroBase.unsupported('the ${new haxe.macro.Printer().printBinop(OpAssignOp(op))} operator is not supported on N64');
+            result = '($current $cOp ({0}))';
+        }
+        return { type: "c_template", c_code: '{ ArmTransform* _t = $TRANSFORM; it_set_${c.field}_${c.axis}(_t, $result); }', object: c.owner, args: [exprToIR(value)] };
+    }
+
+    // t.loc.set(x, y, z): written in Blender space; methods changing the
+    // vector in Iron are reported (clone() and the others read its value)
+    function transformVectorCall(obj:Expr, method:String, args:Array<IRNode>):Null<IRNode> {
+        var vector = transformVector(obj);
+        if (vector == null) return null;
+        if (method == "set") {
+            meta.mutates_transform = true;
+            var count = vector.field == "rot" ? 4 : 3;
+            if (args.length < count) return N64MacroBase.unsupported('transform.${vector.field}.set() needs $count values on N64');
+            var placeholders = [for (i in 0...count) '{$i}'].join(", ");
+            return { type: "c_template", c_code: 'it_set_${vector.field}_b($TRANSFORM, $placeholders);', object: vector.owner, args: args.slice(0, count) };
+        }
+        if (MUTATING_VEC_METHODS.indexOf(method) >= 0) {
+            return N64MacroBase.unsupported('transform.${vector.field}.$method() is not supported on N64 yet (compute the vector, then set() it)');
+        }
+        return null;
     }
 
     // ========================================================================
@@ -786,10 +895,13 @@ class N64Extractor implements IExtractorContext {
                     // External object (e.g., target.transform.loc)
                     default: exprToIR(innerObj);
                 };
+                if (TRANSFORM_VECTORS.indexOf(field) >= 0) return transformRead(ownerNode, field);
                 return { type: "field_access", object: ownerNode, value: "transform." + field };
             case EConst(CIdent("transform")):
                 meta.uses_transform = true;
-                return { type: "field_access", object: { type: "ident", value: "object" }, value: "transform." + field };
+                var ownerNode:IRNode = { type: "ident", value: "object" };
+                if (TRANSFORM_VECTORS.indexOf(field) >= 0) return transformRead(ownerNode, field);
+                return { type: "field_access", object: ownerNode, value: "transform." + field };
             case _ if (TypedIndex.isClassRef(obj, "iron.system.Time")):
                 if (field == "delta") {
                     meta.uses_time = true;
@@ -894,6 +1006,9 @@ class N64Extractor implements IExtractorContext {
                     if (method == "clearScenes") return { type: "canvas_clear_scenes" };
                     return N64MacroBase.unsupported('SceneManager.$method() is not supported on N64 yet');
                 }
+
+                var transformCall = transformVectorCall(obj, method, args);
+                if (transformCall != null) return transformCall;
 
                 // The converters (calls needing logic), then the calls that map
                 // straight to C (Bindings.hx)

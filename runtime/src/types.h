@@ -130,6 +130,7 @@ typedef struct {
     T3DQuat rot;
     T3DVec3 scale;
     uint8_t dirty;
+    uint8_t parented;  // An object with a parent: local loc x64, scale without the factor (transform.h)
 } ArmTransform;
 
 /**

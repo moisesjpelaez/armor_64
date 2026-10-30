@@ -121,6 +121,7 @@ static void build_objects(ArmScene *s, const ArmSceneDef *def)
             obj->model_mat = malloc_uncached(sizeof(T3DMat4FP) * FB_COUNT);
         }
         obj->parent_index = od->parent_index;
+        obj->transform.parented = od->parent_index >= 0;
         obj->visible = od->visible;
         obj->bounds_center = od->bounds_center;
         obj->bounds_half = od->bounds_half;

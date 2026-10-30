@@ -3,16 +3,19 @@
 #include <t3d/t3dmath.h>
 #include <fmath.h>
 
+// x, y, z (and dx...) in N64 axes, Blender units: a parented object's location is x64
 void it_translate(ArmTransform *t, float x, float y, float z)
 {
-	t->loc.x += x;
-	t->loc.y += y;
-	t->loc.z += z;
+	float k = it_loc_k(t);
+	t->loc.x += x * k;
+	t->loc.y += y * k;
+	t->loc.z += z * k;
 	t->dirty = TRANSFORM_DIRTY_FRAMES;
 }
 
 void it_move(ArmTransform *t, float dx, float dy, float dz, float scale)
 {
+	scale *= it_loc_k(t);
 	t->loc.x += dx * scale;
 	t->loc.y += dy * scale;
 	t->loc.z += dz * scale;
@@ -83,7 +86,9 @@ void it_reset(ArmTransform *t)
 {
 	t->loc.v[0] = 0.0f; t->loc.v[1] = 0.0f; t->loc.v[2] = 0.0f;
 	t->rot.x = 0.0f; t->rot.y = 0.0f; t->rot.z = 0.0f; t->rot.w = 1.0f;
-	t->scale.v[0] = 1.0f; t->scale.v[1] = 1.0f; t->scale.v[2] = 1.0f;
+	// Blender's scale 1
+	float s = it_scale_k(t);
+	t->scale.v[0] = s; t->scale.v[1] = s; t->scale.v[2] = s;
 	t->dirty = TRANSFORM_DIRTY_FRAMES;
 }
 

@@ -11,8 +11,8 @@ import armor64.converters.ICallConverter;
 using StringTools;
 
 /**
- * Vec2/Vec3/Vec4 clone() and set(), which differ on transform vectors (loc,
- * scale: T3DVec3, scale stored with SCALE_FACTOR). The other vector methods
+ * Vec2/Vec3/Vec4 clone() and set() (on a transform vector they're converted
+ * before: N64Extractor.transformVectorCall). The other vector methods
  * are in Bindings.hx.
  */
 class VecCallConverter implements ICallConverter {
@@ -44,28 +44,14 @@ class VecCallConverter implements ICallConverter {
         // Template uses {v} for vector, {0} for first arg
         var c_code = switch (method) {
             case "clone":
-                // Clone creates a copy - type depends on target
-                // Special case: transform.scale is stored with SCALE_FACTOR, so multiply by inverse to get Blender values
-                var isScaleClone = (objIR.type == "field_access" && objIR.value == "transform.scale");
-                if (isScaleClone) {
-                    var inv = Constants.SCALE_FACTOR_INV_C;
-                    if (cType == "ArmVec4") '($cType){{v}.x*$inv, {v}.y*$inv, {v}.z*$inv, 1.0f}';
-                    else if (cType == "ArmVec3") '($cType){{v}.x*$inv, {v}.y*$inv, {v}.z*$inv}';
-                    else '($cType){{v}.x*$inv, {v}.y*$inv}';
-                } else {
-                    if (cType == "ArmVec4") "(" + cType + "){{v}.x, {v}.y, {v}.z, 1.0f}";
-                    else if (cType == "ArmVec3") "(" + cType + "){{v}.x, {v}.y, {v}.z}";
-                    else "(" + cType + "){{v}.x, {v}.y}";
-                }
+                // A copy (a transform vector's value is already in Blender space)
+                if (cType == "ArmVec4") "(" + cType + "){{v}.x, {v}.y, {v}.z, 1.0f}";
+                else if (cType == "ArmVec3") "(" + cType + "){{v}.x, {v}.y, {v}.z}";
+                else "(" + cType + "){{v}.x, {v}.y}";
             case "set":
                 // set(x, y, z) or set(x, y, z, w) - modifies in-place
-                // Check if this is a transform vector (loc, scale) which uses T3DVec3
-                var isTransformVec = (objIR.type == "field_access" && objIR.value != null &&
-                    (StringTools.endsWith(objIR.value, ".loc") || StringTools.endsWith(objIR.value, ".scale")));
-                if (isTransformVec) {
-                    // Transform vectors are T3DVec3 (3 components, stored in .v array)
-                    "{ {vraw}.v[0] = {0}; {vraw}.v[1] = {1}; {vraw}.v[2] = {2}; }";
-                } else if (cType == "ArmVec4") {
+                // (transform.loc.set() is converted before: N64Extractor.transformVectorCall)
+                if (cType == "ArmVec4") {
                     "{ {vraw}.x = {0}; {vraw}.y = {1}; {vraw}.z = {2}; {vraw}.w = {3}; }";
                 } else if (cType == "ArmVec3") {
                     "{ {vraw}.x = {0}; {vraw}.y = {1}; {vraw}.z = {2}; }";

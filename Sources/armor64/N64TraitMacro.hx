@@ -549,16 +549,6 @@ class TraitExtractor extends N64Extractor {
         // Check if assigning to transform.loc/rot/scale (mutating transform)
         checkTransformMutation(e1);
 
-        // transform.scale = value -> it_set_scale()
-        if (isTransformScaleAssign(e1)) {
-            // Swizzle: Blender (x, y, z) → N64 (x, z, y) and multiply by SCALE_FACTOR
-            var sf = Constants.SCALE_FACTOR_C;
-            return {
-                type: "c_template",
-                c_code: 'it_set_scale(&((ArmObject*)obj)->transform, ({0}).x * $sf, ({0}).z * $sf, ({0}).y * $sf);',
-                args: [exprToIR(e2)]
-            };
-        }
         // g2.color = value -> render2d_set_color
         if (isGraphics2ColorAssign(e1)) {
             return { type: "render2d_set_color", args: [exprToIR(e2)] };
@@ -710,20 +700,6 @@ class TraitExtractor extends N64Extractor {
                 }
             default:
         }
-    }
-
-    // Check if expression is assignment to transform.scale (needs special handling)
-    function isTransformScaleAssign(expr:Expr):Bool {
-        switch (expr.expr) {
-            case EField(obj, "scale"):
-                switch (obj.expr) {
-                    case EField(_, "transform"), EConst(CIdent("transform")):
-                        return true;
-                    default:
-                }
-            default:
-        }
-        return false;
     }
 
     // Check if expression is assignment to g2.color (Graphics2 color property)
