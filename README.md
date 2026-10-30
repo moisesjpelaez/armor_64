@@ -2,7 +2,7 @@
 
 Armor 64 builds [Armory 3D](https://github.com/armory3d/armory) games as Nintendo 64 ROMs. Your scenes, meshes, UI, sounds and Haxe traits become C for [libdragon](https://github.com/n64brew/libdragon) and [tiny3d](https://github.com/HailToDodongo/tiny3d), and you play the result in the [Ares](https://ares-emu.net/) emulator or on real hardware.
 
-> Experimental and in development. It runs [Armor Ball](https://github.com/moisesjpelaez/arm_ball) on Ares and on an Analogue 3D.
+> This library is experimental and in development, co-authored by Claude Opus 4.5/5.5. It runs [Armor Ball](https://github.com/moisesjpelaez/arm_ball) on Ares and on an Analogue 3D.
 
 - **Making a game:** this page, then [GUIDE.md](GUIDE.md) for the game code you can write.
 - **Changing Armor 64:** [exporter/](exporter/README.md) (Python), [Sources/armor64/](Sources/armor64/README.md) (Haxe macros), [runtime/](runtime/README.md) (C), [Tests/](Tests/README.md).
