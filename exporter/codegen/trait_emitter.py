@@ -886,7 +886,7 @@ class TraitEmitter:
         """A call after storing the parameters its callbacks capture (capture_ref):
         a comma expression, so it works as a statement, a value or in a chain."""
         stores = [f"{capture_ref(self.c_name, self.is_trait, cb['callback_name'], cap['name'])} = {cap['name']}"
-                  for cb in callbacks if cb for cap in cb.get("captures", []) if cap.get("is_param")]
+                  for cb in callbacks if cb for cap in cb.get("captures", [])]
         return f"({', '.join(stores + [call])})" if stores else call
 
     def _vtable_call(self, method: str) -> str:
@@ -987,7 +987,8 @@ class TraitEmitter:
         if not reg_fn:
             return f"/* WARNING: Unknown button event type '{event}' */"
 
-        return f"{reg_fn}({button_expr}, {cb_name}, data);"
+        call = f"{reg_fn}({button_expr}, {cb_name}, data)"
+        return self._with_captures([{"callback_name": cb_name, "captures": props.get("captures", [])}], call) + ";"
 
     def emit_button_grab_focus(self, node: Dict) -> str:
         """button.grabFocus() -> button_set_focus(UI_BUTTON_XXX)"""
@@ -1126,7 +1127,10 @@ class TraitEmitter:
             ctx = self.emit(handler["instance"])
         else:
             ctx = "data"
-        return f"{func}({ptr}, {name}, {ctx})"
+        call = f"{func}({ptr}, {name}, {ctx})"
+        if func == "signal_connect" and handler.get("kind") == "anonymous":
+            return self._with_captures([{"callback_name": handler["id"], "captures": handler.get("captures", [])}], call)
+        return call
 
     def emit_autoload_call(self, node: Dict) -> str:
         """Autoload function call - ClassName.method() -> classname_method(args)."""

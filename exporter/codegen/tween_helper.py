@@ -20,14 +20,30 @@ def capture_ref(c_name: str, is_trait: bool, callback_name: str, param: str) -> 
     return f"{c_name}_cap_{callback_name}_{param}"
 
 
+def callback_captures(ir) -> List[Tuple[str, List[Dict]]]:
+    """(name, captures) of each callback in an IR tree: tween callbacks,
+    callbacks passed to methods, anonymous signal handlers, button handlers.
+    The name keys where its captures are kept (capture_ref); a capture is a
+    local or parameter of the function around it ({name, ctype}, the macros'
+    N64MacroBase.callbackCaptures)."""
+    found = [(cb["callback_name"], cb.get("captures", []))
+             for cb in find_tween_callbacks(ir) + nodes_of_type(ir, "callback_wrapper")]
+    for node in nodes_of_type(ir, "signal_connect"):
+        handler = node["props"]["handler"]
+        if handler.get("kind") == "anonymous":
+            found.append((handler["id"], handler.get("captures", [])))
+    for node in nodes_of_type(ir, "button_register_callback"):
+        found.append((node["props"]["callback_name"], node["props"].get("captures", [])))
+    return found
+
+
 def param_captures(ir) -> List[Tuple[str, str, str]]:
-    """(callback, parameter, C type) of each function parameter the callbacks in
-    an IR tree capture (tween callbacks, callbacks passed to methods), once each."""
+    """(callback, captured name, C type) of each capture of the callbacks in an
+    IR tree, once each."""
     found = {}
-    for callback in find_tween_callbacks(ir) + nodes_of_type(ir, "callback_wrapper"):
-        for capture in callback.get("captures", []):
-            if capture.get("is_param"):
-                found.setdefault((callback["callback_name"], capture["name"]), capture["ctype"])
+    for callback, captures in callback_captures(ir):
+        for capture in captures:
+            found.setdefault((callback, capture["name"]), capture["ctype"])
     return [(callback, param, ctype) for (callback, param), ctype in found.items()]
 
 
@@ -88,8 +104,7 @@ def generate_tween_callback(
     lines = []
 
     # The captured parameters, read where the call stored them
-    param_captures = {c["name"]: capture_ref(c_name, is_trait, cb_name, c["name"])
-                      for c in captures if c.get("is_param", False)}
+    param_captures = {c["name"]: capture_ref(c_name, is_trait, cb_name, c["name"]) for c in captures}
 
     # Generate function signature based on callback type
     if cb_type == "float":

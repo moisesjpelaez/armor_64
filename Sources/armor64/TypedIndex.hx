@@ -334,6 +334,51 @@ class TypedIndex {
     }
 
     /**
+     * What an anonymous function captures: the locals and parameters of the
+     * functions around it that it uses (anywhere in it, nested functions too),
+     * in order of first use. Its own parameters and locals aren't. Null if it
+     * has no typed node.
+     */
+    public static function capturedLocals(fn:Expr):Null<Array<TVar>> {
+        var func:TFunc = null;
+        for (t in nodesAt(fn)) switch (t.expr) {
+            case TFunction(f):
+                func = f;
+                break;
+            default:
+        }
+        if (func == null) return null;
+
+        var declared = new Map<Int, Bool>();
+        for (arg in func.args) declared.set(arg.v.id, true);
+        function declare(t:TypedExpr) {
+            switch (t.expr) {
+                case TVar(v, _), TFor(v, _, _): declared.set(v.id, true);
+                case TFunction(f): for (arg in f.args) declared.set(arg.v.id, true);
+                case TTry(_, catches): for (c in catches) declared.set(c.v.id, true);
+                default:
+            }
+            t.iter(declare);
+        }
+        declare(func.expr);
+
+        var used:Array<TVar> = [];
+        var seen = new Map<Int, Bool>();
+        function use(t:TypedExpr) {
+            switch (t.expr) {
+                // `this is the compiler's: members are reached through the data pointer
+                case TLocal(v) if (!declared.exists(v.id) && !seen.exists(v.id) && !StringTools.startsWith(v.name, "`")):
+                    seen.set(v.id, true);
+                    used.push(v);
+                default:
+            }
+            t.iter(use);
+        }
+        use(func.expr);
+        return used;
+    }
+
+    /**
      * Integer value of an expression the compiler folded to a constant, e.g.
      * an enum abstract value like `Color.Black` (0xff000000). Null otherwise.
      */

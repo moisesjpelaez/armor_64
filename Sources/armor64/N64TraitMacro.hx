@@ -1086,7 +1086,7 @@ class TraitExtractor extends N64Extractor {
             switch (param.expr) {
                 case EFunction(_, func):
                     // Anonymous function - extract as callback wrapper
-                    var callback = extractInheritedCallback(func, methodName, i);
+                    var callback = extractInheritedCallback(param, func, methodName, i);
                     if (callback != null) {
                         result.push(callback);
                     } else {
@@ -1105,7 +1105,7 @@ class TraitExtractor extends N64Extractor {
      * Extract an anonymous function as a callback for an inherited method.
      * Returns a callback_wrapper IR node that will be emitted as a C function.
      */
-    function extractInheritedCallback(func:Function, methodName:String, argIndex:Int):IRNode {
+    function extractInheritedCallback(fn:Expr, func:Function, methodName:String, argIndex:Int):IRNode {
         if (func == null || func.expr == null) return null;
 
         // Generate unique callback name
@@ -1129,8 +1129,7 @@ class TraitExtractor extends N64Extractor {
             localVarTypes.remove(paramName);
         }
 
-        // Analyze captures - variables from outer scope that need to be passed via data
-        var captures = analyzeCallbackCaptures(bodyNodes, paramName);
+        var captures = N64MacroBase.callbackCaptures(fn);
 
         // Return callback wrapper with all required fields
         // Type as IRNode so serializeIRNode can access all fields
@@ -1144,73 +1143,6 @@ class TraitExtractor extends N64Extractor {
             captures: captures
         };
         return cbWrapper;
-    }
-
-    /**
-     * Analyze IR nodes to find captured variables (members and params from outer scope).
-     */
-    function analyzeCallbackCaptures(nodes:Array<IRNode>, excludeParam:String):Array<Dynamic> {
-        var captures:Map<String, Dynamic> = new Map();
-        for (node in nodes) {
-            findCallbackCaptures(node, excludeParam, captures);
-        }
-        return Lambda.array(captures);
-    }
-
-    function findCallbackCaptures(node:IRNode, excludeParam:String, captures:Map<String, Dynamic>):Void {
-        if (node == null) return;
-
-        switch (node.type) {
-            case "ident":
-                var name = Std.string(node.value);
-                if (name != excludeParam && name != "null" && name != "true" && name != "false" && name != "object" && name != "time_delta") {
-                    // First check if it's a class member
-                    var memberType = memberTypes.get(name);
-                    if (memberType != null && !captures.exists(name)) {
-                        captures.set(name, {
-                            name: name,
-                            type: memberType,
-                            ctype: TypeMap.getCType(memberType),
-                            is_member: true
-                        });
-                    } else if (!captures.exists(name)) {
-                        // Check if it's a local variable (including method parameters)
-                        var localType = localVarTypes.get(name);
-                        if (localType != null) {
-                            captures.set(name, {
-                                name: name,
-                                type: localType,
-                                ctype: TypeMap.getCType(localType),
-                                is_member: false,
-                                is_param: true
-                            });
-                        }
-                    }
-                }
-            case "member" if (node.owner == null):
-                var name = Std.string(node.value);
-                if (!captures.exists(name)) {
-                    var memberType = memberTypes.get(name);
-                    captures.set(name, {
-                        name: name,
-                        type: memberType != null ? memberType : "Dynamic",
-                        ctype: TypeMap.getCType(memberType != null ? memberType : "Dynamic"),
-                        is_member: true
-                    });
-                }
-            default:
-                // Recurse into children and args
-                if (node.children != null) {
-                    for (child in node.children) {
-                        findCallbackCaptures(child, excludeParam, captures);
-                    }
-                }
-                if (node.args != null) {
-                    for (arg in node.args) {
-                        findCallbackCaptures(arg, excludeParam, captures);
-                    }
-                }
-        }
     }
 }
 

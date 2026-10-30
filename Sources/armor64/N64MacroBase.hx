@@ -289,6 +289,29 @@ class N64MacroBase {
      * `obj.method(args)` that no converter or binding translates: reported at
      * the source line, as there is no generic C for a method call.
      */
+    /**
+     * What an anonymous callback (tween, method argument, signal handler,
+     * button) captures, as the exporter keeps it: [{name, ctype}], each copied
+     * where the callback is registered (see TypedIndex.capturedLocals).
+     */
+    public static function callbackCaptures(fn:Expr):Array<Dynamic> {
+        var locals = TypedIndex.capturedLocals(fn);
+        if (locals == null) {
+            unsupported("this callback's uses of the variables around it couldn't be found (no typed code)", fn.pos);
+            return [];
+        }
+        return [for (v in locals) {name: v.name, ctype: captureCType(v.t)}];
+    }
+
+    static function captureCType(t:Type):String {
+        return switch (Context.follow(t)) {
+            // A callback passed on: the runtime's callback types take obj/data
+            case TFun(args, _) if (args.length == 1 && TypedIndex.typeName(args[0].t) == "Float"): "ArmFloatObjCallback";
+            case TFun(_, _): "ArmCallback";
+            default: armor64.mapping.TypeMap.getCType(TypedIndex.typeName(t));
+        };
+    }
+
     public static function unsupportedMethodCall(obj:Expr, method:String):IRNode {
         if (TypedIndex.nodesAt(obj).length == 0) {
             return unsupported('could not resolve the type of this .$method() call on N64');

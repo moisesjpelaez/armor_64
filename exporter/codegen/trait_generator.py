@@ -439,7 +439,7 @@ class TraitCodeGenerator:
 
         # The captured parameters, read where the call stored them
         param_captures = {cap["name"]: tween_helper.capture_ref(self.c_name, True, cb_name, cap["name"])
-                          for cap in captures if cap.get("is_param", False)}
+                          for cap in captures}
 
         # Use capture-aware emitter if we have param captures
         emitter = self.emitter
@@ -536,7 +536,13 @@ class TraitCodeGenerator:
         lines.append(f"    void* obj = (void*){obj_access};")
         lines.append(f"    (void)obj;")
 
-        body = self.emitter.emit_statements(body_nodes, "    ")
+        # The captured locals, read where the registration stored them
+        emitter = self.emitter
+        captures = props.get("captures", [])
+        if captures:
+            emitter = tween_helper._CaptureEmitter(self.emitter, {
+                cap["name"]: tween_helper.capture_ref(self.c_name, True, cb_name, cap["name"]) for cap in captures})
+        body = emitter.emit_statements(body_nodes, "    ")
         if body:
             lines.append(body)
         lines.append("}")

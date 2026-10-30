@@ -146,6 +146,14 @@ class SignalContext:
 
         # Call or body
         if kind == "anonymous":
+            # The captured locals, read where the connect stored them
+            captures = handler.get("captures", [])
+            if captures:
+                from armor64.codegen import tween_helper
+                emitter = tween_helper._CaptureEmitter(emitter, {
+                    cap["name"]: tween_helper.capture_ref(connecting_c_name, connecting_trait is not None,
+                                                          handler["id"], cap["name"])
+                    for cap in captures})
             body = emitter.emit_statements(handler.get("body", []), "    ")
             if body:
                 lines.append(body)

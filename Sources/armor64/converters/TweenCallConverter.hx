@@ -6,7 +6,6 @@ import haxe.macro.Context;
 import armor64.IRTypes;
 import armor64.N64MacroBase;
 import armor64.converters.ICallConverter;
-import armor64.util.ExprUtils;
 import armor64.mapping.TypeMap;
 
 using StringTools;
@@ -206,7 +205,7 @@ class TweenCallConverter implements ICallConverter {
                 return null;
             case EFunction(kind, func):
                 // Anonymous function: function(v) { ... }
-                return extractFunctionBody(func, callbackType, ctx);
+                return extractFunctionBody(func, callbackType, ctx, param);
             case EConst(CIdent(name)):
                 // Declared function reference: onUpdate
                 // Trait methods have the callback's signature; autoload functions don't
@@ -274,10 +273,11 @@ class TweenCallConverter implements ICallConverter {
             Context.error('Tween callback method "$methodName" not found in class. Make sure it is defined as a static or instance method.', pos);
             return null;
         }
-        return extractFunctionBody(func, callbackType, ctx);
+        return extractFunctionBody(func, callbackType, ctx, null);
     }
 
-    function extractFunctionBody(func:Function, callbackType:String, ctx:IExtractorContext):Dynamic {
+    // fn: the anonymous function (null for a method, which captures nothing)
+    function extractFunctionBody(func:Function, callbackType:String, ctx:IExtractorContext, fn:Null<Expr>):Dynamic {
         if (func == null || func.expr == null) return null;
 
         // Generate unique callback name
@@ -307,11 +307,7 @@ class TweenCallConverter implements ICallConverter {
                 }
         }
 
-        // Analyze captures - find variables referenced in body that are:
-        // 1. Not local to the callback
-        // 2. Not the callback parameter
-        // 3. Members of the autoload class OR function parameters
-        var captures = analyzeCaptures(bodyNodes, paramName, ctx);
+        var captures = fn != null ? N64MacroBase.callbackCaptures(fn) : [];
 
         return {
             callback_name: callbackName,
@@ -320,115 +316,6 @@ class TweenCallConverter implements ICallConverter {
             captures: captures,
             param_name: paramName
         };
-    }
-
-    /**
-     * Analyze IR nodes to find captured variables.
-     * Returns array of {name, type, is_member, is_param}
-     */
-    function analyzeCaptures(nodes:Array<IRNode>, excludeParam:String, ctx:IExtractorContext):Array<Dynamic> {
-        var captures:Map<String, Dynamic> = new Map();
-
-        for (node in nodes) {
-            findCaptures(node, excludeParam, ctx, captures);
-        }
-
-        return Lambda.array(captures);
-    }
-
-    function findCaptures(node:IRNode, excludeParam:String, ctx:IExtractorContext, captures:Map<String, Dynamic>):Void {
-        if (node == null) return;
-
-        switch (node.type) {
-            case "ident":
-                var name = Std.string(node.value);
-                if (name != excludeParam && name != "null" && name != "true" && name != "false") {
-                    // Check if it's a member or needs to be captured
-                    var memberType = ctx.getMemberType(name);
-                    if (memberType != null) {
-                        // It's a class member - accessible via data pointer
-                        if (!captures.exists(name)) {
-                            captures.set(name, {
-                                name: name,
-                                type: memberType,
-                                ctype: TypeMap.getCType(memberType),
-                                is_member: true,
-                                is_param: false
-                            });
-                        }
-                    } else {
-                        // Check if it's a local variable / parameter
-                        var localType = ctx.getLocalVarType(name);
-                        if (localType != null) {
-                            // It's a local/param - needs to be captured
-                            if (!captures.exists(name)) {
-                                captures.set(name, {
-                                    name: name,
-                                    type: localType,
-                                    ctype: TypeMap.getCType(localType),
-                                    is_member: false,
-                                    is_param: true
-                                });
-                            }
-                        }
-                    }
-                }
-
-            case "field_access":
-                // Check object and recurse
-                if (node.object != null) {
-                    findCaptures(node.object, excludeParam, ctx, captures);
-                }
-
-            case "binop", "assign":
-                if (node.children != null) {
-                    for (child in node.children) {
-                        findCaptures(child, excludeParam, ctx, captures);
-                    }
-                }
-
-            case "callback_param_call":
-                // Calling a callback parameter like finishedCallback()
-                // The callback parameter name needs to be captured
-                var name = Std.string(node.name);
-                if (name != null && name != "" && !captures.exists(name)) {
-                    var localType = ctx.getLocalVarType(name);
-                    if (localType != null) {
-                        // Convert Haxe function type to C function pointer type
-                        var ctype = functionTypeToCType(localType);
-                        captures.set(name, {
-                            name: name,
-                            type: localType,
-                            ctype: ctype,
-                            is_member: false,
-                            is_param: true
-                        });
-                    }
-                }
-
-            case "if":
-                if (node.children != null) {
-                    for (child in node.children) {
-                        findCaptures(child, excludeParam, ctx, captures);
-                    }
-                }
-
-            default:
-                // Recurse into the receiver (a binding's {self}), children and args
-                if (node.object != null) {
-                    findCaptures(node.object, excludeParam, ctx, captures);
-                }
-                if (node.children != null) {
-                    for (child in node.children) {
-                        findCaptures(child, excludeParam, ctx, captures);
-                    }
-                }
-                if (node.args != null) {
-                    for (arg in node.args) {
-                        findCaptures(arg, excludeParam, ctx, captures);
-                    }
-                }
-        }
     }
 
     function convertEase(easeNode:IRNode):String {
@@ -454,34 +341,5 @@ class TweenCallConverter implements ICallConverter {
                 return "EASE_LINEAR";
         }
     }
-
-    /**
-     * Convert a Haxe function type like "Void->Void" or "Float->Void"
-     * to a C function pointer typedef name.
-     *
-     * In the N64 C code, we use typedefs for callback types that include obj/data:
-     * - Void->Void becomes ArmCallback (typedef void (*ArmCallback)(void*, void*))
-     * - Float->Void becomes ArmFloatObjCallback (typedef void (*ArmFloatObjCallback)(float, void*, void*))
-     *
-     * The obj/data parameters allow callbacks to access trait members through the data pointer.
-     */
-    function functionTypeToCType(haxeType:String):String {
-        // Parse the function type: ParamType->ReturnType
-        var parts = haxeType.split("->");
-        if (parts.length < 2) {
-            return "ArmCallback";  // Default fallback
-        }
-
-        var paramType = parts[0].trim();
-
-        // Map to our callback typedefs (all include obj/data for trait access)
-        switch (paramType) {
-            case "Void", "": return "ArmCallback";
-            case "Float": return "ArmFloatObjCallback";
-            default: return "ArmCallback";
-        }
-    }
-
-    // Helper method now available in ExprUtils.getExprTypeSafe
 }
 #end

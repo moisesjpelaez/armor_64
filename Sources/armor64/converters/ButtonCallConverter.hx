@@ -96,7 +96,8 @@ class ButtonCallConverter implements ICallConverter {
             type: "button_register_callback",
             props: {
                 event: eventType,
-                callback_name: callbackName
+                callback_name: callbackName,
+                captures: N64MacroBase.callbackCaptures(rawParams[0])
             },
             object: objIR,
             body: bodyNodes
