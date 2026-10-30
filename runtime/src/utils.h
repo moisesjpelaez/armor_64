@@ -38,12 +38,35 @@ static inline bool str_ends_with(const char* s, const char* end) {
     return s_len >= end_len && memcmp(s + s_len - end_len, end, end_len) == 0;
 }
 
-#define _str_concat(fmt, ...) ({ \
-    char* _buf = _str_get_buffer(); \
-    if (snprintf(_buf, STR_FMT_BUFFER_SIZE, fmt, ##__VA_ARGS__) >= STR_FMT_BUFFER_SIZE) \
-        ARM_LIMIT_REACHED(STR_FMT_BUFFER_SIZE); \
-    _buf; \
-})
+// Strings built as Haxe builds them (system/str.c): each part is appended to a
+// buffer from _str_get_buffer() at length n, the new length is returned. The
+// caller writes the terminator at the end.
+int str_add_cut(char* s, int n, const char* text, int len);
+int str_add_int(char* s, int n, int32_t v);
+int str_add_float(char* s, int n, float v);
+int str_add_str(char* s, int n, const char* text);
+
+// Haxe's text of an Int / a Float, without terminator; returns its length.
+// out holds 11 / 24 bytes
+int str_int(char* out, int32_t v);
+int str_float(char* out, float f);
+
+static inline int str_add(char* s, int n, const char* text, int len) {
+    // Never negative (lets GCC bound the copy: no -Warray-bounds)
+    if (n < 0 || len < 0) __builtin_unreachable();
+    if (__builtin_expect(n + len >= STR_FMT_BUFFER_SIZE, 0)) return str_add_cut(s, n, text, len);
+    memcpy(s + n, text, len);
+    return n + len;
+}
+
+static inline int str_add_bool(char* s, int n, bool v) {
+    return v ? str_add(s, n, "true", 4) : str_add(s, n, "false", 5);
+}
+
+// A String as Haxe prints it: null is "null"
+static inline const char* str_or_null(const char* s) {
+    return s != NULL ? s : "null";
+}
 
 #ifdef __cplusplus
 }

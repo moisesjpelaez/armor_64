@@ -194,22 +194,17 @@ class TraitEmitter:
         # "" stays "" (Haxe's null is a null node)
         return c_string(node.get("value", ""))
 
-    def emit_sprintf(self, node: Dict) -> str:
-        """Pre-built sprintf from macro: { type: "sprintf", value: "format", args: [...] }
-        The macro has already built the format string and collected typed args.
-        We just translate to C."""
-        format_str = node.get("value", "")
-        args = node.get("args", [])
-
-        if not args:
-            # No args, just a literal string (the macro wrote a literal % as %%)
-            return c_string(format_str.replace('%%', '%'))
-
-        # Emit each argument
-        arg_codes = [self.emit(arg) for arg in args]
-        args_str = ", ".join(arg_codes)
-
-        return f'_str_concat({c_string(format_str)}, {args_str})'
+    def emit_str_format(self, node: Dict) -> str:
+        """A String built from parts (StringFormatter): each appended to a
+        rotating buffer by its kind (text, int, float, bool, str; utils.h)."""
+        parts = []
+        for kind, arg in zip(node["props"]["kinds"], node["args"]):
+            if kind == "text":
+                text = arg.get("value", "")
+                parts.append(f'_n = str_add(_s, _n, {c_string(text)}, {len(text.encode("utf-8"))});')
+            else:
+                parts.append(f'_n = str_add_{kind}(_s, _n, {self.emit(arg)});')
+        return "({ char* _s = _str_get_buffer(); int _n = 0; " + " ".join(parts) + " _s[_n] = '\\0'; _s; })"
 
     def emit_bool(self, node: Dict) -> str:
         return "true" if node.get("value", False) else "false"

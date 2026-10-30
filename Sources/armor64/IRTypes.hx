@@ -51,7 +51,7 @@ package armor64;
  *   ui_group_set_visible, button_field - Layout visibility, field of a Button (pool index)
  *   autoload_call                    - Call to autoload function
  *   debug_call                       - trace() -> debugf()
- *   sprintf                          - String formatting
+ *   str_format                       - String built from parts (StringFormatter; props.kinds)
  *   remove_object                    - Object removal
  *
  * AUDIO:

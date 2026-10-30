@@ -231,6 +231,9 @@ class N64Extractor implements IExtractorContext {
         return switch (e.expr) {
             case EConst(CIdent(name)) if (name != "true" && name != "false" && name != "null"):
                 resolveIdent(name, e);
+            // 'Score: $score': the same as a concatenation
+            case EConst(CString(text, SingleQuotes)) if (text.indexOf("$") >= 0):
+                StringFormatter.format(e, exprToIR);
             case EConst(c):
                 N64MacroBase.constToIR(c);
 
@@ -242,11 +245,7 @@ class N64Extractor implements IExtractorContext {
                 convertElementSet(c, k, e2);
             // c[k] += v, c[k]++: the element through its address
             case EBinop(OpAssignOp(op), e1 = {expr: EArray(c, _)}, e2) if (containerType(c) != null):
-                if (op == OpAdd && containerValueType(c) == "String") {
-                    N64MacroBase.unsupported("+= on a String element of an Array or Map is not supported on N64 yet");
-                } else {
-                    compoundAssign(op, elementRef(e1), containerValueType(c), e2);
-                }
+                compoundAssign(op, elementRef(e1), containerValueType(c), e2);
             case EUnop(op = OpIncrement | OpDecrement, postFix, operand = {expr: EArray(c, _)}) if (containerType(c) != null):
                 { type: "unop", value: N64MacroBase.unopToString(op), children: [elementRef(operand)], props: { postfix: postFix } };
             case EBinop(OpAssign, e1, e2):
@@ -255,8 +254,11 @@ class N64Extractor implements IExtractorContext {
             // Sound handles are compared by sound (also with null)
             case EBinop(op = OpEq | OpNotEq, e1, e2) if (isSoundHandle(e1) || isSoundHandle(e2)):
                 { type: "sound_handle_equals", value: op == OpEq ? "==" : "!=", children: [handleValue(e1), handleValue(e2)] };
-            case EBinop(OpAdd, e1, e2) if (getExprType(e1) == "String" || getExprType(e2) == "String"):
-                new StringConcatBuilder(members, localVarTypes, exprToIR, getExprType).build(e1, e2);
+            case EBinop(OpAdd, e1, e2) if (getExprType(e) == "String" || getExprType(e1) == "String" || getExprType(e2) == "String"):
+                var f = new StringFormatter(exprToIR);
+                f.add(e1);
+                f.add(e2);
+                f.build();
             case EBinop(op, e1, e2):
                 var equality = N64MacroBase.stringEquality(op, e1, e2, exprToIR);
                 equality != null ? equality : convertBinop(op, e1, e2);
@@ -462,6 +464,13 @@ class N64Extractor implements IExtractorContext {
 
     // `target op= e2` (target: its IR, of Haxe type targetType)
     function compoundAssign(op:Binop, target:IRNode, targetType:String, e2:Expr):IRNode {
+        // s += x: s = s + x, the target once, through its address
+        if (op == OpAdd && targetType == "String") {
+            var f = new StringFormatter(exprToIR);
+            f.addValue({ type: "c_literal", c_code: "*_ref" }, "str");
+            f.add(e2);
+            return { type: "c_template", c_code: '{ __auto_type _ref = &({0}); *_ref = {1}; }', args: [target, f.build()] };
+        }
         var template = operatorTemplate(op, targetType, getExprType(e2));
         if (template == null) {
             var c = N64MacroBase.binopToString(op);
@@ -884,9 +893,16 @@ class N64Extractor implements IExtractorContext {
 
                 return N64MacroBase.unsupportedMethodCall(obj, method);
 
-            // trace() -> debugf() for N64 debug output
+            // trace(v, rest...): debugf() with Krom's text, "arm/Player.hx:12: v, rest"
             case EConst(CIdent("trace")):
-                return { type: "debug_call", args: args };
+                var f = new StringFormatter(exprToIR);
+                var line = haxe.macro.PositionTools.toLocation(callExpr.pos).range.start.line;
+                f.addText(modulePath.split(".").join("/") + ".hx:" + line + ": ");
+                for (i in 0...params.length) {
+                    if (i > 0) f.addText(", ");
+                    f.add(params[i]);
+                }
+                return { type: "debug_call", args: [f.build()] };
 
             case EConst(CIdent(name)):
                 return convertFunctionCall(callExpr, name, params, args);

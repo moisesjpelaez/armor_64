@@ -133,7 +133,7 @@ The IR (Intermediate Representation) is a JSON format that bridges Haxe semantic
 
 A call either maps straight to C, and is **one line in `Bindings.hx`**, or needs logic, and is a **converter**. Use the table unless the call needs one of:
 
-- a decision from the arguments' values or types (`Std.string` picks a format from its argument's type, `Scene.setActive("Level")` resolves the scene ID at export time)
+- a decision from the arguments' values or types (`Std.string` writes its argument by its type, `Scene.setActive("Level")` resolves the scene ID at export time)
 - something recorded for the exporter (input buttons used, map key lengths, contact handlers)
 - generated code (callbacks, captures, signal handlers)
 
