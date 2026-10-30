@@ -1,11 +1,11 @@
 # The Python exporter (`exporter/`)
 
-The Python side of armor_64: it runs the N64 build from Blender, exports the scenes, meshes, UI and audio, turns the macros' IR into C, decides the engine's limits and builds the ROM. `blender.py` loads it as the `armor64` package (`from armor64.export import scene_exporter`).
+The Python side of Armor 64: it runs the N64 build from Blender, exports the scenes, meshes, UI and audio, turns the macros' IR into C, decides the engine's limits and builds the ROM. `blender.py` loads it as the `armor64` package (`from armor64.export import scene_exporter`).
 
 The other parts: [Sources/armor64/](../Sources/armor64/README.md) (the Haxe macros that write the IR), [runtime/](../runtime/README.md) (the C runtime and templates), [Tests/](../Tests/README.md).
 
 ```
-Blender + Armory ─► khamake (asset list) ─► Haxe + armor_64's macros ─► IR (build_<project>/n64_*.json)
+Blender + Armory ─► khamake (asset list) ─► Haxe + Armor 64's macros ─► IR (build_<project>/n64_*.json)
         │                                                                  │
         └─ meshes, while Haxe compiles ─► export_code(): scenes, UI, audio, C from the IR, limits
                                                   │
@@ -14,18 +14,18 @@ Blender + Armory ─► khamake (asset list) ─► Haxe + armor_64's macros ─
 
 ## Armory integration (`../armory_hooks.py`)
 
-armor_64 plugs into Armory through its library hooks (`arm/library_hooks.py` in Armory), without patching Armory:
+Armor 64 plugs into Armory through its library hooks (`arm/library_hooks.py` in Armory), without patching Armory:
 
 | Hook | What it does |
 |---|---|
 | `runtimes()`, `targets()` | "Ares" in the Runtime list (Play), "Nintendo 64" in the exporter's Target list (Build, Publish); Armory exports them as Kha's `custom` target |
-| `owns_build(request)` | Those builds are armor_64's |
-| `compile(request, done)` | armor_64 builds them (`export/build_pipeline.py`) instead of Armory's khamake compile |
-| `clean(request)`, `clean_project()` | Publish cleans only the N64 output (khamake's cache stays warm); Clean Project stops armor_64's compilation server |
+| `owns_build(request)` | Those builds are Armor 64's |
+| `compile(request, done)` | Armor 64 builds them (`export/build_pipeline.py`) instead of Armory's khamake compile |
+| `clean(request)`, `clean_project()` | Publish cleans only the N64 output (khamake's cache stays warm); Clean Project stops Armor 64's compilation server |
 | `write_main()` | The `arm_target_n64` and `arm_build_dir` defines, and the macro's registration |
 | `preferences()`, `draw_preferences()` | The Nintendo 64 settings in Armory's preferences |
 
-armor_64 uses Armory's `run_process` (the build's processes: Blender stays responsive, Stop ends them), `run_player` (Ares as Armory's player) and `stop_process`. `../blender.py` registers the package and the libdragon/tiny3d operators, which run in MSYS2 through the same `run_process`.
+Armor 64 uses Armory's `run_process` (the build's processes: Blender stays responsive, Stop ends them), `run_player` (Ares as Armory's player) and `stop_process`. `../blender.py` registers the package and the libdragon/tiny3d operators, which run in MSYS2 through the same `run_process`.
 
 ## The build (`export/build_pipeline.py`)
 
@@ -33,7 +33,7 @@ After Armory's export (scene data, `khafile.js`, `Main.hx`), Haxe only has to ru
 
 1. khamake `--nohaxe --noshaders --noproject`: only the Haxe build file and the asset list.
 2. The asset list for Haxe (`build/n64haxe-resources/files.json`): khamake's assets, plus every shader as an empty placeholder (Kha builds `kha.Shaders` from it); Koui's `.ksn` themes copied where Koui's theme macro reads them.
-3. Haxe on khamake's build file, retargeted to `n64haxe` with `--no-output`; meanwhile the meshes are exported (`N64Exporter.export_assets()`: they only need the .blend). With Armory's compilation server preference on, Haxe runs through armor_64's own server (its own port), which keeps typed modules between builds; `n64_compile.stamp` makes it type the game's modules again every build.
+3. Haxe on khamake's build file, retargeted to `n64haxe` with `--no-output`; meanwhile the meshes are exported (`N64Exporter.export_assets()`: they only need the .blend). With Armory's compilation server preference on, Haxe runs through Armor 64's own server (its own port), which keeps typed modules between builds; `n64_compile.stamp` makes it type the game's modules again every build.
 4. `N64Exporter.export_code()` (`exporter.py`): the rest of the export; then the .blend is cleaned up.
 5. Play and Publish: `make` (`export/build_runner.py`), one job per core, in MSYS2's bash (not a login shell: `utils.msys2_command()` sets the toolchain's paths). Then Play runs Ares.
 

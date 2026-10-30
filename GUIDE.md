@@ -1,6 +1,6 @@
 # Game code on N64
 
-What your Haxe traits can do when armor_64 builds them for the Nintendo 64: what works as on Krom, where the N64 works differently on purpose, and what isn't supported yet. armor_64 reads your code with the Haxe compiler's types, so aliases, imports, `using`, inheritance and inferred types all work.
+What your Haxe traits can do when Armor 64 builds them for the Nintendo 64: what works as on Krom, where the N64 works differently on purpose, and what isn't supported yet. Armor 64 reads your code with the Haxe compiler's types, so aliases, imports, `using`, inheritance and inferred types all work.
 
 Anything it can't build is reported as an `N64: ...` warning at its line when you build, and left out of the game (an error with `n64_strict`, see [README.md](README.md)). Nothing is dropped silently.
 
