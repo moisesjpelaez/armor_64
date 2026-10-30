@@ -22,7 +22,8 @@ def capture_ref(c_name: str, is_trait: bool, callback_name: str, param: str) -> 
 
 def callback_captures(ir) -> List[Tuple[str, List[Dict]]]:
     """(name, captures) of each callback in an IR tree: tween callbacks,
-    callbacks passed to methods, anonymous signal handlers, button handlers.
+    callbacks passed to methods, anonymous signal handlers, button handlers,
+    lifecycle functions.
     The name keys where its captures are kept (capture_ref); a capture is a
     local or parameter of the function around it ({name, ctype}, the macros'
     N64MacroBase.callbackCaptures)."""
@@ -34,6 +35,8 @@ def callback_captures(ir) -> List[Tuple[str, List[Dict]]]:
             found.append((handler["id"], handler.get("captures", [])))
     for node in nodes_of_type(ir, "button_register_callback"):
         found.append((node["props"]["callback_name"], node["props"].get("captures", [])))
+    for node in nodes_of_type(ir, "lifecycle_register"):
+        found.append((f"lc_{node['value']}", (node.get("props") or {}).get("captures", [])))
     return found
 
 

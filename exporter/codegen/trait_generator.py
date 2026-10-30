@@ -36,6 +36,18 @@ def _ancestors(all_traits: dict, name: str):
         current = all_traits[current].get("parent")
 
 
+def own_sites(ir: dict) -> list:
+    """A trait's lifecycle registrations (notifyOnX calls), in source order."""
+    return sorted(ir.get("meta", {}).get("lifecycle_sites") or [], key=lambda site: site["order"])
+
+
+def chain_sites(all_traits: dict, name: str) -> list:
+    """(C name of the declaring trait, site) of a trait's and its ancestors'
+    lifecycle registrations, ancestors first."""
+    chain = list(reversed(list(_ancestors(all_traits, name)))) + [name]
+    return [(all_traits[t]["c_name"], site) for t in chain for site in own_sites(all_traits[t])]
+
+
 def is_virtual_method(all_traits: dict, name: str, method: str) -> bool:
     """A method of trait `name` needs vtable dispatch if it overrides an
     ancestor's method or a descendant overrides it (in Haxe a method with an
@@ -101,7 +113,7 @@ def needs_data_struct(all_traits: dict, name: str) -> bool:
     meta = ir.get("meta", {})
     return bool(ir.get("members") or meta.get("signals") or meta.get("connects_signals")
                 or ir.get("parent") or meta.get("stores_self")
-                or declared_vtable_methods(all_traits, name)
+                or declared_vtable_methods(all_traits, name) or meta.get("lifecycle_sites")
                 or tween_helper.param_captures([ir.get("events", {}), ir.get("methods", {})]))
 
 
@@ -156,6 +168,7 @@ class TraitCodeGenerator:
     def __init__(self, name: str, ir: Dict, type_overrides: Dict = None, all_traits: Dict = None,
                  signals: SignalContext = None):
         self.name = name
+        self.ir = ir
         self.c_name = ir["c_name"]
         self.members = ir.get("members", [])
         self.methods = ir.get("methods", {})  # Callable methods (non-lifecycle)
@@ -321,6 +334,10 @@ class TraitCodeGenerator:
                 ctype = "void*"
             name = m.get("name", "unknown")
             lines.append(f"    {ctype} {name};")
+
+        # Lifecycle registrations: how many times each site's function is registered
+        for site in own_sites(self.ir):
+            lines.append(f"    uint8_t _lc_{site['id']};")
 
         # Parameters this trait's callbacks capture (tween_helper.capture_ref)
         for callback, param, ctype in tween_helper.param_captures([self.events, self.methods]):
@@ -583,15 +600,14 @@ class TraitCodeGenerator:
         # ArmTraitRender2DFn: (void *entity, void *data) - no dt, for 2D overlay rendering
         decls.append(f"void {self.c_name}_on_add(void* obj, void* data);")
         decls.append(f"void {self.c_name}_on_ready(void* obj, void* data);")
+        # The constructor and the add/init functions, called by descendants too
+        decls.append(f"void {self.c_name}_on_create(void* obj, void* data);")
+        decls.append(f"bool {self.c_name}_run_add(void* obj, void* data);")
+        decls.append(f"bool {self.c_name}_run_init(void* obj, void* data);")
         if self.handles("on_fixed_update"):
             decls.append(f"void {self.c_name}_on_fixed_update(void* obj, float _dt, void* data);")
-            # The functions notifyOnFixedUpdate registers, when there are several
-            for callback_name in self.meta.get("dynamic_fixed_updates", []):
-                decls.append(f"void {self.c_name}_on_fixed_update_{callback_name}(void* obj, float _dt, void* data);")
         if self.handles("on_update"):
             decls.append(f"void {self.c_name}_on_update(void* obj, float _dt, void* data);")
-            for callback_name in self.meta.get("dynamic_updates", []):
-                decls.append(f"void {self.c_name}_on_update_{callback_name}(void* obj, float _dt, void* data);")
         if self.handles("on_late_update"):
             decls.append(f"void {self.c_name}_on_late_update(void* obj, float _dt, void* data);")
         if self.handles("on_remove"):
@@ -700,33 +716,81 @@ class TraitCodeGenerator:
         args = "obj, _dt, data" if with_dt else "obj, data"
         return [f"    {parent_c_name}_{event}({args});"]
 
+    def _site_ref(self, site: dict) -> str:
+        return f"(({self.c_name}Data*)data)->_lc_{site['id']}"
+
+    def _site_functions(self) -> List[str]:
+        """A function per lifecycle registration site: the anonymous function's
+        body (reading what it captures where the registration stored it) or
+        the call of the method registered. 2D drawing ones draw between
+        render2d_begin and render2d_end."""
+        lines = []
+        for site in own_sites(self.ir):
+            site_id = site["id"]
+            nodes = self.events.get(f"lc_{site_id}", [])
+            emitter = self.emitter
+            captures = [c for node in nodes_of_type([self.events, self.methods], "lifecycle_register")
+                        if node["value"] == site_id for c in (node.get("props") or {}).get("captures", [])]
+            if captures:
+                emitter = tween_helper._CaptureEmitter(self.emitter, {
+                    c["name"]: tween_helper.capture_ref(self.c_name, True, f"lc_{site_id}", c["name"]) for c in captures})
+            body = emitter.emit_statements(nodes, "    ") if nodes else ""
+            lines.append(f"static void {self.c_name}_lc_{site_id}(void* obj, void* data) {{")
+            lines.append("    (void)obj; (void)data;")
+            if site["kind"] == "render2d":
+                lines += ["    color_t _g2_color = RGBA32(255, 255, 255, 255);", "    (void)_g2_color;",
+                          "    render2d_begin();"]
+                if body:
+                    lines.append(body)
+                lines.append("    render2d_end();")
+            elif body:
+                lines.append(body)
+            lines += ["}", ""]
+        return lines
+
+    def _run_sites(self, kind: str) -> List[str]:
+        """Calls of this trait's functions of a kind, each as many times as it
+        is registered (in Iron registering a function twice runs it twice)."""
+        return [f"    for (uint8_t _n = {self._site_ref(site)}; _n; _n--) {self.c_name}_lc_{site['id']}(obj, data);"
+                for site in own_sites(self.ir) if site["kind"] == kind]
+
+    def _run_once(self, kind: str) -> List[str]:
+        """run_add / run_init: the add or init functions registered and not run
+        yet, the ancestors' first, each once per registration. Whether any ran
+        (a function may register more: on_add and on_ready run them until none is left)."""
+        parent = self._parent_c_name()
+        lines = [f"bool {self.c_name}_run_{kind}(void* obj, void* data) {{",
+                 f"    bool ran = {parent}_run_{kind}(obj, data);" if parent else "    bool ran = false;"]
+        for site in own_sites(self.ir):
+            if site["kind"] == kind:
+                ref = self._site_ref(site)
+                lines.append(f"    while ({ref}) {{ {ref}--; {self.c_name}_lc_{site['id']}(obj, data); ran = true; }}")
+        lines += ["    (void)obj; (void)data;", "    return ran;", "}", ""]
+        return lines
+
+    def _parent_c_name(self) -> str:
+        if self.parent_name and self.parent_name in self.all_traits:
+            return self.all_traits[self.parent_name]["c_name"]
+        return ""
+
+    def _late_init(self) -> bool:
+        """Whether an init may be registered once the trait is ready (it then
+        runs before the next update, as Iron's App runs new inits)."""
+        return any(site["kind"] == "init" and site.get("late_init")
+                   for _, site in chain_sites(self.all_traits, self.name))
+
     def _update_handler(self, event: str) -> List[str]:
         """on_fixed_update, on_update or on_late_update (dt before data): the
-        parent's first; with several functions registered (notifyOnUpdate), a
-        dispatcher calling each one still enabled, else the body, skipped once
-        removed (removeUpdate)."""
+        parent's functions first, then this trait's."""
         if not self.handles(event):
             return []
-        kind = event[len("on_"):]  # fixed_update, update, late_update
+        kind = event[len("on_"):]
         lines = [f"void {self.c_name}_{event}(void* obj, float _dt, void* data) {{"]
+        if event == "on_update" and self._late_init():
+            lines.append(f"    while ({self.c_name}_run_init(obj, data)) {{}}")
         lines += self._parent_event_call(event, True)
-        dynamic = self.meta.get(f"dynamic_{kind}s", [])
-        if dynamic:
-            lines.append(f"    {self.c_name}Data* d = ({self.c_name}Data*)data;")
-            for callback_name in dynamic:
-                lines.append(f"    if (d->_{kind}_{callback_name}_enabled) "
-                             f"{self.c_name}_{event}_{callback_name}(obj, _dt, data);")
-            lines += ["}", ""]
-            for callback_name in dynamic:
-                event_nodes = self.events.get(f"{event}_{callback_name}", [])
-                body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-                lines += [f"void {self.c_name}_{event}_{callback_name}(void* obj, float _dt, void* data) {{",
-                          body, "}", ""]
-            return lines
-        if self.meta.get(f"has_remove_{kind}", False):
-            lines.append(f"    if (!(({self.c_name}Data*)data)->_{kind}_enabled) return;")
-        event_nodes = self.events.get(event, [])
-        lines += [self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty", "}", ""]
+        lines += self._run_sites(kind)
+        lines += ["    (void)obj; (void)_dt; (void)data;", "}", ""]
         return lines
 
     def generate_signal_handlers(self) -> list:
@@ -745,79 +809,54 @@ class TraitCodeGenerator:
         return handlers
 
     def generate_all_event_implementations(self) -> str:
-        """Generate C implementations for all event handlers."""
+        """The trait's lifecycle: its constructor (on_create), the functions it
+        registers and the runtime's handlers calling them."""
         impl_lines = [f"// ========== {self.name} =========="]
+        impl_lines += self._site_functions()
+        parent = self._parent_c_name()
 
-        # on_add - called when trait is added, BEFORE on_ready
-        # Used for setting up autoload references like MainInstances.player = this
-        event_nodes = self.events.get("on_add", [])
+        # The constructor: super() calls the parent's (a trait without one runs its parent's)
+        impl_lines.append(f"void {self.c_name}_on_create(void* obj, void* data) {{")
+        if "on_create" in self.events:
+            body = self.emitter.emit_statements(self.events["on_create"], "    ")
+            if body:
+                impl_lines.append(body)
+        elif parent:
+            impl_lines.append(f"    {parent}_on_create(obj, data);")
+        impl_lines += ["    (void)obj; (void)data;", "}", ""]
+        impl_lines += self._run_once("add")
+        impl_lines += self._run_once("init")
+
+        # on_add: the trait is created and added (Iron: new, then its add functions)
         impl_lines.append(f"void {self.c_name}_on_add(void* obj, void* data) {{")
-        if self.parent_name and self.parent_name in self.all_traits:
-            parent_ir = self.all_traits[self.parent_name]
-            parent_c_name = parent_ir["c_name"]
-            impl_lines.append(f"    {parent_c_name}_on_add(obj, data);")
-        else:
-            # Base trait - initialize object pointer in data struct
-            if needs_data_struct(self.all_traits, self.name):
-                impl_lines.append(f"    (({self.c_name}Data*)data)->object = obj;")
-        body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-        impl_lines.append(body)
-        impl_lines.append("}")
+        if needs_data_struct(self.all_traits, self.name):
+            path = self._get_object_access_path().replace("data->", f"(({self.c_name}Data*)data)->", 1)
+            impl_lines.append(f"    {path} = obj;")
+        impl_lines.append(f"    {self.c_name}_on_create(obj, data);")
+        impl_lines.append(f"    while ({self.c_name}_run_add(obj, data)) {{}}")
+        impl_lines += ["}", ""]
 
-        # on_ready - no dt parameter
-        event_nodes = self.events.get("on_ready", [])
+        # on_ready: the scene is ready (Iron's init)
         impl_lines.append(f"void {self.c_name}_on_ready(void* obj, void* data) {{")
-
-        # Call parent's on_ready FIRST (if we have a parent)
-        # Pass full data pointer (not &_parent) so virtual method calls work correctly
-        # Since _parent is at offset 0, casting to parent type works
-        if self.parent_name and self.parent_name in self.all_traits:
-            parent_ir = self.all_traits[self.parent_name]
-            parent_c_name = parent_ir["c_name"]
-            impl_lines.append(f"    {parent_c_name}_on_ready(obj, data);")
-
-        # Virtual method pointers and member tweens are set when the data is
-        # initialized (utils.build_trait_initializer), before any handler
-
-        body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
-        impl_lines.append(body)
-        impl_lines.append("}")
-        impl_lines.append("")
+        impl_lines.append(f"    while ({self.c_name}_run_init(obj, data)) {{}}")
+        impl_lines += ["}", ""]
 
         for event in ("on_fixed_update", "on_update", "on_late_update"):
             impl_lines += self._update_handler(event)
 
-        # on_remove - no dt parameter
+        # on_remove: the parent's functions first, then this trait's
         if self.handles("on_remove"):
-            event_nodes = self.events.get("on_remove", [])
-            body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
             impl_lines.append(f"void {self.c_name}_on_remove(void* obj, void* data) {{")
             impl_lines += self._parent_event_call("on_remove", False)
-            impl_lines.append(body)
-            impl_lines.append("}")
-            impl_lines.append("")
+            impl_lines += self._run_sites("remove")
+            impl_lines += ["    (void)obj; (void)data;", "}", ""]
 
-        # on_render2d - no dt parameter, for 2D overlay rendering
+        # on_render2d: the parent's functions first (they draw behind), then this trait's
         if self.handles("on_render2d"):
-            event_nodes = self.events.get("on_render2d", [])
-            has_render2d_content = event_nodes and len(event_nodes) > 0
-            body = self.emitter.emit_statements(event_nodes, "    ") if event_nodes else "    // Empty"
             impl_lines.append(f"void {self.c_name}_on_render2d(void* obj, void* data) {{")
-            # The parent's first (it draws behind), then this trait's unless it was
-            # removed (removeRender2D): removing it leaves the parent's, as in Armory
             impl_lines += self._parent_event_call("on_render2d", False)
-            if self.meta.get("has_remove_render2d", False):
-                impl_lines.append(f"    if (!(({self.c_name}Data*)data)->_render2d_enabled) return;")
-            # Only add render2d infrastructure if there's actual content
-            if has_render2d_content:
-                impl_lines.append("    color_t _g2_color = RGBA32(255, 255, 255, 255);")
-                impl_lines.append("    render2d_begin();")
-                impl_lines.append(body)
-                impl_lines.append("    render2d_end();")
-            else:
-                impl_lines.append(body)
-            impl_lines.append("}")
-            impl_lines.append("")
+            impl_lines += self._run_sites("render2d")
+            impl_lines += ["    (void)obj; (void)data;", "}", ""]
 
         # Contact events - PhysicsContactHandler signature: (obj, data, other)
         for event_name in self.events.keys():

@@ -67,6 +67,29 @@ class AudioCallConverter implements ICallConverter {
         return null;
     }
 
+    /**
+     * Loading calls: on N64 every asset is in the ROM, so loading is done and
+     * the done callback runs where the call is. Their other arguments (what
+     * to load, the failure and progress callbacks) aren't used. Aura.init's
+     * configuration is read for the export (scanConfig). Null for other calls.
+     */
+    public static function loadingCall(obj:Expr, method:String, params:Array<Expr>, ctx:IExtractorContext):Null<IRNode> {
+        if (method == "init" && TypedIndex.isClassRef(obj, "aura.Aura")) return { type: "skip" };
+        if (method == "loadAssets" && TypedIndex.isClassRef(obj, "aura.Aura")) return loaded(params.length > 1 ? params[1] : null, ctx);
+        if (method == "loadEverything" && TypedIndex.isClassRef(obj, "kha.Assets")) return loaded(params.length > 0 ? params[0] : null, ctx);
+        return null;
+    }
+
+    // A loading call's done callback, run where the call is (none: nothing)
+    static function loaded(done:Null<Expr>, ctx:IExtractorContext):IRNode {
+        if (done == null) return { type: "skip" };
+        return switch (done.expr) {
+            case EFunction(_, f) if (f.expr != null): ctx.exprToIR(f.expr);
+            case EFunction(_, _): { type: "skip" };
+            default: ctx.exprToIR({ expr: ECall(done, []), pos: done.pos });
+        };
+    }
+
     function convertAuraCall(method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         var meta = ctx.getMeta();
 

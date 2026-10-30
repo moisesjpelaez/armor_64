@@ -158,8 +158,23 @@ class TraitExtractor extends N64Extractor {
     var events:Map<String, Array<IRNode>> = new Map();
     var currentSetterTarget:String;  // Inside a setter body, the member it sets (written directly, not through the setter)
 
-    // Lifecycle method names that are handled specially (not as callable methods)
-    static var lifecycleMethodNames:Array<String> = ["new", "__onInit", "__onUpdate", "__onFixedUpdate", "__onLateUpdate", "__onRemove", "__onRender2D"];
+    // Lifecycle registrations (registerLifecycle), in the order found; each is
+    // a counter in the trait's data, see trait_generator.py
+    var lifecycleSites:Array<Dynamic> = [];
+    // notifyOnInit calls that run before the trait is ready (scanStaticInits)
+    var staticInits:Map<String, Bool> = new Map();
+    var siteIds:Map<String, Int> = new Map();
+    var siteRegistrations:Map<String, IRNode> = new Map();
+
+    // Iron's Trait.notifyOnX / removeX -> the kind of lifecycle function
+    static var REGISTER_KINDS = ["notifyOnInit" => "init", "notifyOnAdd" => "add", "notifyOnRemove" => "remove",
+        "notifyOnUpdate" => "update", "notifyOnFixedUpdate" => "fixed_update", "notifyOnLateUpdate" => "late_update",
+        "notifyOnRender2D" => "render2d"];
+    static var REMOVE_KINDS = ["removeUpdate" => "update", "removeFixedUpdate" => "fixed_update",
+        "removeLateUpdate" => "late_update", "removeRender2D" => "render2d"];
+    // The runtime handler calling the functions of a kind
+    static var LIFECYCLE_EVENTS = ["init" => "on_ready", "add" => "on_add", "remove" => "on_remove", "update" => "on_update",
+        "fixed_update" => "on_fixed_update", "late_update" => "on_late_update", "render2d" => "on_render2d"];
 
     var parentName:String;  // Parent user trait (full path), null if none
     public var traitKey(default, null):String;  // Full class path, identifies the trait in the IR
@@ -207,147 +222,27 @@ class TraitExtractor extends N64Extractor {
             }
         }
 
-        // Pass 2: Find lifecycle registrations and extract events
-        // This finds ALL registered lifecycles (for code extraction)
-        var lifecycles = findLifecycles();
-        // This finds only STATICALLY registered lifecycles (for initial enabled state)
-        var staticLifecycles = findStaticLifecycles();
-
-        // Pass 3: Convert lifecycle functions to events
-        // on_add runs BEFORE on_ready - used for setting up autoload references
-        if (lifecycles.add != null) {
-            extractEvents("on_add", lifecycles.add);
-        }
-        if (lifecycles.init != null) {
-            extractEvents("on_ready", lifecycles.init);
-        }
-
-        // Handle multiple update functions - each gets its own event
-        // Collect keys first to avoid iterator issues
-        var updateCallbackNames = [for (k in lifecycles.updates.keys()) k];
-        if (updateCallbackNames.length > 0) {
-            // We have named update functions - generate separate events for each
-            for (callbackName in updateCallbackNames) {
-                var body = lifecycles.updates.get(callbackName);
-                if (body != null) {
-                    // Use format: on_update_functionName (e.g., on_update_update, on_update_winUpdate)
-                    extractEvents("on_update_" + callbackName, body);
-                    meta.dynamic_updates.push(callbackName);
-                }
-            }
-            // Also register canonical on_update to mark lifecycle presence for export-time flags
-            if (!events.exists("on_update")) {
-                events.set("on_update", []);
-            }
-        } else if (lifecycles.update != null) {
-            // Fallback for inline/anonymous update functions
-            extractEvents("on_update", lifecycles.update);
-        }
-
-        // Handle multiple fixed update functions - each gets its own event
-        var fixedUpdateCallbackNames = [for (k in lifecycles.fixed_updates.keys()) k];
-        if (fixedUpdateCallbackNames.length > 0) {
-            // We have named fixed update functions - generate separate events for each
-            for (callbackName in fixedUpdateCallbackNames) {
-                var body = lifecycles.fixed_updates.get(callbackName);
-                if (body != null) {
-                    // Use format: on_fixed_update_functionName
-                    extractEvents("on_fixed_update_" + callbackName, body);
-                    meta.dynamic_fixed_updates.push(callbackName);
-                }
-            }
-            // Also register canonical on_fixed_update to mark lifecycle presence for export-time flags
-            if (!events.exists("on_fixed_update")) {
-                events.set("on_fixed_update", []);
-            }
-        } else if (lifecycles.fixed_update != null) {
-            // Fallback for inline/anonymous fixed update functions
-            extractEvents("on_fixed_update", lifecycles.fixed_update);
-        }
-        if (lifecycles.late_update != null) {
-            extractEvents("on_late_update", lifecycles.late_update);
-        }
-        if (lifecycles.remove != null) {
-            extractEvents("on_remove", lifecycles.remove);
-        }
-        if (lifecycles.render2d != null) {
-            extractEvents("on_render2d", lifecycles.render2d);
-        }
-
-        // Auto-add per-callback _update_<name>_enabled members if trait has multiple update functions
-        // Each update function gets its own enabled flag for independent enable/disable
-        if (meta.dynamic_updates.length > 0) {
-            for (callbackName in meta.dynamic_updates) {
-                var flagName = "_update_" + callbackName + "_enabled";
-                var isStaticallyRegistered = staticLifecycles.static_updates.exists(callbackName);
-                members.set(flagName, {
-                    haxeType: "Bool",
-                    ctype: "bool",
-                    defaultValue: { type: "bool", value: isStaticallyRegistered }
-                });
-                memberNames.push(flagName);
-            }
-        } else if (meta.has_remove_update) {
-            // Fallback: single _update_enabled for anonymous/inline update functions
-            var hasStaticUpdate = staticLifecycles.update != null;
-            members.set("_update_enabled", {
-                haxeType: "Bool",
-                ctype: "bool",
-                defaultValue: { type: "bool", value: hasStaticUpdate }
-            });
-            memberNames.push("_update_enabled");
-        }
-
-        // Auto-add _late_update_enabled member if trait uses removeLateUpdate()
-        // Initial value: true if trait has STATIC late_update function, false if only dynamic registration
-        if (meta.has_remove_late_update) {
-            var hasStaticLateUpdate = staticLifecycles.late_update != null;
-            members.set("_late_update_enabled", {
-                haxeType: "Bool",
-                ctype: "bool",
-                defaultValue: { type: "bool", value: hasStaticLateUpdate }
-            });
-            memberNames.push("_late_update_enabled");
-        }
-
-        // Auto-add per-callback _fixed_update_<name>_enabled members if trait has multiple fixed update functions
-        // Each fixed update function gets its own enabled flag for independent enable/disable
-        if (meta.dynamic_fixed_updates.length > 0) {
-            for (callbackName in meta.dynamic_fixed_updates) {
-                var flagName = "_fixed_update_" + callbackName + "_enabled";
-                var isStaticallyRegistered = staticLifecycles.static_fixed_updates.exists(callbackName);
-                members.set(flagName, {
-                    haxeType: "Bool",
-                    ctype: "bool",
-                    defaultValue: { type: "bool", value: isStaticallyRegistered }
-                });
-                memberNames.push(flagName);
-            }
-        } else if (meta.has_remove_fixed_update) {
-            // Fallback: single _fixed_update_enabled for anonymous/inline fixed update functions
-            var hasStaticFixedUpdate = staticLifecycles.fixed_update != null;
-            members.set("_fixed_update_enabled", {
-                haxeType: "Bool",
-                ctype: "bool",
-                defaultValue: { type: "bool", value: hasStaticFixedUpdate }
-            });
-            memberNames.push("_fixed_update_enabled");
-        }
-
-        // Auto-add _render2d_enabled member if trait uses removeRender2D() or notifyOnRender2D() at runtime
-        // Initial value: true if trait has STATIC render2d function, false if only dynamic registration
-        if (meta.has_remove_render2d) {
-            var hasStaticRender2d = staticLifecycles.render2d != null;
-            members.set("_render2d_enabled", {
-                haxeType: "Bool",
-                ctype: "bool",
-                defaultValue: { type: "bool", value: hasStaticRender2d }
-            });
-            memberNames.push("_render2d_enabled");
+        // The constructor runs first when the trait is added (on_add, then
+        // the add functions); every notifyOn* call in it, in methods and in
+        // closures is a registration (registerLifecycle)
+        var ctor = methodMap.get("new");
+        if (ctor != null && ctor.expr != null) {
+            scanStaticInits(ctor.expr, true);
+            beginScope();
+            events.set("on_create", statements(ctor.expr));
         }
 
         // Pass 4: Extract ALL non-lifecycle methods as callable C functions
         extractMethods();
+
+        // The runtime calls the trait's handler of each kind registered
+        for (site in lifecycleSites) {
+            var event = LIFECYCLE_EVENTS.get(site.kind);
+            if (!events.exists(event)) events.set(event, []);
+            // An init registered once the trait is ready runs before its next update
+            if (site.kind == "init" && site.late_init && !events.exists("on_update")) events.set("on_update", []);
+        }
+        meta.lifecycle_sites = lifecycleSites;
 
         return {
             name: traitKey,
@@ -368,8 +263,8 @@ class TraitExtractor extends N64Extractor {
      */
     function extractMethods():Void {
         for (methodName in methodMap.keys()) {
-            // Skip lifecycle methods - they're handled as events
-            if (Lambda.has(lifecycleMethodNames, methodName)) continue;
+            // The constructor is on_create
+            if (methodName == "new") continue;
 
             // Skip internal/inherited Haxe methods
             if (methodName.charAt(0) == '_' && methodName != "new") continue;
@@ -430,135 +325,6 @@ class TraitExtractor extends N64Extractor {
         }
     }
 
-    function findLifecycles():{init:Expr, add:Expr, update:Expr, fixed_update:Expr, late_update:Expr, remove:Expr, render2d:Expr, updates:Map<String, Expr>, fixed_updates:Map<String, Expr>} {
-        var result = {init: null, add: null, update: null, fixed_update: null, late_update: null, remove: null, render2d: null, updates: new Map<String, Expr>(), fixed_updates: new Map<String, Expr>()};
-
-        // Scan ALL methods for lifecycle registrations (for code extraction)
-        for (methodName in methodMap.keys()) {
-            var method = methodMap.get(methodName);
-            if (method != null && method.expr != null) {
-                scanForLifecycles(method.expr, result, true);
-            }
-        }
-
-        return result;
-    }
-
-    // Find only STATICALLY registered lifecycles (called from constructor/init path)
-    // Used to determine initial enabled state for dynamic toggle flags
-    function findStaticLifecycles():{init:Expr, add:Expr, update:Expr, fixed_update:Expr, late_update:Expr, remove:Expr, render2d:Expr, static_updates:Map<String, Bool>, static_fixed_updates:Map<String, Bool>} {
-        var result = {init: null, add: null, update: null, fixed_update: null, late_update: null, remove: null, render2d: null, static_updates: new Map<String, Bool>(), static_fixed_updates: new Map<String, Bool>()};
-
-        // Only scan constructor - lifecycle registrations elsewhere are "dynamic"
-        var ctor = methodMap.get("new");
-        if (ctor != null && ctor.expr != null) {
-            scanForStaticLifecycles(ctor.expr, result, true);
-        }
-
-        return result;
-    }
-
-    // Scan for lifecycle registrations (finds all, for code extraction)
-    function scanForLifecycles(e:Expr, result:{init:Expr, add:Expr, update:Expr, fixed_update:Expr, late_update:Expr, remove:Expr, render2d:Expr, updates:Map<String, Expr>, fixed_updates:Map<String, Expr>}, inInitPath:Bool):Void {
-        if (e == null) return;
-
-        switch (e.expr) {
-            case ECall(callExpr, params):
-                var funcName = getFuncName(callExpr);
-                if (params.length > 0) {
-                    var body = resolveCallback(params[0]);
-                    switch (funcName) {
-                        case "notifyOnInit": result.init = body;
-                        case "notifyOnAdd": result.add = body;
-                        case "notifyOnUpdate":
-                            // Track update callbacks by their function name
-                            var callbackName = getCallbackName(params[0]);
-                            if (callbackName != null && body != null) {
-                                result.updates.set(callbackName, body);
-                            }
-                            // Also keep backward compatibility with single update field
-                            result.update = body;
-                        case "notifyOnFixedUpdate":
-                            // Track fixed update callbacks by their function name
-                            var callbackName = getCallbackName(params[0]);
-                            if (callbackName != null && body != null) {
-                                result.fixed_updates.set(callbackName, body);
-                            }
-                            // Also keep backward compatibility with single fixed_update field
-                            result.fixed_update = body;
-                        case "notifyOnLateUpdate": result.late_update = body;
-                        case "notifyOnRemove": result.remove = body;
-                        case "notifyOnRender2D": result.render2d = body;
-                        case "notifyOnRender":
-                            N64MacroBase.unsupported("notifyOnRender() (3D drawing) is not supported on N64 yet", e.pos);
-                        default:
-                    }
-                }
-                // Scan parameters AND the callExpr (for chained calls like tween.float(...).start())
-                scanForLifecycles(callExpr, result, inInitPath);
-                for (p in params) scanForLifecycles(p, result, inInitPath);
-            case EBlock(exprs):
-                for (expr in exprs) scanForLifecycles(expr, result, inInitPath);
-            case EFunction(_, f):
-                // Preserve inInitPath - if we're scanning a function passed to notifyOnInit,
-                // the body is still part of the init path. The path only breaks when
-                // scanning params of non-init callbacks (handled in ECall case above).
-                if (f.expr != null) scanForLifecycles(f.expr, result, inInitPath);
-            default:
-                e.iter(function(sub) scanForLifecycles(sub, result, inInitPath));
-        }
-    }
-
-    // Scan for STATIC lifecycle registrations only (for initial enabled state)
-    function scanForStaticLifecycles(e:Expr, result:{init:Expr, add:Expr, update:Expr, fixed_update:Expr, late_update:Expr, remove:Expr, render2d:Expr, static_updates:Map<String, Bool>, static_fixed_updates:Map<String, Bool>}, inInitPath:Bool):Void {
-        if (e == null) return;
-
-        switch (e.expr) {
-            case ECall(callExpr, params):
-                var funcName = getFuncName(callExpr);
-                if (params.length > 0) {
-                    var body = resolveCallback(params[0]);
-                    // Only record lifecycle registrations if we're in the init path
-                    if (inInitPath) {
-                        switch (funcName) {
-                            case "notifyOnInit": result.init = body;
-                            case "notifyOnAdd": result.add = body;
-                            case "notifyOnUpdate":
-                                // Track static update callbacks by name
-                                var callbackName = getCallbackName(params[0]);
-                                if (callbackName != null) {
-                                    result.static_updates.set(callbackName, true);
-                                }
-                                result.update = body;
-                            case "notifyOnFixedUpdate":
-                                // Track static fixed update callbacks by name
-                                var callbackName = getCallbackName(params[0]);
-                                if (callbackName != null) {
-                                    result.static_fixed_updates.set(callbackName, true);
-                                }
-                                result.fixed_update = body;
-                            case "notifyOnLateUpdate": result.late_update = body;
-                            case "notifyOnRemove": result.remove = body;
-                            case "notifyOnRender2D": result.render2d = body;
-                            default:
-                        }
-                    }
-                    // Determine if we should continue in init path
-                    var isInitCallback = funcName == "notifyOnInit" || funcName == "notifyOnAdd";
-                    for (p in params) scanForStaticLifecycles(p, result, inInitPath && isInitCallback);
-                }
-                // Scan the callExpr for chained calls - stay in init path
-                scanForStaticLifecycles(callExpr, result, inInitPath);
-            case EBlock(exprs):
-                for (expr in exprs) scanForStaticLifecycles(expr, result, inInitPath);
-            case EFunction(_, f):
-                // Preserve inInitPath through function bodies
-                if (f.expr != null) scanForStaticLifecycles(f.expr, result, inInitPath);
-            default:
-                e.iter(function(sub) scanForStaticLifecycles(sub, result, inInitPath));
-        }
-    }
-
     function getFuncName(e:Expr):String {
         return switch (e.expr) {
             case EConst(CIdent(s)): s;
@@ -567,69 +333,96 @@ class TraitExtractor extends N64Extractor {
         };
     }
 
-    function resolveCallback(e:Expr):Expr {
-        return switch (e.expr) {
-            case EFunction(_, f): f.expr;
-            case EField(_, methodName):
-                var method = methodMap.get(methodName);
-                method != null ? method.expr : null;
-            case EConst(CIdent(methodName)):
-                var method = methodMap.get(methodName);
-                method != null ? method.expr : null;
-            default: null;
-        };
-    }
-
-    // Get the name of the callback function (for dynamic update tracking)
-    function getCallbackName(e:Expr):String {
-        return switch (e.expr) {
-            case EFunction(_, _): null; // Inline function - no name
-            case EField(_, methodName): methodName;
-            case EConst(CIdent(methodName)): methodName;
-            default: null;
-        };
-    }
-
-    // ========================================================================
-    // Lifecycle bodies
-    // ========================================================================
-
-    // A lifecycle body's statements, in order, as the event's IR. Input checks
-    // stay inline, where the game wrote them (as in Armory)
-    function extractEvents(baseEventName:String, body:Expr):Void {
-        beginScope();
-        var eventNodes:Array<IRNode> = [];
-
-        switch (body.expr) {
-            case EBlock(exprs):
-                for (expr in exprs) {
-                    processStatement(expr, eventNodes);
-                }
-            default:
-                processStatement(body, eventNodes);
-        }
-
-        if (eventNodes.length > 0) {
-            if (!events.exists(baseEventName)) events.set(baseEventName, []);
-            for (stmt in eventNodes) {
-                events.get(baseEventName).push(stmt);
-            }
-        }
-    }
-
-    function processStatement(e:Expr, eventNodes:Array<IRNode>):Void {
+    /**
+     * Records which notifyOnInit calls run before the trait is ready: in the
+     * constructor, directly or in the add and init functions it registers
+     * (and canvas.notifyOnReady, inlined). on_ready runs those; an init
+     * registered anywhere else may come later (late_init).
+     */
+    function scanStaticInits(e:Expr, inPath:Bool):Void {
         if (e == null) return;
-
         switch (e.expr) {
-            case EIf(econd, eif, eelse):
-                eventNodes.push(convertIf(econd, eif, eelse));
-
-            default:
-                var node = exprToIR(e);
-                if (N64MacroBase.keepStatement(node)) {
-                    eventNodes.push(node);
+            case ECall(callExpr, params):
+                var name = getFuncName(callExpr);
+                if (inPath && name == "notifyOnInit") staticInits.set(posKey(callExpr.pos), true);
+                scanStaticInits(callExpr, inPath);
+                var runsNow = name == "notifyOnInit" || name == "notifyOnAdd" || name == "notifyOnReady";
+                for (p in params) switch (p.expr) {
+                    case EFunction(_, f): scanStaticInits(f.expr, inPath && runsNow);
+                    default: scanStaticInits(p, inPath);
                 }
+            case EFunction(_, f):
+                scanStaticInits(f.expr, false);
+            default:
+                e.iter(sub -> scanStaticInits(sub, inPath));
         }
+    }
+
+    static function posKey(pos:Position):String {
+        var infos = Context.getPosInfos(pos);
+        return infos.file + ":" + infos.min;
+    }
+
+    /**
+     * notifyOnX(f) on this trait: one more registration of its site (a
+     * counter in the trait's data). f is an anonymous function (its body
+     * becomes the site's function, with what it captures) or a method of
+     * this trait or an ancestor (called).
+     */
+    function registerLifecycle(registerName:String, callExpr:Expr, fn:Expr):IRNode {
+        var kind = REGISTER_KINDS.get(registerName);
+        // A call converted again (an expression can be converted more than once) is the same site
+        var key = posKey(callExpr.pos);
+        if (siteRegistrations.exists(key)) return siteRegistrations.get(key);
+        var methodCall:IRNode = null, method:String = null, func:Function = null;
+        switch (fn.expr) {
+            case EFunction(_, f):
+                func = f;
+            case EConst(CIdent(name)), EField({expr: EConst(CIdent("this"))}, name):
+                methodCall = traitMethodCall(fn, name, []);
+                if (methodCall == null) return N64MacroBase.unsupported('$registerName() of a function that isn\'t a method of this trait is not supported on N64 yet', fn.pos);
+                // A 2D drawing method's Graphics parameter (unused on N64)
+                if (kind == "render2d") methodCall.args = [{ type: "c_literal", c_code: "NULL" }];
+                method = name;
+            default:
+                return N64MacroBase.unsupported('$registerName() of a function stored in a variable is not supported on N64 yet (pass a method or an anonymous function)', fn.pos);
+        }
+        // The site first: registrations inside its function get the next ids
+        var id = lifecycleSites.length;
+        siteIds.set(key, id);
+        lifecycleSites.push({
+            id: id,
+            kind: kind,
+            order: Context.getPosInfos(callExpr.pos).min,
+            method: method,
+            late_init: kind == "init" && !staticInits.exists(posKey(callExpr.pos))
+        });
+        var captures:Array<Dynamic> = func != null ? N64MacroBase.callbackCaptures(fn) : [];
+        var node:IRNode = { type: "lifecycle_register", value: id, props: { captures: captures } };
+        siteRegistrations.set(key, node);
+        events.set('lc_$id', func != null ? statements(func.expr) : [methodCall]);
+        return node;
+    }
+
+    /** removeX(f): one registration less, of the first site with method f (in the trait's chain). */
+    function removeLifecycle(removeName:String, fn:Expr):IRNode {
+        var name = switch (fn.expr) {
+            case EConst(CIdent(name)), EField({expr: EConst(CIdent("this"))}, name): name;
+            default: null;
+        };
+        if (name == null || traitMethodCall(fn, name, []) == null) {
+            return N64MacroBase.unsupported('$removeName() of a function that isn\'t a method of this trait is not supported on N64 yet', fn.pos);
+        }
+        return { type: "lifecycle_remove", value: REMOVE_KINDS.get(removeName), props: { method: name } };
+    }
+
+    /** notifyOnX / removeX of iron.Trait (from the typed call), else null. */
+    function lifecycleCall(callExpr:Expr, name:String, params:Array<Expr>):IRNode {
+        if (!REGISTER_KINDS.exists(name) && !REMOVE_KINDS.exists(name) && name != "notifyOnRender") return null;
+        if (methodMap.exists(name)) return null;  // The trait's own method of that name
+        if (name == "notifyOnRender") return N64MacroBase.unsupported("notifyOnRender() (3D drawing) is not supported on N64 yet");
+        if (params.length != 1) return null;
+        return REGISTER_KINDS.exists(name) ? registerLifecycle(name, callExpr, params[0]) : removeLifecycle(name, params[0]);
     }
 
     // Check if expression is 'super' keyword
@@ -840,6 +633,16 @@ class TraitExtractor extends N64Extractor {
             };
         }
 
+        // this.notifyOnUpdate(f): a registration; on another trait it's not supported
+        if (REGISTER_KINDS.exists(method) || REMOVE_KINDS.exists(method)) {
+            if (isThis(obj)) {
+                var lifecycle = lifecycleCall(callExpr, method, params);
+                if (lifecycle != null) return lifecycle;
+            } else if (TypedIndex.callOwner(obj, method) == "iron.Trait") {
+                return N64MacroBase.unsupported('$method() on another trait is not supported on N64 yet (call it in that trait)');
+            }
+        }
+
         // this.method(): same as method()
         if (isThis(obj)) {
             var call = traitMethodCall(callExpr, method, params);
@@ -861,82 +664,8 @@ class TraitExtractor extends N64Extractor {
             };
         }
 
-        // Skip lifecycle registration calls - they're handled by scanForLifecycles
-        // Note: notifyOnRender2D is now handled separately, not skipped
-        if (funcName == "notifyOnInit" ||
-            funcName == "notifyOnFixedUpdate" || funcName == "notifyOnLateUpdate" ||
-            funcName == "notifyOnRemove" || funcName == "notifyOnAdd") {
-            return { type: "skip" };
-        }
-        if (funcName == "notifyOnRender") {
-            return N64MacroBase.unsupported("notifyOnRender() (3D drawing) is not supported on N64 yet");
-        }
-
-        // removeFixedUpdate(callback) -> set _fixed_update_enabled = false
-        if (funcName == "removeFixedUpdate") {
-            meta.has_remove_fixed_update = true;
-            var callbackName:String = null;
-            if (params.length > 0) {
-                callbackName = extractStringArg(params[0]);
-            }
-            return { type: "remove_fixed_update", value: callbackName };
-        }
-
-        // removeUpdate(callback) -> set _update_enabled = false
-        // On N64, we only have one update per trait, so we just disable it
-        // The callback parameter is for Haxe compatibility
-        if (funcName == "removeUpdate") {
-            meta.has_remove_update = true;
-            // Extract callback name for documentation/debugging (optional)
-            var callbackName:String = null;
-            if (params.length > 0) {
-                callbackName = extractStringArg(params[0]);
-            }
-            return { type: "remove_update", value: callbackName };
-        }
-
-        // removeLateUpdate(callback) -> set _late_update_enabled = false
-        if (funcName == "removeLateUpdate") {
-            meta.has_remove_late_update = true;
-            var callbackName:String = null;
-            if (params.length > 0) {
-                callbackName = extractStringArg(params[0]);
-            }
-            return { type: "remove_late_update", value: callbackName };
-        }
-
-        // removeRender2D(callback) -> set _render2d_enabled = false
-        if (funcName == "removeRender2D") {
-            meta.has_remove_render2d = true;
-            var callbackName:String = null;
-            if (params.length > 0) {
-                callbackName = extractStringArg(params[0]);
-            }
-            return { type: "remove_render2d", value: callbackName };
-        }
-
-        // notifyOnUpdate(callback) outside constructor -> re-enable updates
-        // In constructor it's handled by scanForLifecycles, but runtime calls enable updates
-        if (funcName == "notifyOnUpdate") {
-            // Always enable the toggle mechanism when runtime notifyOnUpdate is used
-            meta.has_remove_update = true;
-            var callbackName:String = null;
-            if (params.length > 0) {
-                callbackName = extractStringArg(params[0]);
-            }
-            return { type: "notify_update", value: callbackName };
-        }
-
-        // notifyOnRender2D(callback) outside init -> re-enable render2D
-        if (funcName == "notifyOnRender2D") {
-            // Always enable the toggle mechanism when runtime notifyOnRender2D is used
-            meta.has_remove_render2d = true;
-            var callbackName:String = null;
-            if (params.length > 0) {
-                callbackName = extractStringArg(params[0]);
-            }
-            return { type: "notify_render2d", value: callbackName };
-        }
+        var lifecycle = lifecycleCall(callExpr, funcName, params);
+        if (lifecycle != null) return lifecycle;
 
         // A method of this trait or an ancestor
         var call = traitMethodCall(callExpr, funcName, params);

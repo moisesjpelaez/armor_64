@@ -51,6 +51,8 @@ package armor64;
  *   ui_group_set_visible, button_field - Layout visibility, field of a Button (pool index)
  *   autoload_call                    - Call to autoload function
  *   debug_call                       - trace() -> debugf()
+ *   lifecycle_register               - notifyOnX(f): value = site id (meta.lifecycle_sites), props.captures
+ *   lifecycle_remove                 - removeX(f): value = kind, props.method
  *   str_format                       - String built from parts (StringFormatter; props.kinds)
  *   remove_object                    - Object removal
  *
@@ -173,13 +175,9 @@ typedef TraitMeta = {
     ?uses_audio: Bool,         // Calls the audio API
     ?allocates_tweens: Bool,   // new Tween() outside member defaults: not countable (see limits.py)
     ?autoloads_used: Array<String>, // C names of the autoloads it refers to (their headers are included)
-    has_remove_update: Bool,       // True if trait calls removeUpdate() - adds _update_enabled guard
-    has_remove_fixed_update: Bool, // True if trait calls removeFixedUpdate() - adds _fixed_update_enabled guard
-    has_remove_late_update: Bool,  // True if trait calls removeLateUpdate()
-    has_remove_render2d: Bool,     // True if trait calls removeRender2D() - adds _render2d_enabled guard
     ?stores_self: Bool,            // True if trait stores `this` elsewhere (e.g. MainInstances.player = this): needs a data struct
-    ?dynamic_updates: Array<String>, // Names of dynamically registered update functions (e.g., ["update", "winUpdate"])
-    ?dynamic_fixed_updates: Array<String> // Names of dynamically registered fixed update functions
+    // Lifecycle registrations: {id, kind, order (source position), method (or null), late_init}
+    ?lifecycle_sites: Array<Dynamic>
 }
 
 /**

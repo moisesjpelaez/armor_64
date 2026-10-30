@@ -40,7 +40,8 @@ class N64Extractor implements IExtractorContext {
     var memberNames:Array<String> = [];               // Members in declaration order
     var memberTypes:Map<String, String> = new Map();  // Every var field's Haxe type (signals and unsupported types too)
     var localVarTypes:Map<String, String> = new Map();
-    var pointerLocals:Map<String, Bool> = new Map();  // Locals holding a pointer (see convertVar)
+    var pointerLocals:Map<String, Bool> = new Map();
+    var unsupportedLocals:Map<String, Bool> = new Map();  // Locals of types the N64 doesn't have (left out)  // Locals holding a pointer (see convertVar)
     var methodMap:Map<String, Function> = new Map();
     var converters:Array<ICallConverter>;
     var inMemberDefault:Bool = false;  // Converting a member's default value
@@ -70,12 +71,6 @@ class N64Extractor implements IExtractorContext {
             uses_autoload: false,
             contact_events: [],
             signals: [],
-            has_remove_update: false,
-            has_remove_fixed_update: false,
-            has_remove_late_update: false,
-            has_remove_render2d: false,
-            dynamic_updates: [],
-            dynamic_fixed_updates: [],
             autoloads_used: []
         };
 
@@ -180,11 +175,14 @@ class N64Extractor implements IExtractorContext {
     /** Start of a function body: locals of other functions are out of scope. */
     function beginScope():Void {
         localVarTypes = new Map();
+        unsupportedLocals = new Map();
         pointerLocals = new Map();
     }
 
     /** A local variable, marked when it holds a pointer. */
     function localIdent(name:String):IRNode {
+        // Reported where it makes an expression left out (droppedOperand)
+        if (unsupportedLocals.exists(name)) return { type: "skip", props: { local: name } };
         return pointerLocals.exists(name) ? { type: "ident", value: name, props: { pointer: true } } : { type: "ident", value: name };
     }
 
@@ -223,8 +221,30 @@ class N64Extractor implements IExtractorContext {
         var prevPos = N64MacroBase.currentPos;
         N64MacroBase.currentPos = e.pos;
         var ir = convertExpr(e);
+        // A part left out (reported) leaves the expression out: its C would be invalid
+        var dropped = droppedOperand(ir);
+        if (dropped != null) ir = dropped;
         N64MacroBase.currentPos = prevPos;
         return ir;
+    }
+
+    // The skip node among an expression's operands (the condition of an if
+    // or a loop), null if none. Statements in blocks, declarations and
+    // assignments handle their own (an unsupported value leaves a local
+    // uninitialized, an assignment out).
+    static function droppedOperand(node:IRNode):Null<IRNode> {
+        if (node == null) return null;
+        var operands:Array<IRNode> = switch (node.type) {
+            case "skip", "block", "var", "assign", "for_range", "return": [];
+            case "if", "while", "do_while": node.children != null ? [node.children[0]] : [];
+            default:
+                (node.children != null ? node.children : []).concat(node.args != null ? node.args : []).concat(node.object != null ? [node.object] : []);
+        };
+        for (operand in operands) if (operand != null && operand.type == "skip") {
+            var local = operand.props != null ? operand.props.local : null;
+            return local != null ? N64MacroBase.unsupported('this uses $local, whose type is not supported on N64: left out') : operand;
+        }
+        return null;
     }
 
     function convertExpr(e:Expr):IRNode {
@@ -585,11 +605,15 @@ class N64Extractor implements IExtractorContext {
             N64MacroBase.unsupported('a local of type $haxeType (${v.name}) is not supported on N64 yet');
         }
         localVarTypes.set(v.name, haxeType);
+        if (supported) unsupportedLocals.remove(v.name);
         pointerLocals.remove(v.name);
         var init = v.expr != null ? exprToIR(v.expr) : null;
-        // The value of an unsupported local is left out (declared only), once
-        // converted for what it reports
-        if (!supported) init = null;
+        // An unsupported local is left out, once its value is converted for
+        // what it reports; what reads it is left out too (resolveIdent)
+        if (!supported) {
+            unsupportedLocals.set(v.name, true);
+            return { type: "skip" };
+        }
 
         // A sound handle read from a handle array (channels[key][i]): a pointer
         // to it, so the audio state is updated in place
@@ -837,6 +861,13 @@ class N64Extractor implements IExtractorContext {
     }
 
     function convertCall(callExpr:Expr, params:Array<Expr>):IRNode {
+        // Asset loading (done on N64), before the arguments it doesn't use are converted
+        switch (callExpr.expr) {
+            case EField(obj, method):
+                var loading = AudioCallConverter.loadingCall(obj, method, params, this);
+                if (loading != null) return loading;
+            default:
+        }
         var args = [for (p in params) exprToIR(p)];
 
         switch (callExpr.expr) {

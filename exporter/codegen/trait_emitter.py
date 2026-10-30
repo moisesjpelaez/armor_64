@@ -226,50 +226,28 @@ class TraitEmitter:
         return ""
 
     # =========================================================================
-    # Lifecycle Control (removeUpdate, notifyOnUpdate at runtime)
+    # Lifecycle registrations (notifyOnX / removeX, see trait_generator.py)
     # =========================================================================
 
-    def emit_remove_update(self, node: Dict) -> str:
-        """removeUpdate(callback) -> disable specific on_update callback via _update_<name>_enabled flag."""
-        callback_name = node.get("value")
-        if callback_name:
-            # Multiple update functions - use specific flag
-            return f"(({self.data_type}*)data)->_update_{callback_name}_enabled = false;"
-        else:
-            # Single/anonymous update - use generic flag
-            return f"(({self.data_type}*)data)->_update_enabled = false;"
+    def emit_lifecycle_register(self, node: Dict) -> str:
+        """notifyOnX(f): one more registration of its site, after storing what
+        an anonymous function captures."""
+        site = node["value"]
+        call = f"(({self.data_type}*)data)->_lc_{site}++"
+        captures = (node.get("props") or {}).get("captures", [])
+        return self._with_captures([{"callback_name": f"lc_{site}", "captures": captures}], call)
 
-    def emit_remove_fixed_update(self, node: Dict) -> str:
-        """removeFixedUpdate(callback) -> disable specific on_fixed_update callback via _fixed_update_<name>_enabled flag."""
-        callback_name = node.get("value")
-        if callback_name:
-            # Multiple fixed update functions - use specific flag
-            return f"(({self.data_type}*)data)->_fixed_update_{callback_name}_enabled = false;"
-        else:
-            # Single/anonymous fixed update - use generic flag
-            return f"(({self.data_type}*)data)->_fixed_update_enabled = false;"
-
-    def emit_remove_late_update(self, node: Dict) -> str:
-        """removeLateUpdate() -> disable on_late_update callback via _late_update_enabled flag."""
-        return f"(({self.data_type}*)data)->_late_update_enabled = false;"
-
-    def emit_remove_render2d(self, node: Dict) -> str:
-        """removeRender2D() -> disable on_render2d callback via _render2d_enabled flag."""
-        return f"(({self.data_type}*)data)->_render2d_enabled = false;"
-
-    def emit_notify_update(self, node: Dict) -> str:
-        """notifyOnUpdate(callback) at runtime -> re-enable specific on_update callback."""
-        callback_name = node.get("value")
-        if callback_name:
-            # Multiple update functions - use specific flag
-            return f"(({self.data_type}*)data)->_update_{callback_name}_enabled = true;"
-        else:
-            # Single/anonymous update - use generic flag
-            return f"(({self.data_type}*)data)->_update_enabled = true;"
-
-    def emit_notify_render2d(self, node: Dict) -> str:
-        """notifyOnRender2D() at runtime -> re-enable on_render2d callback."""
-        return f"(({self.data_type}*)data)->_render2d_enabled = true;"
+    def emit_lifecycle_remove(self, node: Dict) -> str:
+        """removeX(f): one registration less, of the first site in the trait's
+        chain (ancestors first) registering method f that is registered."""
+        from armor64.codegen.trait_generator import chain_sites
+        kind, method = node["value"], node["props"]["method"]
+        refs = [f"(({c_name}Data*)data)->_lc_{site['id']}"
+                for c_name, site in chain_sites(self.all_traits, self.trait_name)
+                if site["kind"] == kind and site.get("method") == method]
+        if not refs:
+            return ""
+        return "{ " + " else ".join(f"if ({r}) {r}--;" for r in refs) + " }"
 
     def emit_scene_get_group_count(self, node: Dict) -> str:
         """Scene.active.getGroup(groupName).length -> scene_get_group_count(groupName)."""
@@ -817,9 +795,9 @@ class TraitEmitter:
         parent_ir = self.all_traits[parent_name]
         parent_c_name = parent_ir["c_name"]
 
-        # super(): the parent's constructor, i.e. its on_ready
+        # super(): the parent's constructor
         if method == "new":
-            return f"{parent_c_name}_on_ready(obj, data)"
+            return f"{parent_c_name}_on_create(obj, data)"
         # super.method(): the C function of the ancestor declaring it (Haxe gives its name)
         arg_strs = self._args(args)
         if arg_strs is None:
