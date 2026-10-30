@@ -245,7 +245,7 @@ class N64Extractor implements IExtractorContext {
                 if (op == OpAdd && containerValueType(c) == "String") {
                     N64MacroBase.unsupported("+= on a String element of an Array or Map is not supported on N64 yet");
                 } else {
-                    { type: "binop", value: N64MacroBase.binopToString(OpAssignOp(op)), children: [elementRef(e1), exprToIR(e2)] };
+                    compoundAssign(op, elementRef(e1), containerValueType(c), e2);
                 }
             case EUnop(op = OpIncrement | OpDecrement, postFix, operand = {expr: EArray(c, _)}) if (containerType(c) != null):
                 { type: "unop", value: N64MacroBase.unopToString(op), children: [elementRef(operand)], props: { postfix: postFix } };
@@ -259,7 +259,7 @@ class N64Extractor implements IExtractorContext {
                 new StringConcatBuilder(members, localVarTypes, exprToIR, getExprType).build(e1, e2);
             case EBinop(op, e1, e2):
                 var equality = N64MacroBase.stringEquality(op, e1, e2, exprToIR);
-                equality != null ? equality : { type: "binop", value: N64MacroBase.binopToString(op), children: [exprToIR(e1), exprToIR(e2)] };
+                equality != null ? equality : convertBinop(op, e1, e2);
 
             case EUnop(op, postFix, operand):
                 { type: "unop", value: N64MacroBase.unopToString(op), children: [exprToIR(operand)], props: { postfix: postFix } };
@@ -444,6 +444,55 @@ class N64Extractor implements IExtractorContext {
         // map[key][i]: the inner map's get gives a pointer
         if (isNestedElement(c)) node.props = { pointer: true };
         return node;
+    }
+
+    // `a op b` and `a op= b`, computed as Haxe does
+    function convertBinop(op:Binop, e1:Expr, e2:Expr):IRNode {
+        switch (op) {
+            case OpAssignOp(inner):
+                return compoundAssign(inner, exprToIR(e1), getExprType(e1), e2);
+            default:
+        }
+        var template = operatorTemplate(op, getExprType(e1), getExprType(e2));
+        if (template != null) return template.length > 0 ? { type: "c_template", c_code: template, args: [exprToIR(e1), exprToIR(e2)] } : { type: "skip" };
+        var c = N64MacroBase.binopToString(op);
+        if (c == null) return N64MacroBase.unsupported('the ${new haxe.macro.Printer().printBinop(op)} operator is not supported on N64 here');
+        return { type: "binop", value: c, children: [exprToIR(e1), exprToIR(e2)] };
+    }
+
+    // `target op= e2` (target: its IR, of Haxe type targetType)
+    function compoundAssign(op:Binop, target:IRNode, targetType:String, e2:Expr):IRNode {
+        var template = operatorTemplate(op, targetType, getExprType(e2));
+        if (template == null) {
+            var c = N64MacroBase.binopToString(op);
+            if (c == null) return N64MacroBase.unsupported('the ${new haxe.macro.Printer().printBinop(OpAssignOp(op))} operator is not supported on N64');
+            return { type: "binop", value: c + "=", children: [target, exprToIR(e2)] };
+        }
+        if (template.length == 0) return { type: "skip" };
+        // The target once, through its address
+        var assign = StringTools.replace(template, "{0}", "*_ref");
+        return { type: "c_template", c_code: '{ __auto_type _ref = &({0}); *_ref = $assign; }', args: [target, exprToIR(e2)] };
+    }
+
+    /**
+     * C for a Haxe operator that C writes differently, from the operands'
+     * types: a template with {0} and {1} for them (see Bindings), "" when it
+     * was reported. Null when C's own operator gives the same.
+     */
+    function operatorTemplate(op:Binop, left:String, right:String):Null<String> {
+        var leftC = TypeMap.getCType(left), rightC = TypeMap.getCType(right);
+        return switch (op) {
+            // Haxe's / always gives a Float
+            case OpDiv if (leftC == "int32_t" && rightC == "int32_t"): "((float)({0}) / ({1}))";
+            // C's % is for integers (the sign of the dividend in both)
+            case OpMod if (leftC == "float" || rightC == "float"): "fmodf({0}, {1})";
+            case OpUShr: "((int32_t)((uint32_t)({0}) >> ({1})))";
+            case OpNullCoal if (leftC != null && StringTools.endsWith(leftC, "*")): "({0} != NULL ? {0} : {1})";
+            case OpNullCoal:
+                N64MacroBase.unsupported('?? is not supported on N64 for a value of type $left (it can\'t be null there)');
+                "";
+            default: null;
+        };
     }
 
     /**

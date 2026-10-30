@@ -67,9 +67,10 @@ class Bindings {
             "Math.sqrt" => {c: "sqrtf({0})"},
             "Math.pow" => {c: "powf({0}, {1})"},
             "Math.abs" => {c: "fabsf({0})"},
-            "Math.floor" => {c: "fm_floorf({0})"},
-            "Math.ceil" => {c: "ceilf({0})"},
-            "Math.round" => {c: "roundf({0})"},
+            // Ints in Haxe; round goes up from .5 (-1.5 -> -1), computed exactly
+            "Math.floor" => {c: "((int32_t)fm_floorf({0}))"},
+            "Math.ceil" => {c: "((int32_t)fm_ceilf({0}))"},
+            "Math.round" => {c: "((int32_t)fm_floorf({0}) + (({0}) - fm_floorf({0}) >= 0.5f))"},
             "Math.min" => {c: "fminf({0}, {1})"},
             "Math.max" => {c: "fmaxf({0}, {1})"},
             "Math.exp" => {c: "expf({0})"},  // Exact, as Haxe's (fm_expf is up to 3% off, unbounded)

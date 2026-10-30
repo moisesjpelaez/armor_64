@@ -431,7 +431,8 @@ class N64MacroBase {
     }
 
     /**
-     * Convert a Haxe binary operator to its C string representation.
+     * The C operator for a Haxe binary operator that C has as it is (null for
+     * the others: N64Extractor.operatorTemplate, for loops, map literals).
      */
     public static function binopToString(op:Binop):String {
         return switch (op) {
@@ -453,10 +454,11 @@ class N64MacroBase {
             case OpXor: "^";      // Bitwise XOR
             case OpShl: "<<";     // Shift left
             case OpShr: ">>";     // Shift right
-            case OpUShr: ">>>";   // Unsigned shift right
             case OpAssign: "=";
-            case OpAssignOp(innerOp): binopToString(innerOp) + "=";
-            default: "?";
+            case OpAssignOp(innerOp):
+                var inner = binopToString(innerOp);
+                inner != null ? inner + "=" : null;
+            default: null;
         };
     }
 
