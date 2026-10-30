@@ -52,7 +52,7 @@ git clone https://gitlab.com/moises.jpelaez/Koui.git -b koui_editor
 
 ## Setup
 
-1. In Armory's preferences (`Edit > Preferences > Add-ons > Armory`), the **Nintendo 64 Settings** box: set the N64 Toolchain Path, the MSYS2 Bash Executable, the MinGW64 Path and the Ares Emulator Executable.
+1. In Armory's preferences (`Edit > Preferences > Add-ons > Armory`), check **Show Advanced**, open the **Build Preferences** tab and find the **Nintendo 64 Settings** box: set the N64 Toolchain Path, the MSYS2 Bash Executable, the MinGW64 Path and the Ares Emulator Executable.
 2. In the same box, click **Install Dependencies**, then **Build libdragon**, then **Build Tiny3D**, each once the previous one is done. They run in the background: the console shows their output, Armory's log says when each is done, and Stop ends it. Later clicks only rebuild what changed; check **Rebuild From Scratch** to build everything again.
 3. Set `Render > Armory Project > Modules > Physics Engine` to Oimo.
 
