@@ -68,6 +68,7 @@ void ui_group_set_visible(UIGroup *group, bool visible);
 
 UIElement* canvas_get_element(int index);
 void canvas_element_set_visible(int index, bool visible);
+bool canvas_element_visible(int index);
 
 #else
 // Stubs when no UI elements exist
@@ -77,6 +78,7 @@ static inline void canvas_clear(void) {}
 static inline void canvas_update(float dt) { (void)dt; }
 static inline void canvas_render(void) {}
 static inline void canvas_element_set_visible(int i, bool v) { (void)i; (void)v; }
+static inline bool canvas_element_visible(int i) { (void)i; return false; }
 static inline void canvas_set_ui_scene(int s) { (void)s; }
 
 #endif // UI_LABEL_COUNT > 0 || UI_IMAGE_COUNT > 0 || UI_GROUP_COUNT > 0 || UI_BUTTON_COUNT > 0 || UI_PANEL_COUNT > 0

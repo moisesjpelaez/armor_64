@@ -19,6 +19,15 @@
 #include "../types.h"
 #include <string.h>
 
+bool signal_is_connected(const ArmSignal *signal, ArmSignalHandler handler, void *ctx)
+{
+    if (signal == NULL) return false;
+    for (uint8_t i = 0; i < signal->count; i++) {
+        if (signal->entries[i].handler == handler && signal->entries[i].ctx == ctx) return true;
+    }
+    return false;
+}
+
 void signal_connect(ArmSignal *signal, ArmSignalHandler handler, void *ctx)
 {
     if (signal == NULL || handler == NULL) return;

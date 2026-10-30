@@ -77,24 +77,7 @@ class N64TraitMacro {
             var hasParent = ir.parent != null;
             if (!hasEvents && !hasContactEvents && !ir.needsData && !hasParent) continue;
 
-            // Convert members
-            var membersArr:Array<Dynamic> = [];
-            for (memberName in ir.members.keys()) {
-                var m = ir.members.get(memberName);
-                var memberObj:Dynamic = {
-                    name: memberName,
-                    type: m.haxeType,
-                    ctype: m.ctype,
-                    default_value: N64MacroBase.serializeIRNode(m.defaultValue)
-                };
-                if (m.setter != null) {
-                    memberObj.setter = m.setter;
-                }
-                if (m.traitRef != null) {
-                    memberObj.trait_ref = m.traitRef;
-                }
-                membersArr.push(memberObj);
-            }
+            var membersArr = N64MacroBase.serializeMembers(ir.members);
 
             // Convert events
             var eventsObj:Dynamic = {};
@@ -212,10 +195,10 @@ class TraitExtractor extends N64Extractor {
         for (field in fields) {
             switch (field.kind) {
                 case FVar(t, e):
-                    collectVar(field.name, t, e);
+                    collectVar(field.name, t, e, null, field.pos);
                 case FProp(_, set, t, e):
                     // Property with a backing field (e.g., @:isVar var paused(default, set): Bool)
-                    collectVar(field.name, t, e, set);
+                    collectVar(field.name, t, e, set, field.pos);
                 case FFun(func):
                     methodMap.set(field.name, func);
                 default:
@@ -277,7 +260,7 @@ class TraitExtractor extends N64Extractor {
             var params:Array<MethodParamIR> = [];
             if (method.args != null) {
                 for (arg in method.args) {
-                    var haxeType = arg.type != null ? N64MacroBase.complexTypeToString(arg.type) : "Dynamic";
+                    var haxeType = paramTypeName(methodName, params.length, arg.type);
                     params.push({
                         name: arg.name,
                         haxeType: haxeType,
@@ -290,10 +273,8 @@ class TraitExtractor extends N64Extractor {
 
             // Determine return type
             var returnType = "void";
-            if (method.ret != null) {
-                var retHaxeType = N64MacroBase.complexTypeToString(method.ret);
-                if (retHaxeType != "Void") returnType = TypeMap.getCType(retHaxeType);
-            }
+            var retHaxeType = returnTypeName(methodName, method.ret);
+            if (retHaxeType != "Void") returnType = TypeMap.getCType(retHaxeType);
 
             // Convert method body to IR
             // If this is a setter method (set_X), mark it so assignments to X inside
@@ -398,7 +379,7 @@ class TraitExtractor extends N64Extractor {
             late_init: kind == "init" && !staticInits.exists(posKey(callExpr.pos))
         });
         var captures:Array<Dynamic> = func != null ? N64MacroBase.callbackCaptures(fn) : [];
-        var node:IRNode = { type: "lifecycle_register", value: id, props: { captures: captures } };
+        var node:IRNode = { type: "lifecycle_register", value: id, props: { captures: captures, where: N64MacroBase.whereOf(callExpr.pos) } };
         siteRegistrations.set(key, node);
         events.set('lc_$id', func != null ? statements(func.expr) : [methodCall]);
         return node;
@@ -450,6 +431,7 @@ class TraitExtractor extends N64Extractor {
         if (localVarTypes.exists(name)) {
             return localIdent(name);
         }
+        if (leftOutMembers.exists(name)) return leftOutMember(name);
         if (memberNames.indexOf(name) >= 0) {
             return { type: "member", value: name };
         }
@@ -478,7 +460,7 @@ class TraitExtractor extends N64Extractor {
             return {
                 type: "method_ref",
                 method: name,
-                cName: inherited.cName + "_" + name.toLowerCase(),
+                cName: N64Extractor.methodCNameOf(inherited.cName, name),
                 trait: inherited.owner
             };
         }
@@ -527,7 +509,7 @@ class TraitExtractor extends N64Extractor {
         } else {
             var inherited = inheritedField(callExpr);
             if (inherited == null || !inherited.isMethod) return null;
-            cName = inherited.cName + "_" + name.toLowerCase();
+            cName = N64Extractor.methodCNameOf(inherited.cName, name);
             owner = inherited.owner;
         }
         return {
@@ -542,7 +524,7 @@ class TraitExtractor extends N64Extractor {
 
     // C function of one of this trait's methods: <trait C name>_<method>
     function methodCName(name:String):String {
-        return cName + "_" + name.toLowerCase();
+        return N64Extractor.methodCNameOf(cName, name);
     }
 
     override function convertAssign(e1:Expr, e2:Expr):IRNode {
@@ -581,7 +563,7 @@ class TraitExtractor extends N64Extractor {
             if (member != null && member.setter != null) {
                 return {
                     type: "trait_method_call",
-                    cName: cName + "_" + member.setter,
+                    cName: methodCName(member.setter),
                     method: member.setter,
                     trait: traitKey,
                     args: [exprToIR(e2)]
@@ -618,7 +600,7 @@ class TraitExtractor extends N64Extractor {
                 type: "super_call",
                 value: parentName,    // Parent trait name
                 method: method,
-                cName: N64Extractor.traitCName(owner) + "_" + method.toLowerCase(),
+                cName: N64Extractor.methodCNameOf(N64Extractor.traitCName(owner), method),
                 args: args
             };
         }
@@ -702,37 +684,20 @@ class TraitExtractor extends N64Extractor {
         }
     }
 
-    // Check if expression is assignment to g2.color (Graphics2 color property)
+    // g2.color = v on a 2D graphics (kha.graphics2.Graphics, from the typed AST)
     function isGraphics2ColorAssign(expr:Expr):Bool {
-        switch (expr.expr) {
-            case EField(obj, "color"):
-                switch (obj.expr) {
-                    case EConst(CIdent(name)):
-                        // Check for common graphics2 parameter names or type
-                        if (name == "g" || name == "g2") return true;
-                        var objType = getExprType(obj);
-                        if (objType == "kha.graphics2.Graphics" || objType == "Graphics") return true;
-                    default:
-                }
-            default:
-        }
-        return false;
+        return switch (expr.expr) {
+            case EField(obj, "color"): TypedIndex.isInstanceOf(obj, "kha.graphics2.Graphics");
+            default: false;
+        };
     }
 
-    // Check if expression is assignment to any g2 property (for skipping unsupported ones)
+    // Any other property of a 2D graphics (imageScaleQuality...): nothing on N64
     function isGraphics2PropertyAssign(expr:Expr):Bool {
-        switch (expr.expr) {
-            case EField(obj, _):
-                switch (obj.expr) {
-                    case EConst(CIdent(name)):
-                        if (name == "g" || name == "g2") return true;
-                        var objType = getExprType(obj);
-                        if (objType == "kha.graphics2.Graphics" || objType == "Graphics") return true;
-                    default:
-                }
-            default:
-        }
-        return false;
+        return switch (expr.expr) {
+            case EField(obj, _): TypedIndex.isInstanceOf(obj, "kha.graphics2.Graphics");
+            default: false;
+        };
     }
 
     // Check if this is an assignment to an autoload trait member with `this` on the right side

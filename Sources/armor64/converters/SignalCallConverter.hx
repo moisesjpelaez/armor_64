@@ -106,7 +106,8 @@ class SignalCallConverter implements ICallConverter {
                     id: '${signalName}_cb_${anonCounter++}',
                     params: params,
                     body: bodyOf(func, ctx),
-                    captures: N64MacroBase.callbackCaptures(e)
+                    captures: N64MacroBase.callbackCaptures(e),
+                    where: N64MacroBase.whereOf(e.pos)
                 };
             default:
                 var ref = TypedIndex.fieldRef(e);

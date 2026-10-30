@@ -1,6 +1,7 @@
 package armor64;
 
 #if macro
+import haxe.macro.Context;
 import haxe.macro.Expr;
 import haxe.macro.Type;
 
@@ -129,19 +130,7 @@ class N64AutoloadMacro {
         for (name in autoloadData.keys()) {
             var ir = autoloadData.get(name);
 
-            // Convert members
-            var membersArr:Array<Dynamic> = [];
-            for (memberName in ir.members.keys()) {
-                var m = ir.members.get(memberName);
-                var memberObj:Dynamic = {
-                    name: memberName,
-                    type: m.haxeType,
-                    ctype: m.ctype,
-                    default_value: N64MacroBase.serializeIRNode(m.defaultValue)
-                };
-                if (m.traitRef != null) memberObj.trait_ref = m.traitRef;
-                membersArr.push(memberObj);
-            }
+            var membersArr = N64MacroBase.serializeMembers(ir.members);
 
             // Convert functions
             var functionsArr:Array<Dynamic> = [];
@@ -222,7 +211,7 @@ class AutoloadExtractor extends N64Extractor {
                     methodMap.set(field.name, func);
                 case FVar(t, _):
                     // Singleton: static field of the same type as the class
-                    if (hasAccess(field.access, AStatic) && t != null && N64MacroBase.complexTypeToString(t) == className) {
+                    if (hasAccess(field.access, AStatic) && isOwnClass(field.name)) {
                         isSingleton = true;
                     }
                 default:
@@ -237,12 +226,12 @@ class AutoloadExtractor extends N64Extractor {
 
             switch (field.kind) {
                 // Fields of the class's own type are the singleton instance
-                case FVar(t, _) | FProp(_, _, t, _) if (t != null && N64MacroBase.complexTypeToString(t) == className):
+                case FVar(_, _) | FProp(_, _, _, _) if (isOwnClass(field.name)):
                 case FVar(t, e):
-                    collectVar(field.name, t, e);
+                    collectVar(field.name, t, e, null, field.pos);
                 case FProp(_, set, t, e):
                     // Property with a backing field (e.g., public var volume(default, set): Float)
-                    collectVar(field.name, t, e, set);
+                    collectVar(field.name, t, e, set, field.pos);
                 case FFun(func):
                     var funcIR = extractFunction(field.name, func, hasAccess(field.access, APublic));
                     functions.set(field.name, funcIR);
@@ -263,6 +252,15 @@ class AutoloadExtractor extends N64Extractor {
         };
     }
 
+    // A field of this class's own type (the singleton instance), from the compiler
+    function isOwnClass(field:String):Bool {
+        var t = classFieldType(field);
+        return t != null && switch (Context.follow(t)) {
+            case TInst(c, _): TypedIndex.classPath(c.get()) == TypedIndex.classPath(cls);
+            default: false;
+        };
+    }
+
     function hasAccess(access:Array<Access>, target:Access):Bool {
         return access != null && access.exists(a -> Type.enumEq(a, target));
     }
@@ -271,7 +269,7 @@ class AutoloadExtractor extends N64Extractor {
         beginScope();
         var params:Array<AutoloadParamIR> = [];
         for (arg in func.args) {
-            var haxeType = arg.type != null ? N64MacroBase.complexTypeToString(arg.type) : "Dynamic";
+            var haxeType = paramTypeName(name, params.length, arg.type);
             var ctype = TypeMap.getCType(haxeType);
             params.push({
                 name: arg.name,
@@ -283,7 +281,7 @@ class AutoloadExtractor extends N64Extractor {
             localVarTypes.set(arg.name, haxeType);
         }
 
-        var returnHaxeType = func.ret != null ? N64MacroBase.complexTypeToString(func.ret) : "Void";
+        var returnHaxeType = returnTypeName(name, func.ret);
         var returnType = returnHaxeType == "Void" ? null : TypeMap.getCType(returnHaxeType);
 
         return {
@@ -303,6 +301,7 @@ class AutoloadExtractor extends N64Extractor {
     // Locals, then this class's members (C globals) and functions
     override function resolveIdent(name:String, e:Expr):IRNode {
         if (localVarTypes.exists(name)) return localIdent(name);
+        if (leftOutMembers.exists(name)) return leftOutMember(name);
         if (members.exists(name)) return { type: "member", value: name };
         if (methodMap.exists(name)) return { type: "method_ref", method: name, cName: '${cName}_$name' };
         return super.resolveIdent(name, e);

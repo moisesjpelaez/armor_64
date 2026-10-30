@@ -11,15 +11,11 @@ import sys.FileSystem;
 import armor64.IRTypes;
 
 /**
- * N64 Macro Base - Shared Utilities
- *
- * Contains common functionality used by both N64TraitMacro and N64AutoloadMacro:
- * - IR node serialization
- * - Binary/unary operator conversion
- * - Type conversion utilities
- * - JSON output helpers
- *
- * This reduces code duplication between the two macro files.
+ * What the trait and autoload macros share outside the extractor
+ * (N64Extractor): scheduling the extraction after typing, reporting
+ * unsupported code at its line, callback captures, the facts other export
+ * steps read (n64_limits.json, n64_signals.json, n64_audio.json) and the IR
+ * JSON output.
  */
 class N64MacroBase {
     // Global audio configuration (set by AudioCallConverter when Aura.init() is found)
@@ -285,10 +281,19 @@ class N64MacroBase {
         return { type: "skip", warn: msg };
     }
 
-    /**
-     * `obj.method(args)` that no converter or binding translates: reported at
-     * the source line, as there is no generic C for a method call.
-     */
+    /** The members of a trait or autoload, as the IR JSON writes them. */
+    public static function serializeMembers(members:Map<String, MemberIR>):Array<Dynamic> {
+        var out:Array<Dynamic> = [];
+        for (name in members.keys()) {
+            var m = members.get(name);
+            var obj:Dynamic = { name: name, type: m.haxeType, ctype: m.ctype, default_value: serializeIRNode(m.defaultValue) };
+            if (m.setter != null) obj.setter = m.setter;
+            if (m.traitRef != null) obj.trait_ref = m.traitRef;
+            out.push(obj);
+        }
+        return out;
+    }
+
     /**
      * What an anonymous callback (tween, method argument, signal handler,
      * button) captures, as the exporter keeps it: [{name, ctype}], each copied
@@ -300,7 +305,54 @@ class N64MacroBase {
             unsupported("this callback's uses of the variables around it couldn't be found (no typed code)", fn.pos);
             return [];
         }
-        return [for (v in locals) {name: v.name, ctype: captureCType(v.t)}];
+        for (d in TypedIndex.captureDifferences(fn, locals)) differs(d.message, d.pos);
+        var captures:Array<Dynamic> = [for (v in locals) {name: v.name, ctype: captureCType(v.t)}];
+        // The loop variables it uses: the compiler may unroll a constant range
+        // (no variable left in the typed code), the C keeps the loop
+        var own = declaredIn(fn);
+        for (name in identsIn(fn)) {
+            if (loops.indexOf(name) >= 0 && !own.exists(name) && !Lambda.exists(captures, c -> c.name == name)) {
+                captures.push({name: name, ctype: "int32_t"});
+            }
+        }
+        if (loops.length > 0 && captures.length > 0) {
+            var names = [for (c in captures) c.name].join(", ");
+            differs('this callback is registered in a loop: on N64 every registration uses the last values of $names (in Haxe each keeps its own)', fn.pos);
+        }
+        return captures;
+    }
+
+    // Loop variables of the loops being converted, innermost last ("" for a while loop)
+    public static var loops:Array<String> = [];
+
+    // Identifiers a function's body uses
+    static function identsIn(fn:Expr):Array<String> {
+        var out:Array<String> = [];
+        function walk(e:Expr) {
+            switch (e.expr) {
+                case EConst(CIdent(name)) if (out.indexOf(name) < 0): out.push(name);
+                default:
+            }
+            haxe.macro.ExprTools.iter(e, walk);
+        }
+        walk(fn);
+        return out;
+    }
+
+    // Names a function declares: its parameters, locals, loop variables, nested functions' parameters
+    static function declaredIn(fn:Expr):Map<String, Bool> {
+        var out = new Map<String, Bool>();
+        function walk(e:Expr) {
+            switch (e.expr) {
+                case EFunction(_, f): for (a in f.args) out.set(a.name, true);
+                case EVars(vars): for (v in vars) out.set(v.name, true);
+                case EFor({expr: EBinop(OpIn, {expr: EConst(CIdent(name))}, _)}, _): out.set(name, true);
+                default:
+            }
+            haxe.macro.ExprTools.iter(e, walk);
+        }
+        walk(fn);
+        return out;
     }
 
     static function captureCType(t:Type):String {
@@ -312,6 +364,30 @@ class N64MacroBase {
         };
     }
 
+    /**
+     * Where N64 knowingly differs from Haxe (e.g. a callback's captured copy):
+     * a warning at the line, once, also with -D n64_strict.
+     */
+    /** "File.hx:line" of a position, for the runtime's reports (ARM_DIFFERS). */
+    public static function whereOf(pos:Position):String {
+        var location = haxe.macro.PositionTools.toLocation(pos);
+        var file = Std.string(location.file);
+        file = file.substr(Std.int(Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"))) + 1);
+        return file + ":" + location.range.start.line;
+    }
+
+    public static function differs(msg:String, pos:Position):Void {
+        var infos = Context.getPosInfos(pos);
+        var key = '${infos.file}:${infos.min}:$msg';
+        if (reportedUnsupported.exists(key)) return;
+        reportedUnsupported.set(key, true);
+        Context.warning('N64: $msg', pos);
+    }
+
+    /**
+     * `obj.method(args)` that no converter or binding translates: reported at
+     * the source line, as there is no generic C for a method call.
+     */
     public static function unsupportedMethodCall(obj:Expr, method:String):IRNode {
         if (TypedIndex.nodesAt(obj).length == 0) {
             return unsupported('could not resolve the type of this .$method() call on N64');

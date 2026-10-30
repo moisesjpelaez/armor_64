@@ -57,10 +57,8 @@ class AudioCallConverter implements ICallConverter {
             default:
         }
 
-        // Handle sound handle method calls (handle.play(), handle.stop(), handle.setVolume())
-        // These are on variables typed as BaseChannelHandle or similar
-        var objType = ExprUtils.getExprTypeSafe(obj, ctx);
-        if (objType != null && (objType.indexOf("ChannelHandle") >= 0 || objType.indexOf("Handle") >= 0)) {
+        // A sound handle's methods (handle.play(), stop(), setVolume()): Aura's handles, from the typed AST
+        if (TypedIndex.isInstanceOf(obj, "aura.channels.BaseChannelHandle")) {
             return convertHandleCall(obj, method, args, ctx);
         }
 
@@ -254,10 +252,6 @@ class AudioCallConverter implements ICallConverter {
         return N64MacroBase.mixChannelConstant(name);
     }
 
-    // Helper methods now available in ExprUtils:
-    // - extractString -> ExprUtils.extractString
-    // - getExprTypeSafe -> ExprUtils.getExprTypeSafe
-    // - extractVarName -> ExprUtils.extractIdentName
 }
 
 #end

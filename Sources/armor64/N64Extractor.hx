@@ -41,7 +41,8 @@ class N64Extractor implements IExtractorContext {
     var memberTypes:Map<String, String> = new Map();  // Every var field's Haxe type (signals and unsupported types too)
     var localVarTypes:Map<String, String> = new Map();
     var pointerLocals:Map<String, Bool> = new Map();
-    var unsupportedLocals:Map<String, Bool> = new Map();  // Locals of types the N64 doesn't have (left out)  // Locals holding a pointer (see convertVar)
+    var unsupportedLocals:Map<String, Bool> = new Map();
+    var leftOutMembers:Map<String, Bool> = new Map();     // Members of types the N64 doesn't have  // Locals of types the N64 doesn't have (left out)  // Locals holding a pointer (see convertVar)
     var methodMap:Map<String, Function> = new Map();
     var converters:Array<ICallConverter>;
     var inMemberDefault:Bool = false;  // Converting a member's default value
@@ -97,6 +98,11 @@ class N64Extractor implements IExtractorContext {
     }
 
     /** C prefix of a trait: its module path, plus the class name if it differs from the module's. */
+    /** C function of a trait method: <trait C name>_<method, lowercase> (the one place it's named). */
+    public static function methodCNameOf(traitCName:String, method:String):String {
+        return traitCName + "_" + method.toLowerCase();
+    }
+
     public static function traitCName(c:ClassType):String {
         var moduleName = c.module.substr(c.module.lastIndexOf(".") + 1);
         var path = moduleName.toLowerCase() == c.name.toLowerCase() ? c.module : c.module + "_" + c.name;
@@ -111,8 +117,49 @@ class N64Extractor implements IExtractorContext {
      * Record a var or property field. Signals and engine-provided values get
      * no member; `setter` is the property's write access ("set" for a setter).
      */
-    function collectVar(name:String, t:ComplexType, e:Expr, ?setter:String):Void {
-        var haxeType = t != null ? N64MacroBase.complexTypeToString(t) : "Dynamic";
+    // ========================================================================
+    // Types from the compiler (aliases, imports `as`, inferred types; a game's
+    // own class named like an engine one keeps its full path, TypedIndex)
+    // ========================================================================
+
+    /** A type's short name, from the compiler's type; as written when it has none. */
+    static function typeNameOf(t:Null<Type>, written:Null<ComplexType>):String {
+        var name = t != null ? TypedIndex.typeName(t) : null;
+        if (name != null) return name;
+        return written != null ? N64MacroBase.complexTypeToString(written) : "Dynamic";
+    }
+
+    /** The compiler's type of one of this class's fields (instance or static). */
+    function classFieldType(name:String):Null<Type> {
+        var field = Lambda.find(cls.fields.get().concat(cls.statics.get()), f -> f.name == name);
+        return field != null ? field.type : null;
+    }
+
+    /** Parameter and return types of one of this class's methods, from the compiler. */
+    function methodTypes(name:String):Null<{args:Array<Type>, ret:Type}> {
+        var t = classFieldType(name);
+        if (t == null) return null;
+        return switch (Context.follow(t)) {
+            case TFun(args, ret): { args: [for (a in args) a.t], ret: ret };
+            default: null;
+        };
+    }
+
+    /** Short name of a method parameter's type (i: its index). */
+    function paramTypeName(method:String, i:Int, written:Null<ComplexType>):String {
+        var types = methodTypes(method);
+        return typeNameOf(types != null && i < types.args.length ? types.args[i] : null, written);
+    }
+
+    /** Short name of a method's return type ("Void" for none). */
+    function returnTypeName(method:String, written:Null<ComplexType>):String {
+        var types = methodTypes(method);
+        var name = typeNameOf(types != null ? types.ret : null, written);
+        return name == "Dynamic" && written == null && types == null ? "Void" : name;
+    }
+
+    function collectVar(name:String, t:ComplexType, e:Expr, ?setter:String, ?pos:Position):Void {
+        var haxeType = typeNameOf(classFieldType(name), t);
         memberTypes.set(name, haxeType);
 
         // Per-instance signals are ArmSignal fields, static ones are declared
@@ -121,14 +168,14 @@ class N64Extractor implements IExtractorContext {
             meta.signals.push({name: name});
             return;
         }
-        var member = extractMember(name, haxeType, e);
+        var member = extractMember(name, haxeType, e, pos);
         if (member == null) return;
         if (setter == "set") member.setter = "set_" + name;
         members.set(name, member);
         memberNames.push(name);
     }
 
-    function extractMember(name:String, haxeType:String, e:Expr):MemberIR {
+    function extractMember(name:String, haxeType:String, e:Expr, ?pos:Position):MemberIR {
         // Engine-provided on N64 (gamepad, rigid body, ...): not stored
         if (EngineTypes.isProvidedMember(cls, name)) return null;
 
@@ -136,7 +183,12 @@ class N64Extractor implements IExtractorContext {
             return {haxeType: haxeType, ctype: TypeMap.getCType(haxeType), defaultValue: memberDefault(e)};
         }
         var trait = traitMemberClass(name);
-        if (trait == null) return null;
+        if (trait == null) {
+            // Left out, and what uses it (resolveIdent, thisField: droppedOperand reports it)
+            N64MacroBase.unsupported('a member of type $haxeType ($name) is not supported on N64 yet', pos);
+            leftOutMembers.set(name, true);
+            return null;
+        }
         return {
             haxeType: haxeType,
             ctype: traitCName(trait) + "Data*",
@@ -177,6 +229,11 @@ class N64Extractor implements IExtractorContext {
         localVarTypes = new Map();
         unsupportedLocals = new Map();
         pointerLocals = new Map();
+    }
+
+    /** A member left out (its type): what uses it is left out too (droppedOperand). */
+    function leftOutMember(name:String):IRNode {
+        return { type: "skip", props: { local: name } };
     }
 
     /** A local variable, marked when it holds a pointer. */
@@ -321,7 +378,11 @@ class N64Extractor implements IExtractorContext {
                 { type: "return", children: retExpr != null ? [exprToIR(retExpr)] : null };
 
             case EWhile(econd, ebody, normalWhile):
-                { type: normalWhile ? "while" : "do_while", children: [exprToIR(econd), exprToIR(ebody)] };
+                var cond = exprToIR(econd);
+                N64MacroBase.loops.push("");
+                var bodyIR = exprToIR(ebody);
+                N64MacroBase.loops.pop();
+                { type: normalWhile ? "while" : "do_while", children: [cond, bodyIR] };
 
             case EFor(it, ebody):
                 convertForLoop(it, ebody);
@@ -487,6 +548,7 @@ class N64Extractor implements IExtractorContext {
 
     /** Hook: `this.name` (thisExpr is the `this`) as a member, null if it isn't one. */
     function thisField(thisExpr:Expr, name:String):IRNode {
+        if (leftOutMembers.exists(name)) return leftOutMember(name);
         return members.exists(name) ? { type: "member", value: name } : null;
     }
 
@@ -670,8 +732,8 @@ class N64Extractor implements IExtractorContext {
 
     /** `e1[e2]`: typed Map and Array containers use their generated functions. */
     function convertArrayAccess(e1:Expr, e2:Expr):IRNode {
-        // elements[i]: the canvas element (a pointer)
-        if (isKouiElements(e1)) return { type: "canvas_element", children: [exprToIR(e2)] };
+        // elements[i] as a value: an image or a layout on N64, only its visible is (convertFieldAccess)
+        if (isKouiElements(e1)) return N64MacroBase.unsupported("an element of the canvas element list is only supported on N64 for its visible (elements[i].visible)");
         var objType = getExprType(e1);
         var ctype = TypeMap.getCType(objType);
         var container = TypeMap.isMapType(objType) ? TypeMap.mapReadNode(objType) : TypeMap.isArrayType(objType) ? "array_get" : null;
@@ -704,7 +766,9 @@ class N64Extractor implements IExtractorContext {
     // A local declared by `decl` (its `var` expression)
     function convertVar(v:Var, decl:Expr):IRNode {
         // Declared type, or the one the compiler inferred
-        var haxeType = v.type != null ? N64MacroBase.complexTypeToString(v.type) : getExprType(v.expr);
+        var declared = TypedIndex.localType(decl, v.name);
+        var haxeType = declared != null ? typeNameOf(declared, v.type)
+            : v.type != null ? N64MacroBase.complexTypeToString(v.type) : getExprType(v.expr);
         var ctype = TypeMap.getCType(haxeType);
         // Engine objects (the gamepad, a transform) are fine: the converters
         // translate their calls
@@ -751,11 +815,11 @@ class N64Extractor implements IExtractorContext {
 
                 switch (e2.expr) {
                     case EBinop(OpInterval, start, end):
-                        return {
-                            type: "for_range",
-                            value: varName,
-                            children: [exprToIR(start), exprToIR(end), exprToIR(body)]
-                        };
+                        var range = [exprToIR(start), exprToIR(end)];
+                        N64MacroBase.loops.push(varName);
+                        var bodyIR = exprToIR(body);
+                        N64MacroBase.loops.pop();
+                        return { type: "for_range", value: varName, children: range.concat([bodyIR]) };
                     default:
                 }
             default:
@@ -922,6 +986,15 @@ class N64Extractor implements IExtractorContext {
             default:
         }
 
+        // elements[i].visible: the element's (an image or a layout), read by its kind
+        switch (obj.expr) {
+            case EArray(list, index) if (isKouiElements(list)):
+                meta.uses_ui = true;
+                if (field == "visible") return { type: "c_template", c_code: "canvas_element_visible({0})", args: [exprToIR(index)] };
+                return N64MacroBase.unsupported('elements[i].$field is not supported on N64 yet (only visible)');
+            default:
+        }
+
         // The canvas element list's length
         if (field == "length" && isKouiElements(obj)) {
             return { type: "c_literal", c_code: "UI_ELEMENT_COUNT" };
@@ -942,14 +1015,9 @@ class N64Extractor implements IExtractorContext {
             return { type: "field_access", object: exprToIR(obj), value: field };
         }
 
-        // object.parent -> object_get_parent((ArmObject*)obj, scene_get(scene_get_current_id()))
-        if (field == "parent") {
-            switch (obj.expr) {
-                case EConst(CIdent("object")), EConst(CIdent("this")):
-                    return { type: "c_literal", c_code: "object_get_parent((ArmObject*)obj, scene_get(scene_get_current_id()))" };
-                default:
-                    return { type: "c_literal", c_code: 'object_get_parent((ArmObject*){obj}, scene_get(scene_get_current_id()))' };
-            }
+        // x.parent of an Object: its parent in the current scene
+        if (field == "parent" && TypedIndex.isInstanceOf(obj, "iron.object.Object")) {
+            return { type: "c_template", c_code: "object_get_parent((ArmObject*)({0}), scene_get(scene_get_current_id()))", args: [exprToIR(obj)] };
         }
 
         // Static field of a class nothing above translates
@@ -966,7 +1034,7 @@ class N64Extractor implements IExtractorContext {
     function fieldAccess(obj:Expr, field:String):IRNode {
         var objIR = exprToIR(obj);
         var ctype = ctypeOf(obj);
-        var deref = isPointerLocal(obj) || objIR.type == "map_get" || objIR.type == "canvas_element"
+        var deref = isPointerLocal(obj) || objIR.type == "map_get"
             || (ctype != null && ctype.endsWith("*") && ctype != "void*" && ctype != "const char*");
         return deref ? { type: "field_access", object: objIR, value: field, props: { deref: true } }
             : { type: "field_access", object: objIR, value: field };

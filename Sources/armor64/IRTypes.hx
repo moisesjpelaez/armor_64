@@ -10,9 +10,9 @@ package armor64;
  * ========================
  *
  * LITERALS:
- *   int, float, string, bool, null   - TraitMacro direct types
- *   literal                          - AutoloadMacro uses props.literal_type
- *   skip                             - No-op, filtered out
+ *   int, float, string, bool, null   - Literals
+ *   empty_array                      - []
+ *   skip                             - Left out (warn: reported); an expression with a skip operand is one (N64Extractor.droppedOperand)
  *   c_literal                        - Raw C code passthrough
  *
  * VARIABLES:
@@ -21,11 +21,15 @@ package armor64;
  *   field_access                     - Field access: object.field, vec.x, this.field
  *   autoload_field                   - Access to another autoload's member
  *   autoload_trait_object            - Get object pointer from autoload trait member
+ *   autoload_trait_assign            - AutoloadClass.member = this (the trait's data)
+ *   method_ref                       - A method as a value (cName of its C function)
+ *   array_access                     - a[i] on a C array (typed containers are below)
  *
  * OPERATORS:
  *   assign                           - Assignment: target = value
  *   binop                            - Binary operator: a + b
  *   unop                             - Unary operator: !a, -a, ++a
+ *   string_equals                    - String == / != (strcmp)
  *
  * CONTROL FLOW:
  *   if                               - Conditional: if/else
@@ -42,26 +46,35 @@ package armor64;
  *                                      args = its {0}..., object = its {self} (if any),
  *                                      props.in_place: {self} is written to
  *   call                             - A C function call (value = its name)
- *   super_call                       - super.method(): cName of the declaring ancestor's C function
+ *   super_call                       - super.method(): cName of the declaring ancestor's C function;
+ *                                      super(): the parent's constructor (on_create)
+ *   trait_method_call                - A method of the trait or an ancestor (cName; vtable when overridden)
+ *   callback_wrapper                 - An anonymous function passed to a method (body, captures)
+ *   callback_param_call              - Calling a function parameter (name)
  *   scene_call, input_call           - Scene.setActive(), input calls
- *   vec_call                         - Vector clone() / set() (transform vectors differ)
+ *   vec_call                         - Vector clone() / set() (on transform vectors: c_template, N64Extractor)
+ *   tween_float, tween_vec4, tween_delay, tween_start, tween_stop, tween_pause - Tweens (props: on_update, on_done callbacks)
+ *   color_from_floats                - Color.fromFloats(); render2d_set_color: g2.color = c
+ *   scene_get_group_count            - Scene.active.getGroup(name).length
  *   signal_connect, signal_disconnect, signal_emit - Signals (see SignalCallConverter)
  *   canvas_get_label, label_set_text - UI calls (label_set_text.args: [label, text])
- *   canvas_element, canvas_element_set_visible - Koui's element list (Array<Element>) by type
+ *   canvas_element_set_visible       - elements[i].visible = v on Koui's element list (Array<Element>)
  *   ui_group_set_visible, button_field - Layout visibility, field of a Button (pool index)
+ *   canvas_get_button, canvas_get_group, canvas_set_scene, canvas_clear_scenes - Koui canvas
+ *   button_register_callback         - onPressed/onFocus... (props: event, callback_name, captures; body)
+ *   button_grab_focus                - button.grabFocus()
  *   autoload_call                    - Call to autoload function
  *   debug_call                       - trace() -> debugf()
  *   lifecycle_register               - notifyOnX(f): value = site id (meta.lifecycle_sites), props.captures
  *   lifecycle_remove                 - removeX(f): value = kind, props.method
  *   str_format                       - String built from parts (StringFormatter; props.kinds)
- *   remove_object                    - Object removal
  *
  * AUDIO:
  *   sound_handle_equals              - handle == / != (null: ARM_SOUND_HANDLE_NULL)
  *   sound_handle_finished            - handle.finished: !arm_audio_is_playing(ptr)
  *   address_of, deref                - A handle as a pointer / a pointer local's value
- *   audio_play, audio_mix_*          - Audio playback calls
- *   audio_handle_*                   - Audio handle operations
+ *   audio_load, audio_mix_volume, audio_mix_volume_get - Aura calls
+ *   audio_handle_play, _pause, _stop, _volume          - Sound handle methods
  *
  * CONSTRUCTORS:
  *   new_vec, tween_alloc             - Vector literal, tween from the pool
@@ -74,6 +87,7 @@ package armor64;
  *   container_element                - Pointer to c[k], written in place (c[k] += v, c[k]++),
  *                                      inside a deref: props.map, props.pointer
  *   array_get_nested                 - map[key][i]: children = [inner get, index]
+ *   array_get_nested_ptr             - The same, as a pointer (a sound handle local)
  *   (props.pointer: object is already a pointer, as map[key] in map[key][i])
  */
 

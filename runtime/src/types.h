@@ -122,6 +122,7 @@ typedef struct {
 // Signal functions (implemented in signal.c)
 void signal_connect(ArmSignal *signal, ArmSignalHandler handler, void *ctx);
 void signal_disconnect(ArmSignal *signal, ArmSignalHandler handler, void *ctx);
+bool signal_is_connected(const ArmSignal *signal, ArmSignalHandler handler, void *ctx);
 void signal_emit(ArmSignal *signal, void *payload);
 void signal_clear(ArmSignal *signal);
 

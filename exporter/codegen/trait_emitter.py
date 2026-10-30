@@ -233,9 +233,13 @@ class TraitEmitter:
         """notifyOnX(f): one more registration of its site, after storing what
         an anonymous function captures."""
         site = node["value"]
-        call = f"(({self.data_type}*)data)->_lc_{site}++"
-        captures = (node.get("props") or {}).get("captures", [])
-        return self._with_captures([{"callback_name": f"lc_{site}", "captures": captures}], call)
+        props = node.get("props") or {}
+        ref = f"(({self.data_type}*)data)->_lc_{site}"
+        captures = props.get("captures", [])
+        # Registered again while still registered: both use the last captured values
+        checks = [f'ARM_DIFFERS({ref} > 0, {c_string(props.get("where", ""))}, '
+                  '"a function capturing locals registered again: both registrations use the last values")'] if captures else []
+        return self._with_captures([{"callback_name": f"lc_{site}", "captures": captures}], f"{ref}++", checks)
 
     def emit_lifecycle_remove(self, node: Dict) -> str:
         """removeX(f): one registration less, of the first site in the trait's
@@ -343,7 +347,7 @@ class TraitEmitter:
 
     def emit_array_access(self, node: Dict) -> str:
         """C array access: array[index] (children: the array, the index).
-        Canvas elements are canvas_element nodes."""
+        Canvas elements: N64Extractor (elements[i].visible)."""
         children = node.get("children", [])
         if len(children) < 2:
             return ""
@@ -860,12 +864,14 @@ class TraitEmitter:
 
         return self._with_captures(callbacks, method_call)
 
-    def _with_captures(self, callbacks: List[Optional[Dict]], call: str) -> str:
-        """A call after storing the parameters its callbacks capture (capture_ref):
-        a comma expression, so it works as a statement, a value or in a chain."""
+    def _with_captures(self, callbacks: List[Optional[Dict]], call: str, checks: List[str] = ()) -> str:
+        """A call after storing the parameters its callbacks capture (capture_ref)
+        and the debug checks (ARM_DIFFERS): a comma expression, so it works as a
+        statement, a value or in a chain."""
         stores = [f"{capture_ref(self.c_name, self.is_trait, cb['callback_name'], cap['name'])} = {cap['name']}"
                   for cb in callbacks if cb for cap in cb.get("captures", [])]
-        return f"({', '.join(stores + [call])})" if stores else call
+        parts = list(checks) + stores
+        return f"({', '.join(parts + [call])})" if parts else call
 
     def _vtable_call(self, method: str) -> str:
         """`((OwnerData*)data)->_vfn_method` for virtual methods, through the struct
@@ -1007,10 +1013,6 @@ class TraitEmitter:
     def emit_ui_group_set_visible(self, node: Dict) -> str:
         return self._ui_call(node, "ui_group_set_visible")
 
-    def emit_canvas_element(self, node: Dict) -> str:
-        """elements[i]: Koui's element list is the canvas's (logo screens use images)."""
-        return f"canvas_get_image({self.emit(node.get('children', [None])[0])})"
-
     def emit_button_field(self, node: Dict) -> str:
         """button.field: buttons are indices into the canvas's button pool."""
         return f"canvas_get_button({self.emit(node.get('children', [None])[0])})->{node.get('value', '')}"
@@ -1107,7 +1109,10 @@ class TraitEmitter:
             ctx = "data"
         call = f"{func}({ptr}, {name}, {ctx})"
         if func == "signal_connect" and handler.get("kind") == "anonymous":
-            return self._with_captures([{"callback_name": handler["id"], "captures": handler.get("captures", [])}], call)
+            # Connected again: in Haxe each connect adds the new closure, here it stays connected once
+            checks = [f'ARM_DIFFERS(signal_is_connected({ptr}, {name}, {ctx}), {c_string(handler.get("where", ""))}, '
+                      '"an anonymous handler connected again: on N64 it stays connected once")']
+            return self._with_captures([{"callback_name": handler["id"], "captures": handler.get("captures", [])}], call, checks)
         return call
 
     def emit_autoload_call(self, node: Dict) -> str:

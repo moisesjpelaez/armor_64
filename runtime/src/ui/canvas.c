@@ -352,8 +352,25 @@ void canvas_element_set_visible(int index, bool visible) {
 #endif
     }
 }
+
+// elements[i].visible, by the element's kind
+bool canvas_element_visible(int index) {
+    UIElement *elem = canvas_get_element(index);
+    if (!elem) return false;
+    if (elem->type == UI_ELEM_IMAGE) {
+        UIImage *img = canvas_get_image(elem->index);
+        return img && img->visible;
+#if UI_GROUP_COUNT > 0
+    } else if (elem->type == UI_ELEM_GROUP) {
+        UIGroup *grp = canvas_get_group(elem->index);
+        return grp && grp->visible;
+#endif
+    }
+    return false;
+}
 #else
 void canvas_element_set_visible(int index, bool visible) { (void)index; (void)visible; }
+bool canvas_element_visible(int index) { (void)index; return false; }
 #endif // UI_ELEMENT_COUNT > 0
 
 // ============================================================================

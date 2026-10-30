@@ -2,7 +2,6 @@ package armor64.util;
 
 #if macro
 import haxe.macro.Expr;
-import armor64.converters.ICallConverter;
 
 /**
  * Expression Utilities
@@ -34,18 +33,6 @@ class ExprUtils {
         switch (e.expr) {
             case EConst(CString(s, _)): return s;
             default: return null;
-        }
-    }
-
-    /**
-     * Get expression type safely, catching any exceptions.
-     * Returns null on failure instead of throwing.
-     */
-    public static function getExprTypeSafe(e:Expr, ctx:IExtractorContext):String {
-        try {
-            return ctx.getExprType(e);
-        } catch (_:Dynamic) {
-            return null;
         }
     }
 }

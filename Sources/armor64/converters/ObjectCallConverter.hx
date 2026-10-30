@@ -6,7 +6,6 @@ import armor64.IRTypes;
 import armor64.N64MacroBase;
 import armor64.TypedIndex;
 import armor64.converters.ICallConverter;
-import armor64.util.ExprUtils;
 
 /**
  * object.getTrait() and the other trait/children calls N64 doesn't have (or
@@ -25,13 +24,14 @@ class ObjectCallConverter implements ICallConverter {
     }
 
     function convert(obj:Expr, method:String, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
-        var traitName = rawParams.length > 0 ? ExprUtils.extractIdentName(rawParams[0]) : null;
+        // The trait class asked for (getTrait(RigidBody)), from the typed AST
+        var traitPath = rawParams.length > 0 ? TypedIndex.typeRefPath(rawParams[0]) : null;
         return switch (method) {
             // A RigidBody is its object's pointer: the object if it has a body, else null
-            case "getTrait" if (traitName == "RigidBody"):
+            case "getTrait" if (traitPath != null && StringTools.startsWith(traitPath, "armory.trait.physics.") && StringTools.endsWith(traitPath, ".RigidBody")):
                 { type: "c_template", c_code: "arm_rigid_body_of({self})", args: [], object: ctx.exprToIR(obj) };
             // There is a single global UI canvas
-            case "getTrait" if (traitName == "KouiCanvas"):
+            case "getTrait" if (traitPath == "armory.trait.internal.KouiCanvas"):
                 { type: "skip" };
             case "getTrait", "addTrait", "removeTrait":
                 // Trait system not supported on N64

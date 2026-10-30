@@ -38,6 +38,21 @@ static inline bool str_ends_with(const char* s, const char* end) {
     return s_len >= end_len && memcmp(s + s_len - end_len, end, end_len) == 0;
 }
 
+// A registration N64 handles differently from Haxe, found when it happens
+// (where: "File.hx:line"): reported once per place with debugf. Nothing in
+// NDEBUG builds
+#ifndef NDEBUG
+#define ARM_DIFFERS(cond, where, what) ({ \
+    static bool _arm_differs_reported = false; \
+    if (!_arm_differs_reported && (cond)) { \
+        _arm_differs_reported = true; \
+        debugf("N64: %s: %s\n", where, what); \
+    } \
+})
+#else
+#define ARM_DIFFERS(cond, where, what) ((void)0)
+#endif
+
 // Strings built as Haxe builds them (system/str.c): each part is appended to a
 // buffer from _str_get_buffer() at length n, the new length is returned. The
 // caller writes the terminator at the end.

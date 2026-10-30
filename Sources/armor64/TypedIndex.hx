@@ -35,10 +35,16 @@ class TypedIndex {
         return infos.file + ":" + infos.min + ":" + infos.max;
     }
 
+    // Each field's typed body (the functions callbacks are written in)
+    static var roots:Array<TypedExpr> = [];
+
     public static function addClass(c:ClassType):Void {
-        if (c.constructor != null) addExpr(c.constructor.get().expr());
-        for (f in c.fields.get()) addExpr(f.expr());
-        for (f in c.statics.get()) addExpr(f.expr());
+        var bodies = [for (f in c.fields.get().concat(c.statics.get())) f.expr()];
+        if (c.constructor != null) bodies.push(c.constructor.get().expr());
+        for (body in bodies) if (body != null) {
+            roots.push(body);
+            addExpr(body);
+        }
     }
 
     static function addExpr(t:TypedExpr):Void {
@@ -65,11 +71,6 @@ class TypedIndex {
         return list != null ? list : [];
     }
 
-    /**
-     * Type of an expression as a short Haxe type name, in the format the
-     * extractors and TypeMap use (e.g. "Vec4", "Map<String, Array<Int>>").
-     * Null if the expression has no typed node or its type isn't known.
-     */
     /**
      * Compiler type of an expression (an implicit-this field read gets its
      * field's type, see thisFields). Null if it has no typed node.
@@ -105,6 +106,11 @@ class TypedIndex {
         return null;
     }
 
+    /**
+     * Type of an expression as a short Haxe type name, in the format the
+     * extractors and TypeMap use (e.g. "Vec4", "Map<String, Array<Int>>").
+     * Null if the expression has no typed node or its type isn't known.
+     */
     public static function typeOf(e:Expr):Null<String> {
         // Outermost node: the expression itself (see classOf); an implicit-this
         // field (e.g. the target of `queue[i] += 1`) its field's type
@@ -133,13 +139,13 @@ class TypedIndex {
         return switch (t) {
             case TMono(ref): ref.get() != null ? typeName(ref.get()) : null;
             case TLazy(f): typeName(f());
-            case TInst(c, params): withParams(c.get().name, params);
-            case TEnum(en, params): withParams(en.get().name, params);
-            case TType(td, params): withParams(td.get().name, params);
+            case TInst(c, params): withParams(shortName(c.get().pack, c.get().name), params);
+            case TEnum(en, params): withParams(shortName(en.get().pack, en.get().name), params);
+            case TType(td, params): withParams(shortName(td.get().pack, td.get().name), params);
             case TAbstract(a, params):
                 var ab = a.get();
                 if (ab.pack.length == 0 && ab.name == "Null" && params.length == 1) typeName(params[0]);
-                else withParams(ab.name, params);
+                else withParams(shortName(ab.pack, ab.name), params);
             case TFun(args, ret):
                 var names = [for (arg in args) typeName(arg.t)];
                 var retName = typeName(ret);
@@ -147,6 +153,16 @@ class TypedIndex {
                 else (names.length == 0 ? "Void" : names.join("->")) + "->" + retName;
             case TDynamic(_), TAnonymous(_): "Dynamic";
         };
+    }
+
+    // Packages of the engine and libraries the short type names stand for
+    static var ENGINE_PACKAGES = ["iron", "armory", "kha", "koui", "aura", "haxe", "oimo", "zui", "cpp"];
+
+    // The short name, or the full path of a game's own type whose short name
+    // is one of the engine's (TypeMap): a game's `Button` isn't Koui's
+    static function shortName(pack:Array<String>, name:String):String {
+        if (pack.length == 0 || ENGINE_PACKAGES.indexOf(pack[0]) >= 0) return name;
+        return armor64.mapping.TypeMap.haxeToCType.exists(name) ? fullPath(pack, name) : name;
     }
 
     static function withParams(name:String, params:Array<Type>):Null<String> {
@@ -245,6 +261,22 @@ class TypedIndex {
             case KAbstractImpl(a): fullPath(a.get().pack, a.get().name);
             default: fullPath(c.pack, c.name);
         };
+    }
+
+    /** Whether the value of `e` is an instance of the class `path` (or of a subclass). */
+    public static function isInstanceOf(e:Expr, path:String):Bool {
+        var t = e != null ? exprType(e) : null;
+        if (t == null) return false;
+        switch (Context.follow(t)) {
+            case TInst(c, _):
+                var cls = c.get();
+                while (cls != null) {
+                    if (classPath(cls) == path) return true;
+                    cls = cls.superClass != null ? cls.superClass.t.get() : null;
+                }
+            default:
+        }
+        return false;
     }
 
     static function fullPath(pack:Array<String>, name:String):String {
@@ -376,6 +408,41 @@ class TypedIndex {
         }
         use(func.expr);
         return used;
+    }
+
+    /**
+     * Where a callback's captures behave differently on N64, which copies them
+     * when the callback is registered (Haxe shares the variables): a captured
+     * variable written in the callback or after it (in the function around
+     * it). [{pos, message}]. (A registration in a loop: N64MacroBase.callbackCaptures.)
+     */
+    public static function captureDifferences(fn:Expr, captured:Array<TVar>):Array<{pos:Position, message:String}> {
+        var out:Array<{pos:Position, message:String}> = [];
+        if (captured.length == 0) return out;
+        var f = Context.getPosInfos(fn.pos);
+        inline function inside(p:Position, outer:{file:String, min:Int, max:Int}):Bool {
+            var i = Context.getPosInfos(p);
+            return i.file == outer.file && outer.min <= i.min && i.max <= outer.max;
+        }
+        var root = Lambda.find(roots, r -> inside(fn.pos, Context.getPosInfos(r.pos)));
+        if (root == null) return out;
+
+        var names = [for (v in captured) v.id => v.name];
+        function walk(t:TypedExpr) {
+            switch (t.expr) {
+                case TBinop(OpAssign | OpAssignOp(_), {expr: TLocal(v)}, _), TUnop(OpIncrement | OpDecrement, _, {expr: TLocal(v)}) if (names.exists(v.id)):
+                    var name = names.get(v.id);
+                    if (inside(t.pos, f)) {
+                        out.push({pos: t.pos, message: '$name is a copy in this callback on N64: this change isn\'t seen outside it (in Haxe it is)'});
+                    } else if (Context.getPosInfos(t.pos).min > f.max) {
+                        out.push({pos: t.pos, message: 'a callback registered before keeps a copy of $name on N64: this change isn\'t seen by it (in Haxe it is)'});
+                    }
+                default:
+            }
+            t.iter(walk);
+        }
+        walk(root);
+        return out;
     }
 
     /**
