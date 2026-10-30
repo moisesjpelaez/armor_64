@@ -36,7 +36,8 @@ class SceneCallConverter implements ICallConverter {
             switch (result.kind) {
                 case "constant":
                     // Compile-time known scene: Scene.setActive("Level_01")
-                    var sceneNameUpper = result.value.toUpperCase();
+                    // The scene's id as the exporter names it (scenes.h)
+                    var sceneNameUpper = N64MacroBase.safesrc(result.value).toUpperCase();
                     return {
                         type: "scene_call",
                         method: "setActive",

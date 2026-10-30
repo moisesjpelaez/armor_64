@@ -42,6 +42,24 @@ using Lambda;
 class N64AutoloadMacro {
     static var autoloadData:Map<String, AutoloadIR> = new Map();
     static var initialized:Bool = false;
+    // Each autoload's functions (full class path -> name -> function), for the
+    // default arguments of calls from other classes
+    static var functionsByClass:Map<String, Map<String, Function>> = new Map();
+
+    /**
+     * The arguments of a call to an autoload function, the ones it leaves out
+     * taking the function's default values (as Haxe fills them in).
+     */
+    public static function withDefaults(classPath:String, name:String, args:Array<IRNode>, exprToIR:Expr->IRNode):Array<IRNode> {
+        var functions = functionsByClass.get(classPath);
+        var f = functions != null ? functions.get(name) : null;
+        if (f == null) return args;
+        var all = args.copy();
+        while (all.length < f.args.length && f.args[all.length].value != null) {
+            all.push(exprToIR(f.args[all.length].value));
+        }
+        return all;
+    }
 
     /** Called by N64Macro.build() for an autoload class. */
     public static function build(localClass:Ref<ClassType>, fields:Array<Field>, order:Int):Void {
@@ -54,6 +72,12 @@ class N64AutoloadMacro {
         // Autoloads are identified by class name in the IR, and their C names
         // are the lowercase class name
         if (!N64MacroBase.claimExportedName("autoload", cls.name.toLowerCase(), cls)) return;
+        var functions = new Map<String, Function>();
+        for (f in fields) switch (f.kind) {
+            case FFun(func): functions.set(f.name, func);
+            default:
+        }
+        functionsByClass.set(TypedIndex.classPath(cls), functions);
 
         // Extract autoload IR after typing, when the TypedIndex is available
         N64MacroBase.deferExtraction(localClass, function() {

@@ -489,6 +489,8 @@ class TraitExtractor extends N64Extractor {
                         case "notifyOnLateUpdate": result.late_update = body;
                         case "notifyOnRemove": result.remove = body;
                         case "notifyOnRender2D": result.render2d = body;
+                        case "notifyOnRender":
+                            N64MacroBase.unsupported("notifyOnRender() (3D drawing) is not supported on N64 yet", e.pos);
                         default:
                     }
                 }
@@ -670,9 +672,11 @@ class TraitExtractor extends N64Extractor {
         }
         // Engine-provided values and classes (gamepad, RigidBody, ...) and
         // inherited Trait fields (name) have no data on N64
-        if (EngineTypes.isProvidedMember(cls, name) || EngineTypes.isProvided(TypedIndex.typeRefPath(e))
-            || TypedIndex.fieldOwner(e) == "iron.Trait") {
+        if (EngineTypes.isProvidedMember(cls, name) || EngineTypes.isProvided(TypedIndex.typeRefPath(e))) {
             return { type: "skip" };
+        }
+        if (TypedIndex.fieldOwner(e) == "iron.Trait") {
+            return N64MacroBase.unsupported('Trait.$name is not supported on N64 yet');
         }
         // A field an ancestor trait declares
         var inherited = inheritedField(e);
@@ -861,9 +865,11 @@ class TraitExtractor extends N64Extractor {
         // Note: notifyOnRender2D is now handled separately, not skipped
         if (funcName == "notifyOnInit" ||
             funcName == "notifyOnFixedUpdate" || funcName == "notifyOnLateUpdate" ||
-            funcName == "notifyOnRemove" || funcName == "notifyOnAdd" ||
-            funcName == "notifyOnRender") {
+            funcName == "notifyOnRemove" || funcName == "notifyOnAdd") {
             return { type: "skip" };
+        }
+        if (funcName == "notifyOnRender") {
+            return N64MacroBase.unsupported("notifyOnRender() (3D drawing) is not supported on N64 yet");
         }
 
         // removeFixedUpdate(callback) -> set _fixed_update_enabled = false
@@ -1053,7 +1059,7 @@ class TraitExtractor extends N64Extractor {
                     case EConst(CIdent(_)):
                         var cName = AutoloadCallConverter.getAutoloadCName(obj);
                         if (cName != null) {
-                            return { c_name: cName, field: field.toLowerCase() };
+                            return { c_name: cName, field: field };
                         }
                     default:
                 }

@@ -93,6 +93,18 @@ class TypedIndex {
         return list[0].t;
     }
 
+    /**
+     * Compiler type of a local declared by `var` (e is the declaration).
+     * Null if it has no typed node.
+     */
+    public static function localType(e:Expr, name:String):Null<Type> {
+        for (t in nodesAt(e)) switch (t.expr) {
+            case TVar(v, _) if (v.name == name): return v.t;
+            default:
+        }
+        return null;
+    }
+
     public static function typeOf(e:Expr):Null<String> {
         // Outermost node: the expression itself (see classOf); an implicit-this
         // field (e.g. the target of `queue[i] += 1`) its field's type

@@ -5,6 +5,7 @@ import haxe.macro.Expr;
 import haxe.macro.Context;
 import haxe.macro.Type;
 import armor64.IRTypes;
+import armor64.N64AutoloadMacro;
 import armor64.TypedIndex;
 import armor64.converters.ICallConverter;
 
@@ -31,7 +32,8 @@ class AutoloadCallConverter implements ICallConverter {
                 // Check if the identifier refers to an autoload class
                 var cName = getAutoloadCName(obj);
                 if (cName != null) {
-                    return convertAutoloadCall(cName, method, args, ctx);
+                    var classPath = TypedIndex.classPath(TypedIndex.classOf(obj));
+                    return convertAutoloadCall(cName, method, N64AutoloadMacro.withDefaults(classPath, method, args, ctx.exprToIR), ctx);
                 }
             default:
         }

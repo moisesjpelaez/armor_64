@@ -26,6 +26,10 @@ class EngineTypes {
         return StringTools.startsWith(path, "armory.trait.physics.") && StringTools.endsWith(path, ".PhysicsWorld");
     }
 
+    public static function isProvidedType(t:Type):Bool {
+        return isProvided(typePath(t));
+    }
+
     /**
      * Whether a member of `cls` (or a parent class) holds an engine-provided
      * value, e.g. `var pad:Gamepad`.

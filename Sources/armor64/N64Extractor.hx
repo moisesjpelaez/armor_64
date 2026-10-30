@@ -284,7 +284,7 @@ class N64Extractor implements IExtractorContext {
                 convertIf(econd, eif, eelse);
 
             case EVars(vars):
-                var decls = [for (v in vars) convertVar(v)];
+                var decls = [for (v in vars) convertVar(v, e)];
                 decls.length == 1 ? decls[0] : { type: "block", children: decls };
 
             case EReturn(retExpr):
@@ -514,14 +514,24 @@ class N64Extractor implements IExtractorContext {
         };
     }
 
-    function convertVar(v:Var):IRNode {
+    // A local declared by `decl` (its `var` expression)
+    function convertVar(v:Var, decl:Expr):IRNode {
         // Declared type, or the one the compiler inferred
         var haxeType = v.type != null ? N64MacroBase.complexTypeToString(v.type) : getExprType(v.expr);
         var ctype = TypeMap.getCType(haxeType);
-        if (ctype == null) ctype = "float";
+        // Engine objects (the gamepad, a transform) are fine: the converters
+        // translate their calls
+        var typed = TypedIndex.localType(decl, v.name);
+        var supported = TypeMap.isSupported(haxeType) || (typed != null && EngineTypes.isProvidedType(typed));
+        if (!supported) {
+            N64MacroBase.unsupported('a local of type $haxeType (${v.name}) is not supported on N64 yet');
+        }
         localVarTypes.set(v.name, haxeType);
         pointerLocals.remove(v.name);
         var init = v.expr != null ? exprToIR(v.expr) : null;
+        // The value of an unsupported local is left out (declared only), once
+        // converted for what it reports
+        if (!supported) init = null;
 
         // A sound handle read from a handle array (channels[key][i]): a pointer
         // to it, so the audio state is updated in place
@@ -816,7 +826,7 @@ class N64Extractor implements IExtractorContext {
                             type: "autoload_call",
                             value: method,
                             c_code: '${autoload}_$method',
-                            args: args,
+                            args: N64AutoloadMacro.withDefaults(TypedIndex.classPath(owner), method, args, exprToIR),
                             props: { c_name: autoload, method: method }
                         };
                     }

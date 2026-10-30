@@ -108,6 +108,24 @@ class N64MacroBase {
     }
 
     /**
+     * A name as the exporter writes it in C identifiers (Armory's arm.utils.safesrc):
+     * special and non-ASCII characters, dots and dashes become "_", spaces are
+     * removed, and a leading digit gets a "_" first. Scene ids are SCENE_ + this,
+     * uppercased.
+     */
+    public static function safesrc(s:String):String {
+        var special = "[]/\\;,><&*:$%=+@!#^()|?'\".-";
+        var out = new StringBuf();
+        for (i in 0...s.length) {
+            var c = s.charCodeAt(i);
+            if (c == " ".code) continue;
+            out.addChar(c >= 128 || special.indexOf(String.fromCharCode(c)) >= 0 ? "_".code : c);
+        }
+        s = out.toString();
+        return s.length > 0 && s.charCodeAt(0) >= "0".code && s.charCodeAt(0) <= "9".code ? "_" + s : s;
+    }
+
+    /**
      * C constant of an Aura mix channel ("music" -> AUDIO_MIX_MUSIC), recorded
      * so audio_config.h defines it. Characters C doesn't allow become "_".
      */

@@ -448,7 +448,10 @@ class TweenCallConverter implements ICallConverter {
             case "SineIn": return "EASE_SINE_IN";
             case "SineOut": return "EASE_SINE_OUT";
             case "SineInOut": return "EASE_SINE_IN_OUT";
-            default: return "EASE_LINEAR";
+            // Every Ease is above: anything else is a variable, chosen at runtime
+            default:
+                N64MacroBase.unsupported("an ease that isn't an Ease constant is not supported on N64 yet (linear instead)");
+                return "EASE_LINEAR";
         }
     }
 

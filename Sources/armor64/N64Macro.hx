@@ -7,18 +7,18 @@ import haxe.macro.Expr;
 using StringTools;
 
 /**
- * Entry point of the N64 macros: one build macro on every class of the user's
- * `arm` package, handing autoloads to N64AutoloadMacro and traits to
+ * Entry point of the N64 macros: one build macro on every class of the
+ * project's package, handing autoloads to N64AutoloadMacro and traits to
  * N64TraitMacro. Both extract after typing, through N64Extractor.
  */
 class N64Macro {
     /**
      * Called via --macro (see armory_hooks.py) to add the build macro to the
-     * user's arm package.
+     * project's package (Armory's Package setting, "arm" by default).
      */
-    public static function register():Void {
+    public static function register(projectPackage:String = "arm"):Void {
         haxe.macro.Compiler.addGlobalMetadata(
-            "arm",  // user package
+            projectPackage,
             "@:build(armor64.N64Macro.build())",
             true,   // recursive
             true,   // toTypes

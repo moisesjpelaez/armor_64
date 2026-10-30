@@ -10,7 +10,7 @@ import armor64.converters.ICallConverter;
  * Button Call Converter
  *
  * Handles ButtonExt static-extension method calls on Button objects:
- * - button.onHover(fn)    -> button_register_callback (on_focus on N64, no mouse hover)
+ * - button.onHover(fn)    -> nothing (no mouse on N64, as on Krom with a gamepad)
  * - button.onFocus(fn)    -> button_register_callback (on_focus)
  * - button.onPressed(fn)  -> button_register_callback (on_pressed)
  * - button.onReleased(fn) -> button_register_callback (on_released)
@@ -36,10 +36,6 @@ class ButtonCallConverter implements ICallConverter {
 
     function convertButtonCall(obj:Expr, method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         // Map ButtonExt methods to N64 callback events
-        // N64 has no mouse, so onHover and onFocus both map to on_focus (gamepad focus ≈ hover).
-        // If both are registered on the same button, the second overwrites the first since
-        // the C struct has a single on_focus slot. This is intentional — user code typically
-        // registers both with the same body (e.g. buttonSelected) for Krom+N64 compatibility.
         // grabFocus() is a simple call, not a callback registration
         if (method == "grabFocus") {
             var objIR = ctx.exprToIR(obj);
@@ -51,7 +47,8 @@ class ButtonCallConverter implements ICallConverter {
 
         var eventType:String = null;
         switch (method) {
-            case "onHover":   eventType = "on_focus";
+            // Hovering needs a mouse: never, as on Krom with a gamepad
+            case "onHover":   return { type: "skip" };
             case "onFocus":   eventType = "on_focus";
             case "onPressed": eventType = "on_pressed";
             case "onReleased": eventType = "on_released";

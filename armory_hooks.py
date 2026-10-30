@@ -62,7 +62,12 @@ def write_main():
     if not owns_build(BuildRequest.current()):
         return {}
 
+    import bpy
+
     build_dir = arm.utils.build_dir()
+    # The project's Haxe package (World > Armory Project > Package), as Armory
+    # names its Sources folder
+    package = arm.utils.safestr(bpy.data.worlds['Arm'].arm_project_package)
 
     return {
         'defines': [
@@ -70,7 +75,7 @@ def write_main():
             f'arm_build_dir=../{build_dir}',
         ],
         'parameters': [
-            '--macro armor64.N64Macro.register()',
+            f'--macro armor64.N64Macro.register("{package}")',
         ],
     }
 

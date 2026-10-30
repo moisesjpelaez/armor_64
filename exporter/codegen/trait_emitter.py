@@ -489,6 +489,11 @@ class TraitEmitter:
 
         return result
 
+    def emit_ternary(self, node: Dict) -> str:
+        """cond ? a : b (children: the condition, the two values)."""
+        cond, a, b = (self.emit(c) for c in node.get("children", []))
+        return f"({cond} ? {a} : {b})" if cond and a and b else ""
+
     def emit_block(self, node: Dict) -> str:
         """Block of statements - emit as statements with semicolons."""
         children = node.get("children", [])

@@ -208,7 +208,7 @@ class AudioCallConverter implements ICallConverter {
 
     /**
      * Audio configuration in a function body: Aura.init({channelSize: N}) sets
-     * the mixer channel count (clamped to the N64's 32). Scanned in every
+     * the mixer channel count. Scanned in every
      * function, constructors included, since it isn't runtime code.
      */
     public static function scanConfig(e:Expr):Void {
@@ -218,7 +218,7 @@ class AudioCallConverter implements ICallConverter {
                 for (field in fields) {
                     switch (field.expr.expr) {
                         case EConst(CInt(v)) if (field.field == "channelSize"):
-                            N64MacroBase.audioChannelSize = Std.int(Math.min(Std.parseInt(v), 32));
+                            N64MacroBase.audioChannelSize = Std.parseInt(v);  // capped by the exporter (audio_codegen), with a warning
                         default:
                     }
                 }
