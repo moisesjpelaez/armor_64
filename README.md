@@ -1,11 +1,11 @@
-# armor_64: Nintendo 64 games with Armory 3D
+# Armor 64: Nintendo 64 games with Armory 3D
 
-armor_64 builds [Armory 3D](https://github.com/armory3d/armory) games as Nintendo 64 ROMs. Your scenes, meshes, UI, sounds and Haxe traits become C for [libdragon](https://github.com/n64brew/libdragon) and [tiny3d](https://github.com/HailToDodongo/tiny3d), and you play the result in the [Ares](https://ares-emu.net/) emulator or on real hardware.
+Armor 64 builds [Armory 3D](https://github.com/armory3d/armory) games as Nintendo 64 ROMs. Your scenes, meshes, UI, sounds and Haxe traits become C for [libdragon](https://github.com/n64brew/libdragon) and [tiny3d](https://github.com/HailToDodongo/tiny3d), and you play the result in the [Ares](https://ares-emu.net/) emulator or on real hardware.
 
-> Experimental and in development. It runs [Armor Ball](https://github.com/moisesjpelaez/arm_ball) on Ares and on an Analogue 3D. It needs an Armory with library hooks (`arm/library_hooks.py`), which this library plugs into without patching Armory.
+> Experimental and in development. It runs [Armor Ball](https://github.com/moisesjpelaez/arm_ball) on Ares and on an Analogue 3D.
 
 - **Making a game:** this page, then [GUIDE.md](GUIDE.md) for the game code you can write.
-- **Changing armor_64:** [exporter/](exporter/README.md) (Python), [Sources/armor64/](Sources/armor64/README.md) (Haxe macros), [runtime/](runtime/README.md) (C), [Tests/](Tests/README.md).
+- **Changing Armor 64:** [exporter/](exporter/README.md) (Python), [Sources/armor64/](Sources/armor64/README.md) (Haxe macros), [runtime/](runtime/README.md) (C), [Tests/](Tests/README.md).
 
 ## What you can use
 
@@ -30,7 +30,7 @@ What works differently from Krom, and what isn't supported yet, is in [GUIDE.md]
 - [MSYS2](https://www.msys2.org/)
 - libdragon's toolchain: the [toolchain release](https://github.com/n64brew/libdragon/releases/tag/toolchain-continuous-prerelease) (follow [Windows users with MSYS2](https://github.com/n64brew/libdragon/wiki/Installing-libdragon#windows-users-with-msys2), steps 1 and 2)
 - The [Ares](https://ares-emu.net/) emulator
-- Blender with Armory (an Armory with library hooks)
+- Blender with Armory
 - Fast64, this branch: https://github.com/moisesjpelaez/fast64/tree/f3d-to-bsdf
 
 ## Installation
@@ -67,7 +67,7 @@ git clone https://gitlab.com/moises.jpelaez/Koui.git -b koui_editor
 - **Play builds check the RDP** (libdragon's RDP validator): it catches graphics commands that crash only on real hardware, at a CPU cost, so expect a lower frame rate and possible VI warnings in Ares' log. Publish builds don't have it: test those on hardware.
 - **Traces** (`trace()`) print to Ares' log. With **No Traces** checked (the Armory Exporter panel), Publish builds leave them out, as on Krom.
 - Every build runs in the background: Blender stays responsive and Stop ends the build.
-- Turn on Armory's **compilation server** preference for faster Haxe builds: armor_64 runs its own server (its port is in the Nintendo 64 settings).
+- Turn on Armory's **compilation server** preference for faster Haxe builds: Armor 64 runs its own server (its port is in the Nintendo 64 settings).
 
 ## When something goes wrong
 
@@ -77,4 +77,4 @@ git clone https://gitlab.com/moises.jpelaez/Koui.git -b koui_editor
 
 ## License
 
-The zlib License. See [LICENSE.md](LICENSE.md).
+This project is licensed under the terms of the zlib License. See [LICENSE.md](LICENSE.md).
