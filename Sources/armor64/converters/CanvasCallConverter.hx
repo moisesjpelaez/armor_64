@@ -49,20 +49,13 @@ class CanvasCallConverter implements ICallConverter {
     function convertCanvasCall(method:String, args:Array<IRNode>, rawParams:Array<Expr>, ctx:IExtractorContext):IRNode {
         if (method == "getElementAs" && rawParams.length >= 2) {
             // canvas.getElementAs(Label, "score_label")
-            // canvas.getElementAs(AnchorPane, "level_container")
-            var elementType = ExprUtils.extractIdentName(rawParams[0]);
-            var elemKey = ExprUtils.extractString(rawParams[1]);
-            var result = resolveElementIR(elementType, elemKey, ctx);
-            if (result != null) return result;
-        }
-        else if (method == "getElementFromSceneAs" && rawParams.length >= 3) {
-            // canvas.getElementFromSceneAs(Button, "Paused", "buttons/menu_button")
-            // Prefix with scene name so keys are scene-scoped (matching ui_exporter):
+            // canvas.getElementAs(Button, "buttons/menu_button", "Paused")
+            // A given scene prefixes the path, as ui_exporter's scene-scoped keys:
             //   "Paused" + "buttons/menu_button" -> "Paused/buttons/menu_button"
             var elementType = ExprUtils.extractIdentName(rawParams[0]);
-            var sceneName = ExprUtils.extractString(rawParams[1]);
-            var elemPath = ExprUtils.extractString(rawParams[2]);
-            var fullKey = sceneName != null ? sceneName + "/" + elemPath : elemPath;
+            var elemPath = ExprUtils.extractString(rawParams[1]);
+            var sceneName = rawParams.length >= 3 ? ExprUtils.extractString(rawParams[2]) : null;
+            var fullKey = sceneName != null && elemPath != null ? sceneName + "/" + elemPath : elemPath;
             var result = resolveElementIR(elementType, fullKey, ctx);
             if (result != null) return result;
         }

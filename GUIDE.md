@@ -33,7 +33,7 @@ Anything it can't build is reported as an `N64: ...` warning at its line when yo
 - **Physics** (`RigidBody`, Oimo): `applyForce`, `applyImpulse`, `setLinearVelocity`, `setAngularVelocity`, `getLinearVelocity`, `getAngularVelocity`, `notifyOnContact`, `removeContact`.
 - **Tweens** (`armory.system.Tween`): `float`, `vec4`, `delay`, `start`, `pause`, `stop`, with the eases Linear, Quad, Cubic and Sine (In, Out, InOut).
 - **Signals** (`armory.system.Signal`): `connect`, `disconnect`, `emit`, static or per instance, with any arguments.
-- **UI** (Koui canvases): `getElementAs`, `getElementFromSceneAs`, `setScene`, `notifyOnReady` (ready at once on N64), `label.text`, `visible` on elements and layouts, buttons' `onPressed`, `onReleased`, `onFocus`, `grabFocus`.
+- **UI** (Koui canvases): `getElementAs` (with or without a scene), `setScene`, `notifyOnReady` (ready at once on N64), `label.text`, `visible` on elements and layouts, buttons' `onPressed`, `onReleased`, `onFocus`, `grabFocus`.
 - **Audio** (Aura): `Aura.createUncompBufferChannel`, sound handles' `play`, `pause`, `stop`, `setVolume`, `getVolume`, `finished`, `Aura.mixChannels[name].setVolume`. `Aura.init` and `Aura.loadAssets` work as loading done (everything is in the ROM). `Assets.loadEverything(done)` calls `done` at once.
 - **2D drawing** (`notifyOnRender2D`): `fillRect`, `color`.
 

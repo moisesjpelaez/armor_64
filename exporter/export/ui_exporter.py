@@ -172,19 +172,23 @@ def detect_ui_canvas(exporter):
             button_start = len(buttons)
             panel_start = len(panels)
 
-            # Build element lookup by key and parent-child relationships
-            elem_by_key = {e['key']: e for e in scene_elements}
+            # Children by their parent's path in the scene (koui_editor 2.0: "parent"
+            # is the parent's path, "" for the scene root; parents come first)
+            elem_by_key = {}
             children_by_parent = {}
             root_elements = []
 
             for elem in scene_elements:
-                parent_key = elem.get('parentKey')
-                if parent_key:
-                    if parent_key not in children_by_parent:
-                        children_by_parent[parent_key] = []
-                    children_by_parent[parent_key].append(elem)
-                else:
+                parent = elem.get('parent') or ''
+                elem['_path'] = _build_full_path(parent, elem['key'])
+                elem_by_key[elem['_path']] = elem
+                if not parent:
                     root_elements.append(elem)
+                elif parent in elem_by_key:
+                    children_by_parent.setdefault(parent, []).append(elem)
+                else:
+                    raise ValueError(f'UI canvas "{canvas_name}", {scene_key}/{elem["_path"]}: parent "{parent}" '
+                                     f'not found (open it in koui_editor and save it again)')
 
             # Process root elements recursively, flattening layouts
             # but tracking groups and unified elements array.
@@ -571,24 +575,20 @@ def _handle_panel(exporter, elem, final_x, final_y, panels, parent_path: str = "
 def resolve_button_focus(buttons, ui_scenes):
     """Resolve focus graph string keys to integer indices after all buttons are collected.
 
-    Focus keys in the Koui JSON are bare element names (e.g. "menu_button") that
-    are always relative to the same scene.  We use the ui_scenes list to scope
-    the lookup so that a button in the Win scene resolves "menu_button" to the
-    Win scene's menu_button, not the Paused scene's.
+    Focus targets in the Koui JSON are paths in the same scene (e.g.
+    "buttons/menu_button"), so each is looked up among its scene's buttons:
+    the Win scene's "buttons/menu_button" isn't the Paused scene's.
     """
-    # Build per-scene lookup tables keyed by bare element name.
-    # Each entry maps  bare_name -> global button index  but only within
-    # the range [first_button .. first_button+button_count).
+    # Per scene: path in the scene -> global button index
     scene_bare_maps = []
     for sc in ui_scenes:
         bare_map = {}
         start = sc['first_button']
         count = sc['button_count']
+        prefix = sc['key'] + '/'
         for i in range(start, start + count):
-            # The key is scene-prefixed (e.g. "Paused/buttons/menu_button");
-            # strip the scene prefix and parent path to get the bare name.
-            bare = buttons[i]['key'].split('/')[-1]
-            bare_map[bare] = i
+            # The key is scene-prefixed (e.g. "Paused/buttons/menu_button")
+            bare_map[buttons[i]['key'][len(prefix):]] = i
         scene_bare_maps.append((start, start + count, bare_map))
 
     def _find_scene_for_button(btn_idx):
@@ -672,7 +672,7 @@ def _flatten_element(exporter, elem, elem_by_key, children_by_parent, cell,
     final_x, final_y, width, height = _place(exporter, elem, cell)
     elem = {**elem, 'width': width, 'height': height}
 
-    children = children_by_parent.get(elem_key, [])
+    children = children_by_parent.get(elem['_path'], [])
     has_children = len(children) > 0
 
     # Dispatch to type-specific handlers
